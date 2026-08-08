@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>佳华智审 · 风险调查工作台</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">J</span>
+          <div>
+            <strong>佳华智审</strong>
+            <small>风险调查工作台</small>
+          </div>
+        </div>
+        <nav class="nav" aria-label="主导航">
+          <button class="nav-item active" data-view-target="risk-view" type="button">
+            <span>01</span>风险总览
+          </button>
+          <button class="nav-item" data-view-target="cases-view" type="button">
+            <span>02</span>案件队列
+          </button>
+          <button class="nav-item" data-view-target="business-view" type="button">
+            <span>03</span>经营分析
+          </button>
+          <button class="nav-item" data-view-target="chat-view" type="button">
+            <span>04</span>数据问答
+          </button>
+        </nav>
+        <div class="sidebar-note">
+          <span class="live-dot"></span>
+          <div><strong>只读调查模式</strong><small>规则命中不自动执行停供或调额</small></div>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">RISK INVESTIGATION AGENT</p>
+            <h1 id="page-title">风险总览</h1>
+          </div>
+          <div class="topbar-actions">
+            <span id="system-status" class="system-status">正在连接数据</span>
+            <button id="scan-button" class="button secondary" type="button">重新扫描</button>
+          </div>
+        </header>
+
+        <section id="risk-view" class="view active" aria-labelledby="page-title">
+          <div class="hero-panel">
+            <div>
+              <p class="hero-kicker">规则发现 · Agent 调查 · 人工审核</p>
+              <h2>先找到值得调查的异常，再解释它为什么发生。</h2>
+              <p id="latest-run-copy">正在读取最近一次规则扫描。</p>
+            </div>
+            <div class="hero-number">
+              <span id="hero-case-count">—</span>
+              <small>当前风险案件</small>
+            </div>
+          </div>
+
+          <div class="metric-grid risk-metrics">
+            <article class="metric-card critical">
+              <span>关键案件</span><strong id="critical-count">—</strong><small>含黑名单敞口</small>
+            </article>
+            <article class="metric-card">
+              <span>等待调查</span><strong id="open-count">—</strong><small>规则已经命中</small>
+            </article>
+            <article class="metric-card">
+              <span>等待审核</span><strong id="pending-count">—</strong><small>Agent 已完成取证</small>
+            </article>
+            <article class="metric-card">
+              <span>风险敞口</span><strong id="risk-exposure">—</strong><small>未关闭案件合计</small>
+            </article>
+          </div>
+
+          <div class="dashboard-grid">
+            <section class="panel case-preview-panel">
+              <div class="panel-heading">
+                <div><span class="panel-index">A</span><h2>优先调查</h2></div>
+                <button class="text-button" data-view-target="cases-view" type="button">查看全部案件 →</button>
+              </div>
+              <div id="priority-cases" class="case-preview-list loading-block">正在载入案件</div>
+            </section>
+
+            <section class="panel composition-panel">
+              <div class="panel-heading"><div><span class="panel-index">B</span><h2>案件构成</h2></div></div>
+              <div class="composition">
+                <div class="composition-row">
+                  <div class="composition-copy"><span>客户应收调查</span><strong id="ar-case-count">—</strong></div>
+                  <div class="bar-track"><span id="ar-case-bar"></span></div>
+                </div>
+                <div class="composition-row">
+                  <div class="composition-copy"><span>库存积压调查</span><strong id="inventory-case-count">—</strong></div>
+                  <div class="bar-track"><span id="inventory-case-bar"></span></div>
+                </div>
+              </div>
+              <div class="boundary-note">
+                <strong>数据边界</strong>
+                <p>库存是公司仓库库存；赛事数据不包含促销活动、下游库存、银行未核销和项目验收记录。</p>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="cases-view" class="view" aria-labelledby="cases-title">
+          <div class="section-intro">
+            <div><p class="eyebrow">CASE QUEUE</p><h2 id="cases-title">风险案件队列</h2></div>
+            <p>一项案件可以聚合多条规则命中；优先级用于排序，不是自动业务定性。</p>
+          </div>
+          <section class="panel">
+            <div class="filters">
+              <label>案件类型
+                <select id="case-type-filter">
+                  <option value="">全部类型</option>
+                  <option value="ACCOUNTS_RECEIVABLE">客户应收</option>
+                  <option value="INVENTORY">库存积压</option>
+                </select>
+              </label>
+              <label>案件状态
+                <select id="case-status-filter">
+                  <option value="">全部状态</option>
+                  <option value="OPEN">等待调查</option>
+                  <option value="PENDING_REVIEW">等待审核</option>
+                  <option value="MONITORING">持续观察</option>
+                  <option value="ACTION_REQUIRED">需要处置</option>
+                  <option value="CLOSED_FALSE_POSITIVE">确认误报</option>
+                  <option value="CLOSED_RESOLVED">已经解决</option>
+                </select>
+              </label>
+              <span id="case-result-count" class="filter-result">—</span>
+            </div>
+            <div class="table-wrap">
+              <table class="case-table">
+                <thead><tr><th>优先级</th><th>案件主体</th><th>触发摘要</th><th>风险敞口</th><th>状态</th><th>观察期</th></tr></thead>
+                <tbody id="case-table-body"><tr><td colspan="6">正在加载案件队列</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section id="business-view" class="view" aria-labelledby="business-title">
+          <div class="section-intro">
+            <div><p class="eyebrow">BUSINESS FACTS</p><h2 id="business-title">经营分析</h2></div>
+            <p id="business-period">确定性指标，不消耗模型额度。</p>
+          </div>
+          <div id="business-cards" class="metric-grid business-metrics">
+            <article class="metric-card placeholder"></article><article class="metric-card placeholder"></article>
+            <article class="metric-card placeholder"></article><article class="metric-card placeholder"></article>
+          </div>
+          <section class="panel">
+            <div class="panel-heading"><div><span class="panel-index">C</span><h2>最近应收趋势</h2></div><small>每个月末独立聚合</small></div>
+            <div class="table-wrap"><table><thead><tr><th>期间</th><th>应收余额</th><th>超期应收</th><th>超期率</th></tr></thead><tbody id="trend-body"></tbody></table></div>
+          </section>
+        </section>
+
+        <section id="chat-view" class="view" aria-labelledby="chat-title">
+          <div class="section-intro">
+            <div><p class="eyebrow">DATA Q&A</p><h2 id="chat-title">经营数据问答</h2></div>
+            <p>保留原有通用分析能力；正式案件调查请从案件队列进入。</p>
+          </div>
+          <section class="panel chat-panel">
+            <div class="suggestions" aria-label="示例问题">
+              <button type="button">截至最新一期，应收余额和超期率是多少？</button>
+              <button type="button">分析 C015 客户的应收和展期情况</button>
+              <button type="button">最新库存和 180 天以上库存情况如何？</button>
+            </div>
+            <div id="messages" class="messages" aria-live="polite">
+              <div class="message assistant">这里用于经营问数。要调查风险原因，请打开一个风险案件。</div>
+            </div>
+            <form id="chat-form" class="chat-form">
+              <label class="sr-only" for="message-input">输入数据问题</label>
+              <textarea id="message-input" maxlength="4000" rows="2" placeholder="询问经营、应收、客户、库存或项目合同数据"></textarea>
+              <button id="send-button" class="button primary" type="submit">发送问题</button>
+            </form>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="case-dialog" class="case-dialog">
+      <div class="dialog-shell">
+        <header class="dialog-header">
+          <div><p id="case-dialog-eyebrow" class="eyebrow">RISK CASE</p><h2 id="case-dialog-title">案件详情</h2></div>
+          <button id="case-dialog-close" class="icon-button" type="button" aria-label="关闭案件详情">×</button>
+        </header>
+        <div id="case-dialog-body" class="dialog-body"><p>正在读取案件详情。</p></div>
+      </div>
+    </dialog>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>
