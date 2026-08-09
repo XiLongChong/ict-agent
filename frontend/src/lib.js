@@ -1,0 +1,76 @@
+export const labels = {
+  status: {
+    OPEN: "等待调查", INVESTIGATING: "调查中", PENDING_REVIEW: "等待审核",
+    MONITORING: "持续观察", ACTION_REQUIRED: "需要处置",
+    CLOSED_FALSE_POSITIVE: "确认误报", CLOSED_RESOLVED: "已经解决",
+  },
+  priority: { LOW: "低", MEDIUM: "一般", HIGH: "高", CRITICAL: "关键" },
+  caseType: { ACCOUNTS_RECEIVABLE: "客户应收", INVENTORY: "库存积压" },
+  hypothesis: { SUPPORTED: "证据支持", WEAKENED: "证据削弱", UNRESOLVED: "无法判断" },
+  riskStage: { EARLY_WARNING: "早期预警", DETERIORATING: "风险恶化", LIMITED: "信息有限" },
+  tool: {
+    discover_evidence_capabilities: "发现证据能力",
+    search_business_records: "搜索业务记录",
+    query_business_evidence: "受控证据查询",
+  },
+  event: {
+    RUN_STARTED: "调查已启动", TOOL_STARTED: "正在查询", TOOL_COMPLETED: "证据已返回",
+    VALIDATION_STARTED: "正在核验证据", REPORT_COMPLETED: "报告已保存", ERROR: "调查遇到问题",
+  },
+  dataset: {
+    receivables: "应收", sales_payments: "销售与回款", extensions: "展期",
+    credit: "授信", contracts: "合同", inventory: "库存", sales: "物料销售",
+  },
+};
+
+export const priorityColor = (value) => ({ CRITICAL: "error", HIGH: "warning", MEDIUM: "primary", LOW: "default" }[value] || "default");
+export const statusColor = (value) => ({ PENDING_REVIEW: "warning", ACTION_REQUIRED: "error", MONITORING: "info", CLOSED_RESOLVED: "success", CLOSED_FALSE_POSITIVE: "success" }[value] || "primary");
+export const stageColor = (value) => ({ DETERIORATING: "error", EARLY_WARNING: "warning", LIMITED: "default" }[value] || "default");
+export const hypothesisColor = (value) => ({ SUPPORTED: "success", WEAKENED: "default", UNRESOLVED: "warning" }[value] || "default");
+
+export function formatMoney(value) {
+  const number = Number(value || 0);
+  if (Math.abs(number) >= 100000000) return `${(number / 100000000).toFixed(2)} 亿元`;
+  if (Math.abs(number) >= 10000) return `${(number / 10000).toFixed(2)} 万元`;
+  return `${number.toFixed(2)} 元`;
+}
+
+export const formatPercent = (value) => value == null ? "—" : `${(Number(value) * 100).toFixed(1)}%`;
+export const metricMap = (result) => Object.fromEntries(result.rows.map(([name, value]) => [name, value]));
+
+export function queryArguments(item) {
+  const args = item?.arguments || {};
+  if (args.dataset) {
+    const metrics = Array.isArray(args.metrics) ? args.metrics.join("、") : "";
+    return `${labels.dataset[args.dataset] || args.dataset} / ${args.grain || "—"} · ${args.time_window || "—"}${metrics ? ` · ${metrics}` : ""}`;
+  }
+  return Object.entries(args).map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join("、") : value}`).join(" · ");
+}
+
+export async function api(path, options = {}) {
+  const response = await fetch(path, options);
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || `请求失败（${response.status}）`);
+  return payload;
+}
+
+export async function streamNdjson(path, options, onEvent) {
+  const response = await fetch(path, options);
+  if (!response.ok) {
+    const payload = await response.json();
+    throw new Error(payload.error || `请求失败（${response.status}）`);
+  }
+  if (!response.body) throw new Error("浏览器没有收到调查事件流。");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines.filter(Boolean)) onEvent(JSON.parse(line));
+    if (done) break;
+  }
+  if (buffer.trim()) onEvent(JSON.parse(buffer));
+}

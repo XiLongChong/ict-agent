@@ -41,6 +41,7 @@ from ict_agent.service import (
 logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
+FRONTEND_DIST_DIR = FRONTEND_DIR / "dist"
 
 app = FastAPI(
     title="佳华智审风险调查 Agent API",
@@ -186,7 +187,7 @@ async def submit_case_review(case_id: str, request: ReviewRequest) -> ReviewReco
 async def frontend_index() -> FileResponse:
     """提供同源的风险调查演示页面。"""
 
-    return FileResponse(FRONTEND_DIR / "index.html")
+    return FileResponse(FRONTEND_DIST_DIR / "index.html")
 
 
-app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+app.mount("/static", StaticFiles(directory=FRONTEND_DIST_DIR), name="static")

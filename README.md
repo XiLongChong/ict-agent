@@ -65,6 +65,10 @@ ICT_CASE_DATABASE_PATH=data/processed/ict_agent_cases.duckdb
 
 ```powershell
 python backend/scripts/import_data.py
+cd frontend
+npm install
+npm run build
+cd ..
 uvicorn ict_agent.api:app --app-dir backend/src --reload
 ```
 

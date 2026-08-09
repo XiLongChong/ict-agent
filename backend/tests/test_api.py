@@ -1,5 +1,6 @@
 """FastAPI HTTP 契约测试。"""
 
+import re
 from collections.abc import AsyncIterator
 
 from fastapi.testclient import TestClient
@@ -41,6 +42,10 @@ def test_frontend_is_served() -> None:
     assert response.status_code == 200
     assert "风险调查工作台" in response.text
     assert "数据问答" not in response.text
+    assets = re.findall(r'(?:src|href)="(/static/[^"]+)"', response.text)
+    assert assets
+    for asset in assets:
+        assert client.get(asset).status_code == 200
 
 
 def test_chat_api_is_removed() -> None:
