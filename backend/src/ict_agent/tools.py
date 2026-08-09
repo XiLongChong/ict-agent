@@ -5,7 +5,14 @@ from __future__ import annotations
 import re
 
 from ict_agent.data import DatabaseScalar, DuckDBStore, QueryResult
-from ict_agent.models import JsonScalar, ToolResult
+from ict_agent.models import (
+    BusinessDataCatalog,
+    DatasetCapability,
+    EvidenceMetric,
+    EvidenceQuery,
+    JsonScalar,
+    ToolResult,
+)
 
 
 class AnalysisInputError(ValueError):
@@ -372,82 +379,6 @@ def get_ar_trend(store: DuckDBStore) -> ToolResult:
     )
 
 
-def get_customer_risk_profile(store: DuckDBStore, customer_id: str) -> ToolResult:
-    """按客户编号聚合销售、回款、最新应收、展期和授信。"""
-
-    normalized_id = customer_id.strip().upper()
-    if not re.fullmatch(r"C\d{3}", normalized_id):
-        raise AnalysisInputError("客户编号必须采用 C015 这样的 C 加三位数字格式。")
-    result = store.fetch(
-        """
-        SELECT
-            c."客户编号_中台" AS customer_id,
-            c."客户名称" AS customer_name,
-            c."黑白名单状态" AS list_status,
-            COALESCE(c."授信额度", 0) AS credit_limit,
-            (SELECT COALESCE(SUM(s."销售金额_折扣后_含税"), 0)
-             FROM sales s WHERE s."客户编号" = ?) AS sales_amount,
-            (SELECT COALESCE(SUM(p."回款金额"), 0)
-             FROM payments p WHERE p."客户编号" = ?) AS payment_amount,
-            (SELECT COALESCE(SUM(p."超期利息金额"), 0)
-             FROM payments p WHERE p."客户编号" = ?) AS overdue_interest,
-            (SELECT COALESCE(SUM(a."应收金额"), 0)
-             FROM ar_snapshots a
-             WHERE a."客户编号" = ?
-               AND a."快照时间" = (SELECT MAX("快照时间") FROM ar_snapshots)) AS ar_amount,
-            (SELECT COALESCE(SUM(a."超期应收金额"), 0)
-             FROM ar_snapshots a
-             WHERE a."客户编号" = ?
-               AND a."快照时间" = (SELECT MAX("快照时间") FROM ar_snapshots)) AS overdue_amount,
-            (SELECT COUNT(DISTINCT e."gkey")
-             FROM extensions e WHERE e."客户编号" = ?) AS extension_actions,
-            (SELECT MAX("快照时间") FROM ar_snapshots) AS snapshot_date
-        FROM customer_credit c
-        WHERE c."客户编号_中台" = ?
-        LIMIT 1
-        """,
-        [normalized_id] * 7,
-    )
-    row = _first_row(result)
-    ar_amount = _number(row[7])
-    overdue_amount = _number(row[8])
-    overdue_rate = _ratio(overdue_amount, ar_amount)
-    list_labels = {0: "一般客户", 1: "白名单", 2: "黑名单", 3: "观察名单"}
-    list_status_number = int(_number(row[2]))
-    list_status = list_labels.get(list_status_number, f"未知状态 {list_status_number}")
-    period = _period(row[10])
-    warnings = [] if ar_amount else ["该客户在最新快照没有应收余额。"]
-    return ToolResult(
-        summary=(
-            f"{row[0]} {row[1]} 当前为{list_status}，截至 {period} 应收 "
-            f"{_format_money(ar_amount)}，超期率 {_format_ratio(overdue_rate)}，"
-            f"数据窗口内展期动作 {int(_number(row[9]))} 次。"
-        ),
-        columns=["指标", "值", "单位"],
-        rows=[
-            ["客户编号", row[0], ""],
-            ["客户名称", row[1], ""],
-            ["名单状态", list_status, ""],
-            ["授信额度", row[3], "元"],
-            ["销售额", row[4], "元"],
-            ["回款额", row[5], "元"],
-            ["超期利息", row[6], "元"],
-            ["最新应收余额", ar_amount, "元"],
-            ["最新超期应收", overdue_amount, "元"],
-            ["最新超期率", overdue_rate, "比例"],
-            ["展期动作数", int(_number(row[9])), "次"],
-        ],
-        sources=["customer_credit", "sales", "payments", "ar_snapshots", "extensions"],
-        period=period,
-        metric_definitions=[
-            "应收只取全表最新快照。",
-            "展期动作数按不同 gkey 计数。",
-            "名单状态 0/1/2/3 分别为一般/白/黑/观察。",
-        ],
-        warnings=warnings,
-    )
-
-
 def get_inventory_health(store: DuckDBStore) -> ToolResult:
     """返回最新季末库存金额、呆滞金额和库龄分桶。"""
 
@@ -523,68 +454,10 @@ def get_inventory_health(store: DuckDBStore) -> ToolResult:
     )
 
 
-def get_project_progress(store: DuckDBStore, contract_number: str) -> ToolResult:
-    """按正式合同号返回签约、出库、回款和最新应收闭环。"""
-
-    normalized = contract_number.strip()
-    if not normalized or len(normalized) > 100:
-        raise AnalysisInputError("合同号不能为空且不能超过 100 个字符。")
-    result = store.fetch(
-        """
-        SELECT
-            (SELECT COALESCE(SUM("销售金额"), 0)
-             FROM contracts WHERE "合同编号" = ?) AS contract_amount,
-            (SELECT COALESCE(SUM("销售金额_折扣后_含税"), 0)
-             FROM sales WHERE "合同号" = ?) AS shipped_amount,
-            (SELECT COALESCE(SUM("回款金额"), 0)
-             FROM payments WHERE "合同号" = ?) AS payment_amount,
-            (SELECT COALESCE(SUM("应收金额"), 0)
-             FROM ar_snapshots
-             WHERE "合同号" = ?
-               AND "快照时间" = (SELECT MAX("快照时间") FROM ar_snapshots)) AS ar_amount,
-            (SELECT MAX("快照时间") FROM ar_snapshots) AS snapshot_date,
-            (SELECT COUNT(*) FROM contracts WHERE "合同编号" = ?) AS contract_rows
-        """,
-        [normalized] * 5,
-    )
-    row = _first_row(result)
-    if int(_number(row[5])) == 0:
-        raise AnalysisInputError(f"签约明细中未找到合同号 {normalized}。")
-    contract_amount = _number(row[0])
-    shipped_amount = _number(row[1])
-    payment_amount = _number(row[2])
-    ar_amount = _number(row[3])
-    ship_rate = _ratio(shipped_amount, contract_amount)
-    payment_rate = _ratio(payment_amount, contract_amount)
-    warnings = [] if contract_amount else ["合同签约额为 0，进度比例无法计算。"]
-    period = _period(row[4])
-    return ToolResult(
-        summary=(
-            f"合同 {normalized} 签约额 {_format_money(contract_amount)}，已出库 "
-            f"{_format_money(shipped_amount)}，已回款 {_format_money(payment_amount)}，"
-            f"截至 {period} 应收 {_format_money(ar_amount)}。"
-        ),
-        columns=["指标", "值", "单位"],
-        rows=[
-            ["合同签约额", contract_amount, "元"],
-            ["项目出库额", shipped_amount, "元"],
-            ["项目回款额", payment_amount, "元"],
-            ["最新应收余额", ar_amount, "元"],
-            ["出库/签约", ship_rate, "比例"],
-            ["回款/签约", payment_rate, "比例"],
-        ],
-        sources=["contracts", "sales", "payments", "ar_snapshots"],
-        period=period,
-        metric_definitions=[
-            "合同编号只按正式合同号等值关联。",
-            "出库额保留退货负值，应收只取最新快照。",
-        ],
-        warnings=warnings,
-    )
-
-
-def get_customer_ar_history(store: DuckDBStore, customer_id: str) -> ToolResult:
-    """返回指定客户最近 12 个月的应收与深度超期趋势。"""
+def get_customer_ar_history(
+    store: DuckDBStore, customer_id: str, *, months: int = 12
+) -> ToolResult:
+    """返回指定客户最近若干个月的应收与深度超期趋势。"""
 
     normalized_id = customer_id.strip().upper()
     if not re.fullmatch(r"C\d{3}", normalized_id):
@@ -595,6 +468,7 @@ def get_customer_ar_history(store: DuckDBStore, customer_id: str) -> ToolResult:
             "快照时间" AS period,
             SUM("应收金额") AS ar_amount,
             SUM("超期应收金额") AS overdue_amount,
+            SUM("超期30天以上金额") AS overdue_30_amount,
             SUM("超期60天以上金额") AS overdue_60_amount,
             CASE WHEN SUM("应收金额") = 0 THEN NULL
                  ELSE SUM("超期应收金额") / SUM("应收金额") END AS overdue_rate,
@@ -603,11 +477,13 @@ def get_customer_ar_history(store: DuckDBStore, customer_id: str) -> ToolResult:
         WHERE "客户编号" = ?
         GROUP BY "快照时间"
         ORDER BY "快照时间" DESC
-        LIMIT 12
+        LIMIT ?
         """,
-        [normalized_id],
+        [normalized_id, months],
     )
-    rows = [[_period(row[0]), row[1], row[2], row[3], row[4], row[5]] for row in result.rows]
+    rows = [
+        [_period(row[0]), row[1], row[2], row[3], row[4], row[5], row[6]] for row in result.rows
+    ]
     if not rows:
         raise AnalysisInputError(f"没有找到客户 {normalized_id} 的应收记录。")
     latest = rows[0]
@@ -620,6 +496,7 @@ def get_customer_ar_history(store: DuckDBStore, customer_id: str) -> ToolResult:
             "期间",
             "应收余额_元",
             "超期应收_元",
+            "30天以上超期_元",
             "60天以上超期_元",
             "超期率",
             "最大超期天数",
@@ -631,8 +508,10 @@ def get_customer_ar_history(store: DuckDBStore, customer_id: str) -> ToolResult:
     )
 
 
-def get_customer_flow_history(store: DuckDBStore, customer_id: str) -> ToolResult:
-    """返回指定客户最近 6 个月销售、回款和超期利息。"""
+def get_customer_flow_history(
+    store: DuckDBStore, customer_id: str, *, months: int = 6
+) -> ToolResult:
+    """返回指定客户最近若干个月销售、回款和超期利息。"""
 
     normalized_id = customer_id.strip().upper()
     if not re.fullmatch(r"C\d{3}", normalized_id):
@@ -644,7 +523,7 @@ def get_customer_flow_history(store: DuckDBStore, customer_id: str) -> ToolResul
         ), months AS (
             SELECT DISTINCT date_trunc('month', "快照时间") AS month
             FROM ar_snapshots, latest
-            WHERE "快照时间" > latest_date - INTERVAL '6 months'
+            WHERE "快照时间" > latest_date - (? * INTERVAL '1 month')
         ), sales_monthly AS (
             SELECT
                 date_trunc('month', "出库日期") AS month,
@@ -675,7 +554,7 @@ def get_customer_flow_history(store: DuckDBStore, customer_id: str) -> ToolResul
         LEFT JOIN payment_monthly p USING (month)
         ORDER BY m.month DESC
         """,
-        [normalized_id, normalized_id],
+        [months, normalized_id, normalized_id],
     )
     rows = [[_period(row[0]), row[1], row[2], row[3], row[4], row[5]] for row in result.rows]
     period = f"{rows[-1][0]} 至 {rows[0][0]}" if rows else ""
@@ -714,6 +593,7 @@ def get_current_receivable_details(store: DuckDBStore, customer_id: str) -> Tool
             MAX("超期天数") AS overdue_days,
             SUM("应收金额") AS ar_amount,
             SUM("超期应收金额") AS overdue_amount,
+            SUM("超期30天以上金额") AS overdue_30_amount,
             SUM("超期60天以上金额") AS overdue_60_amount
         FROM ar_snapshots
         WHERE "客户编号" = ?
@@ -736,6 +616,7 @@ def get_current_receivable_details(store: DuckDBStore, customer_id: str) -> Tool
             row[7],
             row[8],
             row[9],
+            row[10],
         ]
         for row in result.rows
     ]
@@ -751,6 +632,7 @@ def get_current_receivable_details(store: DuckDBStore, customer_id: str) -> Tool
             "超期天数",
             "应收金额_元",
             "超期应收_元",
+            "30天以上超期_元",
             "60天以上超期_元",
         ],
         rows=rows,
@@ -909,7 +791,9 @@ def get_customer_contract_context(store: DuckDBStore, customer_id: str) -> ToolR
         WITH customer_contracts AS (
             SELECT DISTINCT "合同号" AS contract_number
             FROM ar_snapshots
-            WHERE "客户编号" = ? AND NULLIF("合同号", '') IS NOT NULL
+            WHERE "客户编号" = ?
+              AND "快照时间" = (SELECT MAX("快照时间") FROM ar_snapshots)
+              AND NULLIF("合同号", '') IS NOT NULL
         ), contract_base AS (
             SELECT
                 c."合同编号" AS contract_number,
@@ -965,6 +849,357 @@ def get_customer_contract_context(store: DuckDBStore, customer_id: str) -> ToolR
         metric_definitions=["只有正式合同号命中签约表的项目类业务才进入本结果。"],
         warnings=["数据没有项目验收记录，合同闭环只能作为间接证据。"],
     )
+
+
+_WINDOW_MONTHS = {
+    "latest": 1,
+    "last_3_months": 3,
+    "last_6_months": 6,
+    "last_12_months": 12,
+    "all": 24,
+}
+
+_QUERY_CAPABILITIES: dict[tuple[str, str], tuple[tuple[EvidenceMetric, ...], tuple[str, ...]]] = {
+    (
+        "receivables",
+        "month",
+    ): (
+        (
+            "ar_amount",
+            "overdue_amount",
+            "overdue_30_amount",
+            "overdue_60_amount",
+            "overdue_rate",
+            "max_overdue_days",
+        ),
+        ("latest", "last_3_months", "last_6_months", "last_12_months", "all"),
+    ),
+    (
+        "receivables",
+        "order",
+    ): (
+        (
+            "ar_amount",
+            "overdue_amount",
+            "overdue_30_amount",
+            "overdue_60_amount",
+            "max_overdue_days",
+        ),
+        ("latest",),
+    ),
+    (
+        "sales_payments",
+        "month",
+    ): (
+        (
+            "sales_amount",
+            "payment_amount",
+            "gross_profit",
+            "overdue_interest",
+            "max_payment_overdue_days",
+        ),
+        ("last_3_months", "last_6_months", "last_12_months", "all"),
+    ),
+    (
+        "extensions",
+        "order",
+    ): (
+        ("ar_amount", "overdue_amount", "matched_extension_actions"),
+        ("all",),
+    ),
+    (
+        "credit",
+        "customer",
+    ): (
+        (
+            "credit_limit",
+            "list_status",
+            "credit_rating",
+            "net_assets",
+            "net_profit",
+            "credit_insurance",
+        ),
+        ("latest",),
+    ),
+    (
+        "contracts",
+        "contract",
+    ): (
+        (
+            "contract_amount",
+            "invoiced_amount",
+            "actual_margin_rate",
+            "shipped_amount",
+            "payment_amount",
+            "ar_amount",
+            "overdue_amount",
+        ),
+        ("latest",),
+    ),
+}
+
+_METRIC_COLUMNS: dict[EvidenceMetric, str] = {
+    "ar_amount": "应收金额_元",
+    "overdue_amount": "超期应收_元",
+    "overdue_30_amount": "30天以上超期_元",
+    "overdue_60_amount": "60天以上超期_元",
+    "overdue_rate": "超期率",
+    "overdue_60_rate": "60天以上超期率",
+    "max_overdue_days": "最大超期天数",
+    "sales_amount": "销售额_元",
+    "payment_amount": "回款额_元",
+    "gross_profit": "含税粗算毛利_元",
+    "overdue_interest": "超期利息_元",
+    "max_payment_overdue_days": "回款最大超期天数",
+    "matched_extension_actions": "匹配展期动作数",
+    "credit_limit": "授信额度",
+    "list_status": "名单状态",
+    "credit_rating": "失信分级",
+    "net_assets": "净资产",
+    "net_profit": "净利润",
+    "credit_insurance": "信用保险",
+    "contract_amount": "签约金额_元",
+    "invoiced_amount": "开票金额_元",
+    "actual_margin_rate": "实际净毛利率",
+    "shipped_amount": "出库金额_元",
+}
+
+_SOURCE_METRIC_COLUMNS: dict[tuple[str, str], dict[EvidenceMetric, str]] = {
+    ("receivables", "month"): {
+        "ar_amount": "应收余额_元",
+        "overdue_amount": "超期应收_元",
+        "overdue_30_amount": "30天以上超期_元",
+        "overdue_60_amount": "60天以上超期_元",
+        "overdue_rate": "超期率",
+        "max_overdue_days": "最大超期天数",
+    },
+    ("receivables", "order"): {
+        "ar_amount": "应收金额_元",
+        "overdue_amount": "超期应收_元",
+        "overdue_30_amount": "30天以上超期_元",
+        "overdue_60_amount": "60天以上超期_元",
+        "max_overdue_days": "超期天数",
+    },
+    ("sales_payments", "month"): {
+        "sales_amount": "销售额_元",
+        "payment_amount": "回款额_元",
+        "gross_profit": "含税粗算毛利_元",
+        "overdue_interest": "超期利息_元",
+        "max_payment_overdue_days": "回款最大超期天数",
+    },
+    ("extensions", "order"): {
+        "ar_amount": "当前应收_元",
+        "overdue_amount": "当前超期_元",
+        "matched_extension_actions": "匹配展期动作数",
+    },
+    ("contracts", "contract"): {
+        "contract_amount": "签约金额_元",
+        "invoiced_amount": "开票金额_元",
+        "actual_margin_rate": "实际净毛利率",
+        "shipped_amount": "出库金额_元",
+        "payment_amount": "回款金额_元",
+        "ar_amount": "最新应收_元",
+        "overdue_amount": "最新超期_元",
+    },
+}
+
+_DIMENSION_COLUMNS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("receivables", "month"): ("期间",),
+    (
+        "receivables",
+        "order",
+    ): ("合同号", "销售订单号", "物料编码", "最终承诺还款日期", "是否展期"),
+    ("sales_payments", "month"): ("月份",),
+    (
+        "extensions",
+        "order",
+    ): ("合同号", "销售订单号", "物料编码", "展期后最终承诺日", "最近展期记录日"),
+    ("credit", "customer"): ("客户编号",),
+    ("contracts", "contract"): ("合同号", "合同状态"),
+}
+
+
+def get_receivable_data_catalog(customer_id: str, observation_date: str) -> BusinessDataCatalog:
+    """返回应收案件可用的语义数据地图，不暴露物理表结构。"""
+
+    normalized_id = customer_id.strip().upper()
+    if not re.fullmatch(r"C\d{3}", normalized_id):
+        raise AnalysisInputError("客户编号必须采用 C015 这样的 C 加三位数字格式。")
+    descriptions = {
+        "receivables": "月末应收趋势或最新订单级未结余额、承诺日与超期结构。",
+        "sales_payments": "按自然月对齐销售、回款、粗算毛利和超期利息。",
+        "extensions": "把当前应收订单与历史展期动作按业务键精确匹配。",
+        "credit": "客户当前授信、名单、财务概况和信用保险主数据。",
+        "contracts": "当前未结应收所关联正式项目合同的签约、开票、出库和回款闭环。",
+    }
+    limitations = {
+        "receivables": ["月末快照是时点余额，不能跨期直接求和。"],
+        "sales_payments": ["销售减回款不等于应收，只能用于比较经营方向。"],
+        "extensions": ["展期表没有审批人和审批状态。"],
+        "credit": ["只有当前状态，没有授信与名单历史。"],
+        "contracts": ["没有项目验收记录，合同闭环只能作为间接证据。"],
+    }
+    datasets = [
+        DatasetCapability(
+            dataset="receivables",
+            description=descriptions["receivables"],
+            grains=["month", "order"],
+            metrics=[
+                "ar_amount",
+                "overdue_amount",
+                "overdue_30_amount",
+                "overdue_60_amount",
+                "overdue_rate",
+                "max_overdue_days",
+            ],
+            time_windows=["latest", "last_3_months", "last_6_months", "last_12_months", "all"],
+            limitations=limitations["receivables"],
+        ),
+        DatasetCapability(
+            dataset="sales_payments",
+            description=descriptions["sales_payments"],
+            grains=["month"],
+            metrics=[
+                "sales_amount",
+                "payment_amount",
+                "gross_profit",
+                "overdue_interest",
+                "max_payment_overdue_days",
+            ],
+            time_windows=["last_3_months", "last_6_months", "last_12_months", "all"],
+            limitations=limitations["sales_payments"],
+        ),
+        DatasetCapability(
+            dataset="extensions",
+            description=descriptions["extensions"],
+            grains=["order"],
+            metrics=["ar_amount", "overdue_amount", "matched_extension_actions"],
+            time_windows=["all"],
+            limitations=limitations["extensions"],
+        ),
+        DatasetCapability(
+            dataset="credit",
+            description=descriptions["credit"],
+            grains=["customer"],
+            metrics=[
+                "credit_limit",
+                "list_status",
+                "credit_rating",
+                "net_assets",
+                "net_profit",
+                "credit_insurance",
+            ],
+            time_windows=["latest"],
+            limitations=limitations["credit"],
+        ),
+        DatasetCapability(
+            dataset="contracts",
+            description=descriptions["contracts"],
+            grains=["contract"],
+            metrics=[
+                "contract_amount",
+                "invoiced_amount",
+                "actual_margin_rate",
+                "shipped_amount",
+                "payment_amount",
+                "ar_amount",
+                "overdue_amount",
+            ],
+            time_windows=["latest"],
+            limitations=limitations["contracts"],
+        ),
+    ]
+    return BusinessDataCatalog(
+        case_type="ACCOUNTS_RECEIVABLE",
+        entity_scope=f"客户 {normalized_id}",
+        observation_date=observation_date,
+        datasets=datasets,
+        global_rules=[
+            "所有查询自动限定当前案件客户，不能改查其他主体。",
+            "金额、日期和比例必须引用 query_business_evidence 返回的 evidence_id。",
+            "模型只能选择数据集、粒度、指标、窗口、排序和行数，不能提交 SQL。",
+        ],
+    )
+
+
+def _validate_evidence_query(query: EvidenceQuery) -> None:
+    key = (query.dataset, query.grain)
+    capability = _QUERY_CAPABILITIES.get(key)
+    if capability is None:
+        raise AnalysisInputError(f"数据集 {query.dataset} 不支持粒度 {query.grain}。")
+    allowed_metrics, allowed_windows = capability
+    invalid_metrics = sorted(set(query.metrics) - set(allowed_metrics))
+    if invalid_metrics:
+        raise AnalysisInputError(
+            f"{query.dataset}/{query.grain} 不支持指标：{', '.join(invalid_metrics)}。"
+        )
+    if query.time_window not in allowed_windows:
+        raise AnalysisInputError(
+            f"{query.dataset}/{query.grain} 不支持时间窗口 {query.time_window}。"
+        )
+    if query.sort_by is not None and query.sort_by not in query.metrics:
+        raise AnalysisInputError("sort_by 必须同时出现在 metrics 中。")
+
+
+def _project_tool_result(
+    result: ToolResult,
+    query: EvidenceQuery,
+    *,
+    dimension_columns: tuple[str, ...],
+) -> ToolResult:
+    key = (query.dataset, query.grain)
+    source_metric_columns = _SOURCE_METRIC_COLUMNS[key]
+    source_columns = [*dimension_columns, *(source_metric_columns[item] for item in query.metrics)]
+    selected_columns = [*dimension_columns, *(_METRIC_COLUMNS[item] for item in query.metrics)]
+    indices = [result.columns.index(column) for column in source_columns]
+    rows = [[row[index] for index in indices] for row in result.rows]
+    if query.sort_by is not None:
+        sort_column = _METRIC_COLUMNS[query.sort_by]
+        sort_index = selected_columns.index(sort_column)
+        rows.sort(
+            key=lambda row: (row[sort_index] is None, row[sort_index]),
+            reverse=query.sort_direction == "desc",
+        )
+    rows = rows[: query.limit]
+    return result.model_copy(update={"columns": selected_columns, "rows": rows})
+
+
+def _credit_query_result(result: ToolResult, customer_id: str, query: EvidenceQuery) -> ToolResult:
+    values = {str(row[0]): row[1] for row in result.rows}
+    columns = ["客户编号", *(_METRIC_COLUMNS[item] for item in query.metrics)]
+    row = [customer_id, *(values[column] for column in columns[1:])]
+    return result.model_copy(update={"columns": columns, "rows": [row]})
+
+
+def query_customer_business_evidence(
+    store: DuckDBStore, customer_id: str, query: EvidenceQuery
+) -> ToolResult:
+    """按冻结语义层执行受控应收证据查询。"""
+
+    _validate_evidence_query(query)
+    normalized_id = customer_id.strip().upper()
+    key = (query.dataset, query.grain)
+    if key == ("receivables", "month"):
+        result = get_customer_ar_history(
+            store, normalized_id, months=_WINDOW_MONTHS[query.time_window]
+        )
+    elif key == ("receivables", "order"):
+        result = get_current_receivable_details(store, normalized_id)
+    elif key == ("sales_payments", "month"):
+        result = get_customer_flow_history(
+            store, normalized_id, months=_WINDOW_MONTHS[query.time_window]
+        )
+    elif key == ("extensions", "order"):
+        result = get_customer_extension_evidence(store, normalized_id)
+    elif key == ("credit", "customer"):
+        return _credit_query_result(
+            get_customer_credit_context(store, normalized_id), normalized_id, query
+        )
+    elif key == ("contracts", "contract"):
+        result = get_customer_contract_context(store, normalized_id)
+    else:  # pragma: no cover - 所有组合已由白名单穷举
+        raise AnalysisInputError("当前查询组合尚未实现。")
+    return _project_tool_result(result, query, dimension_columns=_DIMENSION_COLUMNS[key])
 
 
 def get_material_inventory_history(

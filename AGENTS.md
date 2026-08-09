@@ -8,13 +8,14 @@
 当前仓库已经是可运行的 MVP，不是初始化骨架：
 
 - 7 张比赛 CSV 可以原子导入本地 DuckDB。
-- FastAPI 同时提供经营分析接口，以及风险扫描、案件、调查和人工审核接口。
-- Pydantic AI 使用 DeepSeek `deepseek-v4-flash`；经营问答调用 6 个固定分析工具，案件调查按
-  应收或库存类型分别开放最小只读工具集。
+- FastAPI 同时提供确定性经营分析接口，以及风险扫描、案件、NDJSON 调查事件流和人工审核接口。
+- Pydantic AI 使用 DeepSeek `deepseek-v4-flash` 高强度思考模式；案件调查按应收或库存类型自动
+  执行完整的最小只读工具集，并对最终证据引用和结论状态进行校验。
 - 已支持经营概览、最新应收、应收趋势、客户画像、库存健康和合同闭环。
-- 已落地首批 6 条确定性风险规则、独立案件库、证据引用、调查报告和人工审核闭环。
-- `frontend/` 是由 FastAPI 同源提供的响应式风险调查工作台，同时保留经营分析与数据问答。
-- 当前自动验收基线为 Ruff、mypy 和 24 个 pytest 测试。
+- 已落地 5 条确定性风险规则、独立案件库、风险信号判断、完整与部分调查报告、证据引用和人工审核闭环。
+- `frontend/` 是由 FastAPI 同源提供的响应式风险调查工作台，实时展示工具和证据，同时保留
+  确定性经营分析；通用数据问答已经删除。
+- 当前自动验收基线为 Ruff、mypy 和 28 个 pytest 测试。
 
 不得把已经完成的系统描述成“待搭建”，不得根据旧计划重复创建骨架，也不得为了未来功能
 破坏已经跑通的真实数据 → DuckDB → 工具 → Agent → API → 页面链路。
@@ -38,7 +39,8 @@ ict-agent/
 │  │  ├─ models.py                   # API、工具和证据模型
 │  │  ├─ prompts.py                  # Agent 固定指令
 │  │  └─ config.py                   # `.env` 和路径配置
-│  └─ tests/                         # 七表微型夹具及单元/集成测试
+│  ├─ tests/                         # 七表微型夹具及单元/集成测试
+│  └─ evals/                         # 真实 DeepSeek 调查评测集与独立运行器
 ├─ frontend/                         # 无构建依赖的 HTML/CSS/JavaScript 页面
 ├─ docs/
 │  ├─ technical-solution.md          # 当前已落地架构与安全边界
@@ -96,7 +98,7 @@ ict-agent/
 
 - FastAPI 路由只做 HTTP 校验、调用应用服务和错误映射；`api.py` 中不得写 SQL、指标公式或
   Agent 提示词。
-- Agent 使用 Pydantic AI；不得手写工具调用循环、消息协议或结构化输出解析，不得在业务模块
+- Agent 使用 Pydantic AI；不得手写工具调用循环、模型消息协议或结构化输出解析，不得在业务模块
   直接调用 OpenAI SDK。
 - DeepSeek Provider 和 Agent 创建只放在 `agent.py`；其他模块不得读取模型密钥或调用模型 API。
 - DuckDB 连接、建表和查询执行只放在 `data.py`；业务指标语义和参数化 SQL 放在 `tools.py`。

@@ -1,0 +1,132 @@
+{
+  "version": "2.0",
+  "data_contract": "赛事官方数据字典；金额单位按字段说明统一解释为元",
+  "global_forbidden_unqualified_claims": [
+    "已确认坏账",
+    "已经形成坏账",
+    "确定为坏账",
+    "确定无法回收",
+    "已经无法回收",
+    "必然无法回收",
+    "确认不可回收",
+    "已停供",
+    "已经停供",
+    "停止供货",
+    "客户无回款能力",
+    "丧失回款能力",
+    "已进入诉讼程序",
+    "双十一",
+    "促销导致",
+    "下游库存导致"
+  ],
+  "cases": [
+    {
+      "eval_id": "AR-C015-BALANCED-EVIDENCE",
+      "case_id": "case_96ad1c0e61fc53fa8923",
+      "entity_id": "C015",
+      "case_type": "ACCOUNTS_RECEIVABLE",
+      "purpose": "白名单、回款等缓释信息不能覆盖实际逾期；当前展期必须精确匹配。",
+      "required_evidence": [
+        {"dataset": "receivables", "grain": "month"},
+        {"dataset": "receivables", "grain": "order"},
+        {"dataset": "sales_payments", "grain": "month"},
+        {"dataset": "extensions", "grain": "order"},
+        {"dataset": "credit", "grain": "customer"}
+      ],
+      "human_review": [
+        "是否同时陈述逾期事实和缓释证据，而不是只选择一边",
+        "是否把历史展期与当前订单精确匹配结果区分开",
+        "是否没有从白名单直接推出低风险或无需处理"
+      ]
+    },
+    {
+      "eval_id": "AR-C061-WHITELIST-DETERIORATION",
+      "case_id": "case_6a712fdaba444c676920",
+      "entity_id": "C061",
+      "case_type": "ACCOUNTS_RECEIVABLE",
+      "purpose": "白名单经营客户存在大额深度超期时，应形成风险恶化判断，同时保留根因和最终回收结果未知。",
+      "required_evidence": [
+        {"dataset": "receivables", "grain": "month"},
+        {"dataset": "receivables", "grain": "order"},
+        {"dataset": "sales_payments", "grain": "month"},
+        {"dataset": "extensions", "grain": "order"},
+        {"dataset": "credit", "grain": "customer"}
+      ],
+      "human_review": [
+        "是否明确给出风险恶化或早期预警，而不是整案证据不足",
+        "是否把白名单作为反向信号而非免责结论",
+        "是否仅将具体根因和最终回收结果标为无法判断"
+      ]
+    },
+    {
+      "eval_id": "AR-C007-EXPOSURE-BUILDUP",
+      "case_id": "case_02edfe4ca0430e8bf7fc",
+      "entity_id": "C007",
+      "case_type": "ACCOUNTS_RECEIVABLE",
+      "purpose": "经营中客户新增销售高于回款且超期扩大时，应识别前瞻性敞口积累风险。",
+      "required_evidence": [
+        {"dataset": "receivables", "grain": "month"},
+        {"dataset": "receivables", "grain": "order"},
+        {"dataset": "sales_payments", "grain": "month"},
+        {"dataset": "contracts", "grain": "contract"},
+        {"dataset": "credit", "grain": "customer"}
+      ],
+      "human_review": [
+        "是否把销售、回款和超期增长组合成有引用的早期预警",
+        "是否没有把组合相关性扩写成确定的偿债能力或坏账结论",
+        "是否给出可继续监测的领先指标"
+      ]
+    },
+    {
+      "eval_id": "INV-83NN0001CD-MIXED-SIGNALS",
+      "case_id": "case_d04dd4733ca18916c289",
+      "entity_id": "83NN0001CD|仓库W008",
+      "case_type": "INVENTORY",
+      "purpose": "库存显著增加且存在多条规则时，必须结合库龄和销售速度区分事实与原因。",
+      "required_tools": [
+        "inspect_inventory_history",
+        "inspect_inventory_age_profile",
+        "inspect_material_sales"
+      ],
+      "human_review": [
+        "是否同时分析库存变化、库龄结构和销售速度",
+        "是否没有虚构促销活动、下游动销或下游库存",
+        "存在相互矛盾信号时是否标记 UNRESOLVED"
+      ]
+    },
+    {
+      "eval_id": "INV-ZAG60265CN-STALE",
+      "case_id": "case_13a565ade707df3a0bad",
+      "entity_id": "ZAG60265CN|仓库W012",
+      "case_type": "INVENTORY",
+      "purpose": "库存金额稳定不等于没有呆滞风险，重点检查库龄证据和近期销售。",
+      "required_tools": [
+        "inspect_inventory_history",
+        "inspect_inventory_age_profile",
+        "inspect_material_sales"
+      ],
+      "human_review": [
+        "是否避免用环比为零否定呆滞事实",
+        "是否引用库龄和销售两类独立证据",
+        "是否没有虚构具体滞销原因"
+      ]
+    },
+    {
+      "eval_id": "INV-83LV0006CD-BUILDUP-SLOWDOWN",
+      "case_id": "case_7ad34dcde62fb03905f0",
+      "entity_id": "83LV0006CD|仓库W015",
+      "case_type": "INVENTORY",
+      "purpose": "库存增长和销售下降方向一致时，应形成滞销早期预警，但不能虚构促销或下游因果。",
+      "required_tools": [
+        "inspect_inventory_history",
+        "inspect_inventory_age_profile",
+        "inspect_material_sales"
+      ],
+      "human_review": [
+        "是否把库存增长和销售下降组合成可行动的早期预警",
+        "是否区分风险模式成立与具体滞销原因未知",
+        "是否没有虚构促销、下游库存或特定客户应收因果"
+      ]
+    }
+  ]
+}

@@ -723,7 +723,10 @@ class CaseStore:
     ) -> QueryResult:
         """返回案件队列。"""
 
-        clauses: list[str] = []
+        clauses = [
+            "rule_set_version = (SELECT rule_set_version FROM rule_runs "
+            "ORDER BY created_at DESC LIMIT 1)"
+        ]
         parameters: list[object] = []
         if status is not None:
             clauses.append("status = ?")
@@ -819,6 +822,9 @@ class CaseStore:
                 COUNT(*) FILTER (WHERE case_type = 'ACCOUNTS_RECEIVABLE') AS ar_cases,
                 COUNT(*) FILTER (WHERE case_type = 'INVENTORY') AS inventory_cases
             FROM risk_cases
+            WHERE rule_set_version = (
+                SELECT rule_set_version FROM rule_runs ORDER BY created_at DESC LIMIT 1
+            )
             """
         )
 

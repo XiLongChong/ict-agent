@@ -5,7 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>佳华智审 · 风险调查工作台</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.11.0/dist-cdn/styles/themes/default.css"
+    />
+    <script type="module" src="/static/components.js?v=20260809-planless3"></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20260809-planless3" />
   </head>
   <body>
     <div class="app-shell">
@@ -26,9 +31,6 @@
           </button>
           <button class="nav-item" data-view-target="business-view" type="button">
             <span>03</span>经营分析
-          </button>
-          <button class="nav-item" data-view-target="chat-view" type="button">
-            <span>04</span>数据问答
           </button>
         </nav>
         <div class="sidebar-note">
@@ -64,7 +66,7 @@
 
           <div class="metric-grid risk-metrics">
             <article class="metric-card critical">
-              <span>关键案件</span><strong id="critical-count">—</strong><small>含黑名单敞口</small>
+              <span>关键级案件</span><strong id="critical-count">—</strong><small>当前规则侧重早期预警</small>
             </article>
             <article class="metric-card">
               <span>等待调查</span><strong id="open-count">—</strong><small>规则已经命中</small>
@@ -157,27 +159,6 @@
           </section>
         </section>
 
-        <section id="chat-view" class="view" aria-labelledby="chat-title">
-          <div class="section-intro">
-            <div><p class="eyebrow">DATA Q&A</p><h2 id="chat-title">经营数据问答</h2></div>
-            <p>保留原有通用分析能力；正式案件调查请从案件队列进入。</p>
-          </div>
-          <section class="panel chat-panel">
-            <div class="suggestions" aria-label="示例问题">
-              <button type="button">截至最新一期，应收余额和超期率是多少？</button>
-              <button type="button">分析 C015 客户的应收和展期情况</button>
-              <button type="button">最新库存和 180 天以上库存情况如何？</button>
-            </div>
-            <div id="messages" class="messages" aria-live="polite">
-              <div class="message assistant">这里用于经营问数。要调查风险原因，请打开一个风险案件。</div>
-            </div>
-            <form id="chat-form" class="chat-form">
-              <label class="sr-only" for="message-input">输入数据问题</label>
-              <textarea id="message-input" maxlength="4000" rows="2" placeholder="询问经营、应收、客户、库存或项目合同数据"></textarea>
-              <button id="send-button" class="button primary" type="submit">发送问题</button>
-            </form>
-          </section>
-        </section>
       </main>
     </div>
 
@@ -191,6 +172,6 @@
       </div>
     </dialog>
 
-    <script src="/static/app.js" defer></script>
+    <script src="/static/app.js?v=20260809-planless3" defer></script>
   </body>
 </html>

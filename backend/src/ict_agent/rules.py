@@ -9,9 +9,9 @@ from hashlib import sha256
 from ict_agent.data import CaseWrite, DatabaseScalar, DuckDBStore, RuleHitWrite, RuleRunWrite
 from ict_agent.tools import get_inventory_rule_features, get_receivable_rule_features
 
-RULE_SET_VERSION = "2026.08-v1"
-RULE_VERSION = "1.0.0"
-THRESHOLD_SOURCE = "赛事模拟数据24个月/8季度回溯后冻结的首期候选案件阈值"
+RULE_SET_VERSION = "2026.08-v2"
+RULE_VERSION = "2.0.0"
+THRESHOLD_SOURCE = "赛事模拟数据24个月/8季度回溯后冻结的经营中客户与库存早期预警阈值"
 
 
 @dataclass(frozen=True)
@@ -127,6 +127,7 @@ def _receivable_cases(
         payments_3m = _number_value(row, 11)
         list_status = int(_number_value(row, 12))
         credit_limit = _number_value(row, 13)
+        is_operating = sales_3m != 0 or payments_3m != 0
         case_id = _short_id("case", f"AR|{customer_id}|{observation_date}|{RULE_SET_VERSION}")
         hits: list[RuleHitWrite] = []
 
@@ -145,19 +146,22 @@ def _receivable_cases(
         }
 
         if (
-            overdue_60_amount >= thresholds.deep_overdue_amount
+            list_status != 2
+            and is_operating
+            and overdue_60_amount >= thresholds.deep_overdue_amount
             and max_overdue_days >= thresholds.deep_overdue_days
         ):
             hits.append(
                 _hit(
                     case_id=case_id,
-                    rule_id="AR_DEEP_OVERDUE_MATERIAL",
-                    rule_name="大额深度超期应收",
+                    rule_id="AR_OPERATING_DEEP_OVERDUE",
+                    rule_name="经营中客户大额深度超期",
                     severity="HIGH",
                     exposure_amount=overdue_60_amount,
                     reason=(
                         f"60天以上超期 {_money(overdue_60_amount)}，最大超期 "
-                        f"{max_overdue_days} 天，需要调查老账形成与回款情况。"
+                        f"{max_overdue_days} 天，且近三个月仍有销售或回款，"
+                        "需要调查风险是否继续恶化。"
                     ),
                     metrics=common_metrics,
                     sources=["ar_snapshots"],
@@ -166,38 +170,25 @@ def _receivable_cases(
             )
 
         if (
-            overdue_amount >= thresholds.overdue_growth_amount
+            list_status != 2
+            and overdue_amount >= thresholds.overdue_growth_amount
             and overdue_growth_3m >= thresholds.overdue_growth_amount
+            and sales_3m > 0
             and sales_3m > payments_3m
         ):
             hits.append(
                 _hit(
                     case_id=case_id,
-                    rule_id="AR_EXPOSURE_BUILDUP",
-                    rule_name="应收敞口组合积累",
+                    rule_id="AR_OPERATING_EXPOSURE_BUILDUP",
+                    rule_name="经营中客户应收敞口加速积累",
                     severity="HIGH",
                     exposure_amount=overdue_amount,
                     reason=(
                         f"近三个月超期增加 {_money(overdue_growth_3m)}，且新增销售 "
-                        f"{_money(sales_3m)} 高于回款 {_money(payments_3m)}。"
+                        f"{_money(sales_3m)} 高于回款 {_money(payments_3m)}；客户尚未进入黑名单。"
                     ),
                     metrics=common_metrics,
                     sources=["ar_snapshots", "sales", "payments"],
-                    period=observation_date,
-                )
-            )
-
-        if list_status == 2 and ar_amount > 0:
-            hits.append(
-                _hit(
-                    case_id=case_id,
-                    rule_id="AR_BLACKLIST_EXPOSURE",
-                    rule_name="黑名单客户仍有应收敞口",
-                    severity="CRITICAL",
-                    exposure_amount=ar_amount,
-                    reason=f"客户当前为黑名单，仍有应收 {_money(ar_amount)}。",
-                    metrics=common_metrics,
-                    sources=["customer_credit", "ar_snapshots"],
                     period=observation_date,
                 )
             )
@@ -218,7 +209,7 @@ def _receivable_cases(
                 exposure_amount=ar_amount,
                 summary=(
                     f"最新应收 {_money(ar_amount)}，超期 {_money(overdue_amount)}，"
-                    f"命中 {len(hits)} 条调查规则。"
+                    f"客户仍在经营且未进入黑名单，命中 {len(hits)} 条早期预警规则。"
                 ),
                 rule_hit_count=len(hits),
                 rule_set_version=RULE_SET_VERSION,

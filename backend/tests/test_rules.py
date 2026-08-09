@@ -27,8 +27,9 @@ def test_rule_scan_detects_single_and_composite_risks(store: DuckDBStore) -> Non
     assert draft.run.observation_date == "2026-07-31"
     assert draft.run.receivable_cases == 1
     assert draft.run.inventory_cases == 3
-    assert "AR_DEEP_OVERDUE_MATERIAL" in rule_ids
-    assert "AR_EXPOSURE_BUILDUP" in rule_ids
+    assert "AR_OPERATING_DEEP_OVERDUE" in rule_ids
+    assert "AR_OPERATING_EXPOSURE_BUILDUP" in rule_ids
+    assert "AR_BLACKLIST_EXPOSURE" not in rule_ids
     assert "INV_MATERIAL_BUILDUP" in rule_ids
     assert "INV_STALE_NO_SALES" in rule_ids
 

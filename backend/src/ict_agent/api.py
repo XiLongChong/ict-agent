@@ -3,22 +3,20 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from ict_agent.models import (
     CaseStatus,
     CaseType,
-    ChatRequest,
-    ChatResponse,
     DashboardResponse,
     ErrorResponse,
     HealthResponse,
-    InvestigationRecord,
     ReviewRecord,
     ReviewRequest,
     RiskCaseDetail,
@@ -28,14 +26,14 @@ from ict_agent.models import (
 )
 from ict_agent.service import (
     ServiceError,
-    chat,
     get_case_detail,
     get_dashboard,
     get_risk_overview,
-    investigate_case,
     list_cases,
+    prepare_investigation,
     review_case,
     run_rule_scan,
+    stream_prepared_investigation,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,8 +42,8 @@ FRONTEND_DIR = PROJECT_ROOT / "frontend"
 
 app = FastAPI(
     title="佳华智审风险调查 Agent API",
-    version="0.2.0",
-    description="基于 7 张比赛数据表的规则发现、Agent 调查与人工审核闭环。",
+    version="0.3.0",
+    description="基于 7 张比赛数据表的规则发现、可观察 Agent 调查与人工审核闭环。",
 )
 
 
@@ -80,18 +78,6 @@ async def overview() -> DashboardResponse:
     """返回首页经营、应收、库存和趋势数据。"""
 
     return get_dashboard()
-
-
-@app.post(
-    "/api/v1/chat",
-    response_model=ChatResponse,
-    responses={502: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
-    tags=["agent"],
-)
-async def chat_endpoint(request: ChatRequest) -> ChatResponse:
-    """让 DeepSeek 选择固定工具并回答数据问题。"""
-
-    return await chat(request)
 
 
 @app.post(
@@ -148,18 +134,26 @@ async def case_detail(case_id: str) -> RiskCaseDetail:
 
 @app.post(
     "/api/v1/cases/{case_id}/investigations",
-    response_model=InvestigationRecord,
     responses={
+        200: {
+            "description": "按行返回 InvestigationStreamEvent 的 NDJSON 事件流。",
+            "content": {"application/x-ndjson": {}},
+        },
         404: {"model": ErrorResponse},
-        502: {"model": ErrorResponse},
         503: {"model": ErrorResponse},
     },
     tags=["agent"],
 )
-async def create_case_investigation(case_id: str) -> InvestigationRecord:
-    """让 DeepSeek 针对指定案件分步取证并生成结构化调查报告。"""
+async def create_case_investigation(case_id: str) -> StreamingResponse:
+    """流式返回 DeepSeek 的工具取证、校验和最终报告事件。"""
 
-    return await investigate_case(case_id)
+    prepared = prepare_investigation(case_id)
+
+    async def ndjson_events() -> AsyncIterator[str]:
+        async for event in stream_prepared_investigation(prepared):
+            yield event.model_dump_json() + "\n"
+
+    return StreamingResponse(ndjson_events(), media_type="application/x-ndjson")
 
 
 @app.post(

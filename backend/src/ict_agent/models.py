@@ -8,7 +8,6 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, model_validator
 
 type JsonScalar = str | int | float | bool | None
-ChatRole = Literal["user", "assistant"]
 CaseType = Literal["ACCOUNTS_RECEIVABLE", "INVENTORY"]
 CaseStatus = Literal[
     "OPEN",
@@ -21,22 +20,66 @@ CaseStatus = Literal[
 ]
 RiskPriority = Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
 HypothesisStatus = Literal["SUPPORTED", "WEAKENED", "UNRESOLVED"]
+RiskSignalStage = Literal["EARLY_WARNING", "DETERIORATING", "LIMITED"]
 EvidenceCompleteness = Literal["LOW", "MEDIUM", "HIGH"]
 ReviewDecision = Literal["MONITOR", "ACTION_REQUIRED", "FALSE_POSITIVE", "RESOLVED"]
-
-
-class ChatMessage(BaseModel):
-    """由浏览器回传的精简文本历史。"""
-
-    role: ChatRole
-    content: Annotated[str, Field(min_length=1, max_length=2_000)]
-
-
-class ChatRequest(BaseModel):
-    """聊天请求。"""
-
-    message: Annotated[str, Field(min_length=1, max_length=4_000)]
-    history: Annotated[list[ChatMessage], Field(max_length=12)] = []
+InvestigationToolName = Literal[
+    "discover_business_data",
+    "query_business_evidence",
+    "inspect_inventory_history",
+    "inspect_inventory_age_profile",
+    "inspect_material_sales",
+]
+DiscoverySource = Literal["RULE", "ANOMALY", "MANUAL"]
+DataQualityStatus = Literal["PASS", "WARNING", "FAIL", "UNKNOWN"]
+ReceivableDataset = Literal[
+    "receivables",
+    "sales_payments",
+    "extensions",
+    "credit",
+    "contracts",
+]
+EvidenceGrain = Literal["customer", "month", "contract", "order"]
+EvidenceTimeWindow = Literal["latest", "last_3_months", "last_6_months", "last_12_months", "all"]
+EvidenceSortDirection = Literal["asc", "desc"]
+EvidenceMetric = Literal[
+    "ar_amount",
+    "overdue_amount",
+    "overdue_30_amount",
+    "overdue_60_amount",
+    "overdue_rate",
+    "overdue_60_rate",
+    "max_overdue_days",
+    "sales_amount",
+    "payment_amount",
+    "gross_profit",
+    "overdue_interest",
+    "max_payment_overdue_days",
+    "matched_extension_actions",
+    "credit_limit",
+    "list_status",
+    "credit_rating",
+    "net_assets",
+    "net_profit",
+    "credit_insurance",
+    "contract_amount",
+    "invoiced_amount",
+    "actual_margin_rate",
+    "shipped_amount",
+]
+InvestigationTraceType = Literal[
+    "TOOL_COMPLETED",
+    "REPORT_VALIDATED",
+    "PARTIAL_REPORT",
+]
+InvestigationStreamEventType = Literal[
+    "RUN_STARTED",
+    "TOOL_STARTED",
+    "TOOL_COMPLETED",
+    "VALIDATION_STARTED",
+    "REPORT_COMPLETED",
+    "ERROR",
+]
 
 
 class ToolResult(BaseModel):
@@ -62,22 +105,51 @@ class ToolResult(BaseModel):
 
 
 class Evidence(BaseModel):
-    """一次真实工具调用留下的证据摘要。"""
+    """一次真实调查工具调用留下的可复核证据。"""
 
     evidence_id: str = ""
-    tool_name: str
-    arguments: dict[str, JsonScalar]
+    tool_name: InvestigationToolName
+    arguments: dict[str, JsonScalar | list[JsonScalar]]
     sources: list[str]
     period: str
     summary: str
+    columns: list[str] = []
+    rows: list[list[JsonScalar]] = []
+    metric_definitions: list[str] = []
+    warnings: list[str] = []
 
 
-class ChatResponse(BaseModel):
-    """聊天响应。"""
+class DatasetCapability(BaseModel):
+    """Agent 可发现的一项只读业务数据能力。"""
 
-    answer: str
-    evidence: list[Evidence]
-    request_id: str
+    dataset: ReceivableDataset
+    description: str
+    grains: list[EvidenceGrain]
+    metrics: list[EvidenceMetric]
+    time_windows: list[EvidenceTimeWindow]
+    limitations: list[str] = []
+
+
+class BusinessDataCatalog(BaseModel):
+    """当前案件可访问的数据地图，不包含数据库结构或 SQL。"""
+
+    case_type: CaseType
+    entity_scope: str
+    observation_date: str
+    datasets: list[DatasetCapability]
+    global_rules: list[str]
+
+
+class EvidenceQuery(BaseModel):
+    """受控证据查询；所有选项都由后端语义层校验。"""
+
+    dataset: ReceivableDataset
+    grain: EvidenceGrain
+    metrics: Annotated[list[EvidenceMetric], Field(min_length=1, max_length=12)]
+    time_window: EvidenceTimeWindow = "latest"
+    sort_by: EvidenceMetric | None = None
+    sort_direction: EvidenceSortDirection = "desc"
+    limit: Annotated[int, Field(ge=1, le=100)] = 30
 
 
 class DashboardResponse(BaseModel):
@@ -119,6 +191,48 @@ class RuleHit(BaseModel):
     period: str
 
 
+class InvestigationSignalInput(BaseModel):
+    """规则、异常雷达或人工入口交给调查内核的一条信号。"""
+
+    signal_id: str
+    signal_name: str
+    reason: str
+    severity: RiskPriority
+    exposure_amount: float
+    metrics: dict[str, JsonScalar]
+    source_version: str
+    threshold_source: str
+    sources: list[str]
+    period: str
+
+
+class InvestigationDataQuality(BaseModel):
+    """案件入口声明的数据质量状态；未知不得伪装成通过。"""
+
+    status: DataQualityStatus = "UNKNOWN"
+    warnings: list[str] = []
+
+
+class InvestigationCaseInput(BaseModel):
+    """规则引擎与 V2 调查内核之间冻结的输入契约。"""
+
+    schema_version: Literal["2.0"] = "2.0"
+    case_id: str
+    discovery_source: DiscoverySource
+    case_type: CaseType
+    entity_type: str
+    entity_id: str
+    entity_label: str
+    entity_context: dict[str, JsonScalar]
+    observation_date: str
+    priority: RiskPriority
+    exposure_amount: float
+    summary: str
+    source_set_version: str
+    signals: Annotated[list[InvestigationSignalInput], Field(min_length=1)]
+    data_quality: InvestigationDataQuality
+
+
 class RiskCaseSummary(BaseModel):
     """案件队列中的单行摘要。"""
 
@@ -156,10 +270,33 @@ class InvestigationFact(BaseModel):
     evidence_ids: list[str] = []
 
 
+class RiskSignalAssessment(BaseModel):
+    """把可判断的风险信号与仍待补证的根因、最终结果分开。"""
+
+    stage: RiskSignalStage
+    statement: Annotated[str, Field(min_length=1, max_length=500)]
+    evidence_ids: Annotated[list[str], Field(min_length=1, max_length=9)]
+    drivers: Annotated[list[str], Field(min_length=1, max_length=5)]
+    counter_signals: Annotated[list[str], Field(max_length=5)] = []
+    watch_items: Annotated[list[str], Field(min_length=1, max_length=5)]
+
+
+class InvestigationTraceEvent(BaseModel):
+    """保存到报告中的精简调查轨迹，不包含模型私有思维链。"""
+
+    event_type: InvestigationTraceType
+    title: Annotated[str, Field(min_length=1, max_length=200)]
+    detail: Annotated[str, Field(min_length=1, max_length=1_000)]
+    tool_name: InvestigationToolName | None = None
+    evidence_id: str | None = None
+    created_at: str
+
+
 class InvestigationReport(BaseModel):
     """调查 Agent 的结构化输出。"""
 
     investigation_summary: Annotated[str, Field(min_length=1, max_length=2_000)]
+    risk_assessment: RiskSignalAssessment
     hypotheses: Annotated[list[InvestigationHypothesis], Field(min_length=1, max_length=8)]
     facts: Annotated[list[InvestigationFact], Field(max_length=12)] = []
     limitations: Annotated[list[str], Field(max_length=12)] = []
@@ -167,6 +304,7 @@ class InvestigationReport(BaseModel):
     recommended_actions: Annotated[list[str], Field(min_length=1, max_length=5)]
     evidence_completeness: EvidenceCompleteness = "LOW"
     requires_human_review: Literal[True] = True
+    trace: Annotated[list[InvestigationTraceEvent], Field(max_length=30)] = []
 
 
 class InvestigationRecord(BaseModel):
@@ -177,6 +315,17 @@ class InvestigationRecord(BaseModel):
     report: InvestigationReport
     evidence: list[Evidence]
     created_at: str
+
+
+class InvestigationStreamEvent(BaseModel):
+    """调查流式接口的一条 NDJSON 事件。"""
+
+    sequence: Annotated[int, Field(ge=1)]
+    event_type: InvestigationStreamEventType
+    message: Annotated[str, Field(min_length=1, max_length=1_000)]
+    tool_name: InvestigationToolName | None = None
+    evidence: Evidence | None = None
+    record: InvestigationRecord | None = None
 
 
 class ReviewRequest(BaseModel):

@@ -1,15 +1,22 @@
-"""聊天与首页分析的应用服务。"""
+"""经营分析、风险案件、调查事件流与人工审核的应用服务。"""
 
 from __future__ import annotations
 
 import json
+import logging
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import cast
 from uuid import uuid4
 
 from pydantic_ai.models import Model
 
-from ict_agent.agent import run_analysis_agent, run_investigation_agent
+from ict_agent.agent import (
+    InvestigationAgentProgress,
+    InvestigationOutcome,
+    stream_investigation_agent,
+)
 from ict_agent.config import ConfigurationError, Settings, load_settings
 from ict_agent.data import (
     CaseStore,
@@ -22,10 +29,9 @@ from ict_agent.data import (
 from ict_agent.models import (
     CaseStatus,
     CaseType,
-    ChatRequest,
-    ChatResponse,
     DashboardResponse,
     InvestigationRecord,
+    InvestigationStreamEvent,
     ReviewDecision,
     ReviewRecord,
     ReviewRequest,
@@ -44,6 +50,8 @@ from ict_agent.tools import (
     get_latest_ar_summary,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class ServiceError(RuntimeError):
     """可安全映射到 HTTP 的应用错误。"""
@@ -52,35 +60,6 @@ class ServiceError(RuntimeError):
         super().__init__(message)
         self.request_id = request_id
         self.status_code = status_code
-
-
-async def chat(
-    request: ChatRequest,
-    *,
-    settings: Settings | None = None,
-    model: Model | None = None,
-) -> ChatResponse:
-    """完成一次无状态数据分析对话。"""
-
-    request_id = uuid4().hex
-    try:
-        runtime_settings = settings or load_settings(require_api_key=True)
-        DuckDBStore(runtime_settings.database_path).ensure_ready()
-        outcome = await run_analysis_agent(
-            runtime_settings,
-            request.message,
-            request.history,
-            model=model,
-        )
-    except (ConfigurationError, DataAccessError) as exc:
-        raise ServiceError(str(exc), request_id, 503) from exc
-    except Exception as exc:
-        raise ServiceError(
-            "DeepSeek 分析失败，请检查 API Key、账户余额和网络后重试。",
-            request_id,
-            502,
-        ) from exc
-    return ChatResponse(answer=outcome.answer, evidence=outcome.evidence, request_id=request_id)
 
 
 def get_dashboard(*, settings: Settings | None = None) -> DashboardResponse:
@@ -311,13 +290,22 @@ def get_case_detail(
         raise ServiceError(str(exc), request_id, 503) from exc
 
 
-async def investigate_case(
+@dataclass(frozen=True)
+class PreparedInvestigation:
+    """已经完成同步校验、可安全开始流式响应的调查上下文。"""
+
+    settings: Settings
+    case: RiskCaseDetail
+    model: Model | None
+
+
+def prepare_investigation(
     case_id: str,
     *,
     settings: Settings | None = None,
     model: Model | None = None,
-) -> InvestigationRecord:
-    """运行调查 Agent、保存结构化报告并推进到待审核。"""
+) -> PreparedInvestigation:
+    """在 HTTP 流开始前检查配置、案件和业务数据库。"""
 
     request_id = uuid4().hex
     try:
@@ -326,38 +314,104 @@ async def investigate_case(
         )
         case = get_case_detail(case_id, settings=runtime_settings)
         DuckDBStore(runtime_settings.database_path).ensure_ready()
-        outcome = await run_investigation_agent(runtime_settings, case, model=model)
-        created_at = datetime.now(UTC).isoformat()
-        record = InvestigationRecord(
-            investigation_id=uuid4().hex,
-            case_id=case_id,
-            report=outcome.report,
-            evidence=outcome.evidence,
-            created_at=created_at,
-        )
-        CaseStore(runtime_settings.case_database_path).save_investigation(
-            InvestigationWrite(
-                investigation_id=record.investigation_id,
-                case_id=record.case_id,
-                report_json=record.report.model_dump_json(),
-                evidence_json=json.dumps(
-                    [item.model_dump(mode="json") for item in record.evidence],
-                    ensure_ascii=False,
-                ),
-                created_at=record.created_at,
-            )
-        )
-        return record
+        return PreparedInvestigation(settings=runtime_settings, case=case, model=model)
     except ServiceError:
         raise
     except (ConfigurationError, DataAccessError) as exc:
         raise ServiceError(str(exc), request_id, 503) from exc
-    except Exception as exc:
-        raise ServiceError(
-            "DeepSeek 案件调查失败，请检查 API Key、账户余额和网络后重试。",
-            request_id,
-            502,
-        ) from exc
+
+
+def _save_investigation(
+    prepared: PreparedInvestigation, outcome: InvestigationOutcome
+) -> InvestigationRecord:
+    created_at = datetime.now(UTC).isoformat()
+    record = InvestigationRecord(
+        investigation_id=uuid4().hex,
+        case_id=prepared.case.case_id,
+        report=outcome.report,
+        evidence=outcome.evidence,
+        created_at=created_at,
+    )
+    CaseStore(prepared.settings.case_database_path).save_investigation(
+        InvestigationWrite(
+            investigation_id=record.investigation_id,
+            case_id=record.case_id,
+            report_json=record.report.model_dump_json(),
+            evidence_json=json.dumps(
+                [item.model_dump(mode="json") for item in record.evidence],
+                ensure_ascii=False,
+            ),
+            created_at=record.created_at,
+        )
+    )
+    return record
+
+
+async def stream_prepared_investigation(
+    prepared: PreparedInvestigation,
+) -> AsyncIterator[InvestigationStreamEvent]:
+    """流式执行调查，结束时保存完整或部分报告。"""
+
+    sequence = 1
+    yield InvestigationStreamEvent(
+        sequence=sequence,
+        event_type="RUN_STARTED",
+        message="已载入案件，DeepSeek 高强度思考正在发现数据并调查证据。",
+    )
+    try:
+        async for event in stream_investigation_agent(
+            prepared.settings, prepared.case, model=prepared.model
+        ):
+            sequence += 1
+            if isinstance(event, InvestigationAgentProgress):
+                yield InvestigationStreamEvent(
+                    sequence=sequence,
+                    event_type=event.event_type,
+                    message=event.message,
+                    tool_name=event.tool_name,
+                    evidence=event.evidence,
+                )
+                continue
+            record = _save_investigation(prepared, event)
+            yield InvestigationStreamEvent(
+                sequence=sequence,
+                event_type="REPORT_COMPLETED",
+                message=(
+                    "调查未完整完成，部分证据与无法判断报告已保存。"
+                    if event.partial
+                    else "调查报告通过证据校验并已保存，等待人工审核。"
+                ),
+                record=record,
+            )
+    except Exception:
+        logger.exception("调查事件流执行失败：case_id=%s", prepared.case.case_id)
+        sequence += 1
+        yield InvestigationStreamEvent(
+            sequence=sequence,
+            event_type="ERROR",
+            message="DeepSeek 调查未能开始，请检查 API Key、账户余额和网络后重试。",
+        )
+
+
+async def investigate_case(
+    case_id: str,
+    *,
+    settings: Settings | None = None,
+    model: Model | None = None,
+) -> InvestigationRecord:
+    """非流式调用入口，供自动化测试和离线评测复用。"""
+
+    request_id = uuid4().hex
+    error_message: str | None = None
+    prepared = prepare_investigation(case_id, settings=settings, model=model)
+    async for event in stream_prepared_investigation(prepared):
+        if event.event_type == "REPORT_COMPLETED" and event.record is not None:
+            return event.record
+        if event.event_type == "ERROR":
+            error_message = event.message
+    message = error_message or "DeepSeek 案件调查未产生报告。"
+    exc = RuntimeError(message)
+    raise ServiceError(message, request_id, 502) from exc
 
 
 def review_case(

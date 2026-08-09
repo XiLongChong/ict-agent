@@ -10,6 +10,7 @@ __pycache__/
 .pytest-tmp/
 .mypy_cache/
 .ruff_cache/
+.playwright-cli/
 .coverage
 htmlcov/
 build/
