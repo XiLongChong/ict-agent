@@ -2,8 +2,9 @@
 
 import pytest
 from ict_agent.data import DuckDBStore
-from ict_agent.models import EvidenceQuery
+from ict_agent.models import BusinessRecordSearchQuery, EvidenceQuery
 from ict_agent.tools import (
+    discover_evidence_capabilities,
     get_ar_trend,
     get_business_overview,
     get_customer_ar_history,
@@ -15,8 +16,8 @@ from ict_agent.tools import (
     get_material_inventory_age_profile,
     get_material_inventory_history,
     get_material_sales_context,
-    get_receivable_data_catalog,
-    query_customer_business_evidence,
+    query_business_evidence,
+    search_business_records,
 )
 
 
@@ -76,9 +77,22 @@ def test_receivable_investigation_tools_keep_evidence_granular(
     assert "不能抵消" in credit.metric_definitions[0]
 
 
-def test_receivable_catalog_exposes_semantics_not_sql() -> None:
-    catalog = get_receivable_data_catalog("C015", "2026-07-31")
+def test_receivable_catalog_exposes_live_semantics_not_sql(store: DuckDBStore) -> None:
+    catalog = discover_evidence_capabilities(
+        store,
+        "ACCOUNTS_RECEIVABLE",
+        {"customer_id": "C015", "customer_name": "测试客户"},
+        "2026-07-31",
+    )
 
+    assert {(item.dataset, item.grain) for item in catalog.datasets} == {
+        ("receivables", "month"),
+        ("receivables", "order"),
+        ("sales_payments", "month"),
+        ("extensions", "order"),
+        ("credit", "customer"),
+        ("contracts", "contract"),
+    }
     assert {item.dataset for item in catalog.datasets} == {
         "receivables",
         "sales_payments",
@@ -87,15 +101,16 @@ def test_receivable_catalog_exposes_semantics_not_sql() -> None:
         "contracts",
     }
     assert all("SQL" not in item.description for item in catalog.datasets)
-    assert "month" in catalog.datasets[0].grains
+    assert all(item.available for item in catalog.datasets)
 
 
 def test_controlled_evidence_query_projects_metrics_and_scopes_customer(
     store: DuckDBStore,
 ) -> None:
-    result = query_customer_business_evidence(
+    result = query_business_evidence(
         store,
-        "C015",
+        "ACCOUNTS_RECEIVABLE",
+        {"customer_id": "C015"},
         EvidenceQuery(
             dataset="receivables",
             grain="month",
@@ -113,10 +128,11 @@ def test_controlled_evidence_query_projects_metrics_and_scopes_customer(
 def test_controlled_evidence_query_rejects_invalid_dataset_grain(
     store: DuckDBStore,
 ) -> None:
-    with pytest.raises(ValueError, match="不支持粒度"):
-        query_customer_business_evidence(
+    with pytest.raises(ValueError, match="不支持数据集 credit/month"):
+        query_business_evidence(
             store,
-            "C015",
+            "ACCOUNTS_RECEIVABLE",
+            {"customer_id": "C015"},
             EvidenceQuery(
                 dataset="credit",
                 grain="month",
@@ -136,3 +152,33 @@ def test_inventory_investigation_tools_compare_age_and_sales(
     assert history.rows[0][1] == pytest.approx(600)
     assert age.rows[0][0] == "0-30天"
     assert sales.warnings and "促销活动" in sales.warnings[0]
+
+
+def test_inventory_uses_same_controlled_query_contract(store: DuckDBStore) -> None:
+    result = query_business_evidence(
+        store,
+        "INVENTORY",
+        {"material_code": "M1", "inventory_org": "W1"},
+        EvidenceQuery(
+            dataset="inventory",
+            grain="quarter",
+            metrics=["inventory_amount", "stale_inventory_amount"],
+            time_window="last_6_months",
+            limit=2,
+        ),
+    )
+
+    assert result.columns == ["期间", "库存金额_元", "180天以上库存_元"]
+    assert len(result.rows) == 1
+
+
+def test_business_record_search_is_scoped_to_current_case(store: DuckDBStore) -> None:
+    result = search_business_records(
+        store,
+        "ACCOUNTS_RECEIVABLE",
+        {"customer_id": "C015", "customer_name": "测试客户"},
+        BusinessRecordSearchQuery(record_type="order", query="S1", limit=10),
+    )
+
+    assert result.rows == [["order", "S1", "S1"]]
+    assert result.sources == ["ar_snapshots"]

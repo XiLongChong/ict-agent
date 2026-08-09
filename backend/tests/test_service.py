@@ -44,6 +44,20 @@ QUERIES = [
         "time_window": "latest",
         "limit": 1,
     },
+    {
+        "dataset": "extensions",
+        "grain": "order",
+        "metrics": ["ar_amount", "overdue_amount", "matched_extension_actions"],
+        "time_window": "all",
+        "limit": 20,
+    },
+    {
+        "dataset": "contracts",
+        "grain": "contract",
+        "metrics": ["contract_amount", "ar_amount", "overdue_amount"],
+        "time_window": "latest",
+        "limit": 20,
+    },
 ]
 
 
@@ -52,8 +66,8 @@ def _service_model(messages: list[ModelMessage], info: AgentInfo) -> ModelRespon
         part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)
     ]
     returned_names = [part.tool_name for part in returns]
-    if "discover_business_data" not in returned_names:
-        return ModelResponse(parts=[ToolCallPart("discover_business_data", {})])
+    if "discover_evidence_capabilities" not in returned_names:
+        return ModelResponse(parts=[ToolCallPart("discover_evidence_capabilities", {})])
     query_count = returned_names.count("query_business_evidence")
     if query_count < len(QUERIES):
         return ModelResponse(
@@ -160,7 +174,7 @@ async def test_investigation_service_persists_report(settings: Settings) -> None
     detail = get_case_detail(case_id, settings=settings)
 
     assert record.report.risk_assessment is not None
-    assert len(record.evidence) == 4
+    assert len(record.evidence) == 6
     assert detail.status == "PENDING_REVIEW"
     assert detail.latest_investigation is not None
 

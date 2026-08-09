@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import os
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
@@ -41,6 +42,29 @@ class ImportSummary:
     rows: int
     min_date: str | None
     max_date: str | None
+
+
+@dataclass(frozen=True)
+class SourceSnapshot:
+    """一张已导入来源文件的内容身份与数值摘要。"""
+
+    table: str
+    filename: str
+    size_bytes: int
+    sha256: str
+    rows: int
+    min_date: str | None
+    max_date: str | None
+
+
+@dataclass(frozen=True)
+class DataSnapshot:
+    """当前业务数据库对应的一组固定来源身份。"""
+
+    snapshot_id: str
+    imported_at: str
+    schema_fingerprint: str
+    sources: tuple[SourceSnapshot, ...]
 
 
 @dataclass(frozen=True)
@@ -381,6 +405,28 @@ def _types_literal(overrides: Mapping[str, str]) -> str:
     return "{" + items + "}"
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _schema_fingerprint() -> str:
+    contract = {
+        table: {
+            "filename": spec.filename,
+            "required_columns": sorted(spec.required_columns),
+            "type_overrides": dict(sorted(spec.type_overrides.items())),
+            "date_column": spec.date_column,
+        }
+        for table, spec in sorted(TABLE_SPECS.items())
+    }
+    encoded = json.dumps(contract, ensure_ascii=False, sort_keys=True).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _validate_source(path: Path, spec: TableSpec) -> dict[str, str]:
     if not path.is_file():
         raise DataAccessError(f"缺少比赛数据文件：{path}")
@@ -427,9 +473,11 @@ def rebuild_database(data_dir: Path, database_path: Path) -> list[ImportSummary]
     """从固定 7 张 CSV 原子重建 DuckDB。"""
 
     sources: dict[str, tuple[Path, dict[str, str]]] = {}
+    source_identities: dict[str, tuple[int, str]] = {}
     for table, spec in TABLE_SPECS.items():
         source = data_dir / spec.filename
         sources[table] = (source, _validate_source(source, spec))
+        source_identities[table] = (source.stat().st_size, _file_sha256(source))
 
     database_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = database_path.parent / f".{database_path.name}.{uuid4().hex}.tmp"
@@ -451,6 +499,57 @@ def rebuild_database(data_dir: Path, database_path: Path) -> list[ImportSummary]
                 [str(source)],
             )
             summaries.append(_validate_table(connection, table, spec))
+        schema_fingerprint = _schema_fingerprint()
+        source_snapshots = []
+        for summary in summaries:
+            source = sources[summary.table][0]
+            expected_size, expected_sha256 = source_identities[summary.table]
+            if source.stat().st_size != expected_size or _file_sha256(source) != expected_sha256:
+                raise DataAccessError(
+                    f"{source.name} 在导入期间发生变化，请停止数据写入后重新导入。"
+                )
+            source_snapshots.append(
+                SourceSnapshot(
+                    table=summary.table,
+                    filename=TABLE_SPECS[summary.table].filename,
+                    size_bytes=expected_size,
+                    sha256=expected_sha256,
+                    rows=summary.rows,
+                    min_date=summary.min_date,
+                    max_date=summary.max_date,
+                )
+            )
+        snapshot_material = {
+            "schema_fingerprint": schema_fingerprint,
+            "sources": [{"table": item.table, "sha256": item.sha256} for item in source_snapshots],
+        }
+        snapshot_id = hashlib.sha256(
+            json.dumps(snapshot_material, sort_keys=True).encode()
+        ).hexdigest()[:24]
+        imported_at = datetime.now(UTC).isoformat()
+        connection.execute(
+            """
+            CREATE TABLE import_manifest (
+                snapshot_id VARCHAR PRIMARY KEY,
+                imported_at TIMESTAMP NOT NULL,
+                schema_fingerprint VARCHAR NOT NULL,
+                sources_json VARCHAR NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO import_manifest VALUES (?, ?, ?, ?)",
+            [
+                snapshot_id,
+                imported_at,
+                schema_fingerprint,
+                json.dumps(
+                    [item.__dict__ for item in source_snapshots],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            ],
+        )
         connection.execute("CHECKPOINT")
         connection.close()
         connection = None
@@ -474,41 +573,86 @@ class DuckDBStore:
 
     def __init__(self, database_path: Path) -> None:
         self.database_path = database_path
+        self._ready = False
+
+    def _connect(self) -> duckdb.DuckDBPyConnection:
+        connection = duckdb.connect(
+            str(self.database_path),
+            read_only=True,
+            config={
+                "enable_external_access": "false",
+                "allow_community_extensions": "false",
+                "allow_unsigned_extensions": "false",
+                "autoinstall_known_extensions": "false",
+                "autoload_known_extensions": "false",
+                "threads": "4",
+                "memory_limit": "1GB",
+                "max_temp_directory_size": "0B",
+            },
+        )
+        connection.execute("SET lock_configuration = true")
+        return connection
 
     def ensure_ready(self) -> None:
         """确认数据库存在且包含全部业务表。"""
 
+        if self._ready:
+            return
         if not self.database_path.is_file():
             raise DataAccessError(
                 "分析数据库尚未生成，请先运行 python backend/scripts/import_data.py。"
             )
         try:
-            with duckdb.connect(str(self.database_path), read_only=True) as connection:
+            with self._connect() as connection:
                 rows = connection.execute(
                     "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
                 ).fetchall()
         except duckdb.Error as exc:
             raise DataAccessError("分析数据库无法打开，请重新执行数据导入。") from exc
         tables = {str(row[0]) for row in rows}
-        missing = sorted(TABLE_SPECS.keys() - tables)
+        missing = sorted((TABLE_SPECS.keys() | {"import_manifest"}) - tables)
         if missing:
             raise DataAccessError(f"分析数据库缺少表：{', '.join(missing)}，请重新导入。")
+        self._ready = True
 
     def fetch(self, sql: str, parameters: SqlParameters = ()) -> QueryResult:
         """执行由业务工具提供的参数化只读查询。"""
 
         self.ensure_ready()
         try:
-            with duckdb.connect(str(self.database_path), read_only=True) as connection:
+            with self._connect() as connection:
                 cursor = connection.execute(sql, list(parameters))
                 description = cursor.description or []
                 columns = tuple(str(item[0]) for item in description)
-                rows = tuple(
-                    tuple(_normalize_value(value) for value in row) for row in cursor.fetchall()
-                )
+                raw_rows = cursor.fetchmany(10_001)
+                if len(raw_rows) > 10_000:
+                    raise DataAccessError("数据查询结果超过 10000 行，请缩小受控查询范围。")
+                rows = tuple(tuple(_normalize_value(value) for value in row) for row in raw_rows)
+        except DataAccessError:
+            raise
         except duckdb.Error as exc:
             raise DataAccessError("数据查询失败，请检查数据库是否需要重新导入。") from exc
         return QueryResult(columns=columns, rows=rows)
+
+    def get_snapshot(self) -> DataSnapshot:
+        """读取当前导入快照身份，不暴露本机原始路径。"""
+
+        result = self.fetch(
+            """
+            SELECT snapshot_id, imported_at, schema_fingerprint, sources_json
+            FROM import_manifest LIMIT 1
+            """
+        )
+        if not result.rows:
+            raise DataAccessError("分析数据库缺少导入快照身份，请重新导入。")
+        row = result.rows[0]
+        sources = tuple(SourceSnapshot(**item) for item in json.loads(str(row[3])))
+        return DataSnapshot(
+            snapshot_id=str(row[0]),
+            imported_at=str(row[1]),
+            schema_fingerprint=str(row[2]),
+            sources=sources,
+        )
 
 
 class CaseStore:

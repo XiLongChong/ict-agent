@@ -6,12 +6,13 @@ from collections.abc import AsyncIterator
 import pytest
 from ict_agent.agent import (
     InvestigationOutcome,
+    _query_is_redundant,
     build_investigation_case_input,
     run_investigation_agent,
     stream_investigation_agent,
 )
 from ict_agent.config import Settings
-from ict_agent.models import RiskCaseDetail, RuleHit, ToolResult
+from ict_agent.models import EvidenceQuery, RiskCaseDetail, RuleHit, ToolResult
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -52,13 +53,13 @@ QUERIES = [
         "limit": 20,
     },
     {
-        "dataset": "contracts",
-        "grain": "contract",
-        "metrics": ["contract_amount", "payment_amount", "ar_amount", "overdue_amount"],
+        "dataset": "credit",
+        "grain": "customer",
+        "metrics": ["credit_limit", "list_status", "credit_insurance"],
         "time_window": "latest",
-        "sort_by": "ar_amount",
+        "sort_by": None,
         "sort_direction": "desc",
-        "limit": 20,
+        "limit": 1,
     },
 ]
 
@@ -103,11 +104,15 @@ def _returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
     ]
 
 
+def _input():
+    return build_investigation_case_input(_case())
+
+
 def _investigation_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     returns = _returns(messages)
     returned_names = [part.tool_name for part in returns]
-    if "discover_business_data" not in returned_names:
-        return ModelResponse(parts=[ToolCallPart("discover_business_data", {})])
+    if "discover_evidence_capabilities" not in returned_names:
+        return ModelResponse(parts=[ToolCallPart("discover_evidence_capabilities", {})])
     query_count = returned_names.count("query_business_evidence")
     if query_count < len(QUERIES):
         return ModelResponse(
@@ -154,7 +159,7 @@ def _recovering_query_model(messages: list[ModelMessage], info: AgentInfo) -> Mo
         isinstance(part, RetryPromptPart) for message in messages for part in message.parts
     )
     if (
-        "discover_business_data" in returned_names
+        "discover_evidence_capabilities" in returned_names
         and "query_business_evidence" not in returned_names
         and not has_retry
     ):
@@ -200,8 +205,8 @@ async def _interrupted_stream_model(
 ) -> AsyncIterator[dict[int, DeltaToolCall]]:
     returns = _returns(messages)
     returned_names = [part.tool_name for part in returns]
-    if "discover_business_data" not in returned_names:
-        part = ToolCallPart("discover_business_data", {})
+    if "discover_evidence_capabilities" not in returned_names:
+        part = ToolCallPart("discover_evidence_capabilities", {})
     elif "query_business_evidence" not in returned_names:
         part = ToolCallPart("query_business_evidence", {"query": QUERIES[0]})
     else:
@@ -222,14 +227,53 @@ def test_rule_case_maps_to_frozen_investigation_input() -> None:
     assert contract.discovery_source == "RULE"
     assert contract.entity_context["customer_id"] == "C015"
     assert contract.signals[0].signal_id == "hit-test"
+    assert contract.signals[0].signal_code == "AR_TEST"
     assert contract.data_quality.status == "UNKNOWN"
+
+
+def test_broader_existing_query_blocks_redundant_metric_subset() -> None:
+    previous = EvidenceQuery(
+        dataset="credit",
+        grain="customer",
+        metrics=["credit_limit", "list_status", "credit_insurance"],
+        time_window="latest",
+        limit=30,
+    )
+    subset = EvidenceQuery(
+        dataset="credit",
+        grain="customer",
+        metrics=["credit_limit", "list_status"],
+        time_window="latest",
+        limit=30,
+    )
+
+    assert _query_is_redundant([previous], subset) is True
+
+
+def test_broader_time_window_blocks_redundant_narrower_query() -> None:
+    previous = EvidenceQuery(
+        dataset="sales",
+        grain="month",
+        metrics=["sales_amount", "net_quantity", "return_amount", "gross_profit"],
+        time_window="all",
+        limit=30,
+    )
+    narrower = EvidenceQuery(
+        dataset="sales",
+        grain="month",
+        metrics=["sales_amount", "net_quantity", "return_amount"],
+        time_window="last_6_months",
+        limit=30,
+    )
+
+    assert _query_is_redundant([previous], narrower) is True
 
 
 async def test_investigation_agent_discovers_and_queries_evidence(
     settings: Settings,
 ) -> None:
     outcome = await run_investigation_agent(
-        settings, _case(), model=FunctionModel(stream_function=_stream_model)
+        settings, _input(), model=FunctionModel(stream_function=_stream_model)
     )
 
     assert outcome.partial is False
@@ -238,7 +282,7 @@ async def test_investigation_agent_discovers_and_queries_evidence(
         "receivables",
         "sales_payments",
         "receivables",
-        "contracts",
+        "credit",
     ]
     assert outcome.report.evidence_completeness == "HIGH"
     assert outcome.report.risk_assessment.stage == "DETERIORATING"
@@ -250,7 +294,7 @@ async def test_investigation_agent_can_recover_from_invalid_controlled_query(
 ) -> None:
     outcome = await run_investigation_agent(
         settings,
-        _case(),
+        _input(),
         model=FunctionModel(stream_function=_recovering_query_stream_model),
     )
 
@@ -265,7 +309,7 @@ async def test_investigation_stream_exposes_discovery_queries_and_validation(
     events = [
         event
         async for event in stream_investigation_agent(
-            settings, _case(), model=FunctionModel(stream_function=_stream_model)
+            settings, _input(), model=FunctionModel(stream_function=_stream_model)
         )
     ]
 
@@ -283,7 +327,7 @@ async def test_interrupted_investigation_preserves_evidence_and_abstains(
     settings: Settings,
 ) -> None:
     outcome = await run_investigation_agent(
-        settings, _case(), model=FunctionModel(stream_function=_interrupted_stream_model)
+        settings, _input(), model=FunctionModel(stream_function=_interrupted_stream_model)
     )
 
     assert outcome.partial is True

@@ -17,6 +17,24 @@ def test_health() -> None:
     assert response.json() == {"status": "ok", "service": "ict-agent"}
 
 
+def test_data_snapshot_contract(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        api,
+        "get_data_snapshot",
+        lambda: {
+            "snapshot_id": "abc123",
+            "imported_at": "2026-08-10T00:00:00+00:00",
+            "schema_fingerprint": "fingerprint",
+            "sources": [],
+        },
+    )
+
+    response = client.get("/api/v1/data-snapshot")
+
+    assert response.status_code == 200
+    assert response.json()["snapshot_id"] == "abc123"
+
+
 def test_frontend_is_served() -> None:
     response = client.get("/")
 

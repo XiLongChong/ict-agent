@@ -15,6 +15,7 @@ from ict_agent.models import (
     CaseStatus,
     CaseType,
     DashboardResponse,
+    DataSnapshotResponse,
     ErrorResponse,
     HealthResponse,
     ReviewRecord,
@@ -28,6 +29,7 @@ from ict_agent.service import (
     ServiceError,
     get_case_detail,
     get_dashboard,
+    get_data_snapshot,
     get_risk_overview,
     list_cases,
     prepare_investigation,
@@ -42,8 +44,8 @@ FRONTEND_DIR = PROJECT_ROOT / "frontend"
 
 app = FastAPI(
     title="佳华智审风险调查 Agent API",
-    version="0.3.0",
-    description="基于 7 张比赛数据表的规则发现、可观察 Agent 调查与人工审核闭环。",
+    version="0.4.0",
+    description="基于可追溯七表快照、统一证据网关的可观察 Agent 调查与人工审核闭环。",
 )
 
 
@@ -66,6 +68,18 @@ async def health() -> HealthResponse:
     """确认 HTTP 服务已经启动。"""
 
     return HealthResponse(status="ok", service="ict-agent")
+
+
+@app.get(
+    "/api/v1/data-snapshot",
+    response_model=DataSnapshotResponse,
+    responses={503: {"model": ErrorResponse}},
+    tags=["system"],
+)
+async def data_snapshot() -> DataSnapshotResponse:
+    """返回当前七表导入的可复核内容身份。"""
+
+    return get_data_snapshot()
 
 
 @app.get(

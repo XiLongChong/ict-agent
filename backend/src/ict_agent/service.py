@@ -15,6 +15,7 @@ from pydantic_ai.models import Model
 from ict_agent.agent import (
     InvestigationAgentProgress,
     InvestigationOutcome,
+    build_investigation_case_input,
     stream_investigation_agent,
 )
 from ict_agent.config import ConfigurationError, Settings, load_settings
@@ -30,6 +31,9 @@ from ict_agent.models import (
     CaseStatus,
     CaseType,
     DashboardResponse,
+    DataSnapshotResponse,
+    DataSourceSnapshot,
+    InvestigationCaseInput,
     InvestigationRecord,
     InvestigationStreamEvent,
     ReviewDecision,
@@ -80,6 +84,23 @@ def get_dashboard(*, settings: Settings | None = None) -> DashboardResponse:
         raise ServiceError(str(exc), request_id, 503) from exc
     except Exception as exc:
         raise ServiceError("首页分析失败，请重新导入数据后重试。", request_id, 500) from exc
+
+
+def get_data_snapshot(*, settings: Settings | None = None) -> DataSnapshotResponse:
+    """返回当前业务库的来源哈希和模式身份，不暴露本机路径。"""
+
+    request_id = uuid4().hex
+    try:
+        runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
+        snapshot = DuckDBStore(runtime_settings.database_path).get_snapshot()
+        return DataSnapshotResponse(
+            snapshot_id=snapshot.snapshot_id,
+            imported_at=snapshot.imported_at,
+            schema_fingerprint=snapshot.schema_fingerprint,
+            sources=[DataSourceSnapshot(**item.__dict__) for item in snapshot.sources],
+        )
+    except (ConfigurationError, DataAccessError) as exc:
+        raise ServiceError(str(exc), request_id, 503) from exc
 
 
 def _as_int(value: DatabaseScalar) -> int:
@@ -296,6 +317,7 @@ class PreparedInvestigation:
 
     settings: Settings
     case: RiskCaseDetail
+    investigation_input: InvestigationCaseInput
     model: Model | None
 
 
@@ -314,7 +336,12 @@ def prepare_investigation(
         )
         case = get_case_detail(case_id, settings=runtime_settings)
         DuckDBStore(runtime_settings.database_path).ensure_ready()
-        return PreparedInvestigation(settings=runtime_settings, case=case, model=model)
+        return PreparedInvestigation(
+            settings=runtime_settings,
+            case=case,
+            investigation_input=build_investigation_case_input(case),
+            model=model,
+        )
     except ServiceError:
         raise
     except (ConfigurationError, DataAccessError) as exc:
@@ -360,7 +387,7 @@ async def stream_prepared_investigation(
     )
     try:
         async for event in stream_investigation_agent(
-            prepared.settings, prepared.case, model=prepared.model
+            prepared.settings, prepared.investigation_input, model=prepared.model
         ):
             sequence += 1
             if isinstance(event, InvestigationAgentProgress):

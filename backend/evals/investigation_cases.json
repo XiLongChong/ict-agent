@@ -1,5 +1,6 @@
 {
-  "version": "2.0",
+  "version": "3.0",
+  "scope": "案件已产生后的调查 Agent；不运行、不评价规则引擎",
   "data_contract": "赛事官方数据字典；金额单位按字段说明统一解释为元",
   "global_forbidden_unqualified_claims": [
     "已确认坏账",
@@ -22,17 +23,68 @@
   "cases": [
     {
       "eval_id": "AR-C015-BALANCED-EVIDENCE",
-      "case_id": "case_96ad1c0e61fc53fa8923",
-      "entity_id": "C015",
-      "case_type": "ACCOUNTS_RECEIVABLE",
-      "purpose": "白名单、回款等缓释信息不能覆盖实际逾期；当前展期必须精确匹配。",
-      "required_evidence": [
-        {"dataset": "receivables", "grain": "month"},
-        {"dataset": "receivables", "grain": "order"},
-        {"dataset": "sales_payments", "grain": "month"},
-        {"dataset": "extensions", "grain": "order"},
-        {"dataset": "credit", "grain": "customer"}
-      ],
+      "purpose": "白名单、回款等缓释信息不能覆盖实际逾期；历史展期必须与当前订单精确匹配。",
+      "input": {
+        "schema_version": "2.0",
+        "case_id": "eval-ar-c015",
+        "discovery_source": "RULE",
+        "case_type": "ACCOUNTS_RECEIVABLE",
+        "entity_type": "CUSTOMER",
+        "entity_id": "C015",
+        "entity_label": "C015 南京沛图商贸有限公司",
+        "entity_context": {
+          "customer_id": "C015",
+          "customer_name": "南京沛图商贸有限公司"
+        },
+        "observation_date": "2026-07-31",
+        "priority": "HIGH",
+        "exposure_amount": 55892962.207575805,
+        "summary": "最新应收 5589.30 万元，超期 2839.78 万元，客户仍在经营且未进入黑名单，命中 1 条早期预警规则。",
+        "source_set_version": "2026.08-v2",
+        "signals": [
+          {
+            "signal_id": "eval-signal-ar-c015",
+            "signal_code": "AR_OPERATING_DEEP_OVERDUE",
+            "signal_name": "经营中客户深度超期",
+            "reason": "60天以上超期 2798.70 万元，最大超期 669 天，且近三个月仍有销售或回款，需要调查风险是否继续恶化。",
+            "severity": "HIGH",
+            "exposure_amount": 27986997.597270593,
+            "metrics": {
+              "ar_amount": 55892962.207575805,
+              "overdue_amount": 28397814.12250733,
+              "overdue_60_amount": 27986997.597270593,
+              "overdue_60_rate": 0.50072489436742,
+              "max_overdue_days": 669,
+              "baseline_overdue_amount": 27818974.646898948,
+              "overdue_growth_3m": 578839.4756083824,
+              "sales_amount_3m": 92753286.6084325,
+              "payment_amount_3m": 128638695.93959558,
+              "list_status": 1,
+              "credit_limit": 8841.0
+            },
+            "source_version": "2.0.0",
+            "threshold_source": "赛事模拟数据24个月/8季度回溯后冻结的经营中客户与库存早期预警阈值",
+            "sources": ["ar_snapshots"],
+            "period": "2026-07-31"
+          }
+        ],
+        "data_quality": {
+          "status": "UNKNOWN",
+          "warnings": ["冻结案件输入不替代调查时的数据可用性检查。"]
+        }
+      },
+      "expectations": {
+        "required_evidence": [
+          {"dataset": "receivables", "grain": "month"},
+          {"dataset": "receivables", "grain": "order"},
+          {"dataset": "sales_payments", "grain": "month"},
+          {"dataset": "extensions", "grain": "order"},
+          {"dataset": "credit", "grain": "customer"}
+        ],
+        "maximum_evidence_calls": 8,
+        "allowed_stages": ["EARLY_WARNING", "DETERIORATING"],
+        "allowed_priorities": ["HIGH", "CRITICAL"]
+      },
       "human_review": [
         "是否同时陈述逾期事实和缓释证据，而不是只选择一边",
         "是否把历史展期与当前订单精确匹配结果区分开",
@@ -41,17 +93,68 @@
     },
     {
       "eval_id": "AR-C061-WHITELIST-DETERIORATION",
-      "case_id": "case_6a712fdaba444c676920",
-      "entity_id": "C061",
-      "case_type": "ACCOUNTS_RECEIVABLE",
       "purpose": "白名单经营客户存在大额深度超期时，应形成风险恶化判断，同时保留根因和最终回收结果未知。",
-      "required_evidence": [
-        {"dataset": "receivables", "grain": "month"},
-        {"dataset": "receivables", "grain": "order"},
-        {"dataset": "sales_payments", "grain": "month"},
-        {"dataset": "extensions", "grain": "order"},
-        {"dataset": "credit", "grain": "customer"}
-      ],
+      "input": {
+        "schema_version": "2.0",
+        "case_id": "eval-ar-c061",
+        "discovery_source": "RULE",
+        "case_type": "ACCOUNTS_RECEIVABLE",
+        "entity_type": "CUSTOMER",
+        "entity_id": "C061",
+        "entity_label": "C061 重庆澜图数字技术有限公司",
+        "entity_context": {
+          "customer_id": "C061",
+          "customer_name": "重庆澜图数字技术有限公司"
+        },
+        "observation_date": "2026-07-31",
+        "priority": "HIGH",
+        "exposure_amount": 143020055.38486397,
+        "summary": "最新应收 1.43 亿元，超期 1.07 亿元，客户仍在经营且未进入黑名单，命中 1 条早期预警规则。",
+        "source_set_version": "2026.08-v2",
+        "signals": [
+          {
+            "signal_id": "eval-signal-ar-c061",
+            "signal_code": "AR_OPERATING_DEEP_OVERDUE",
+            "signal_name": "经营中客户深度超期",
+            "reason": "60天以上超期 1.05 亿元，最大超期 669 天，且近三个月仍有销售或回款，需要调查风险是否继续恶化。",
+            "severity": "HIGH",
+            "exposure_amount": 104506312.184876,
+            "metrics": {
+              "ar_amount": 143020055.38486397,
+              "overdue_amount": 106766823.137639,
+              "overdue_60_amount": 104506312.184876,
+              "overdue_60_rate": 0.7307108915854612,
+              "max_overdue_days": 669,
+              "baseline_overdue_amount": 109615664.85612051,
+              "overdue_growth_3m": -2848841.718481511,
+              "sales_amount_3m": 136363077.5025435,
+              "payment_amount_3m": 129890764.27398756,
+              "list_status": 1,
+              "credit_limit": 24360.0
+            },
+            "source_version": "2.0.0",
+            "threshold_source": "赛事模拟数据24个月/8季度回溯后冻结的经营中客户与库存早期预警阈值",
+            "sources": ["ar_snapshots"],
+            "period": "2026-07-31"
+          }
+        ],
+        "data_quality": {
+          "status": "UNKNOWN",
+          "warnings": ["冻结案件输入不替代调查时的数据可用性检查。"]
+        }
+      },
+      "expectations": {
+        "required_evidence": [
+          {"dataset": "receivables", "grain": "month"},
+          {"dataset": "receivables", "grain": "order"},
+          {"dataset": "sales_payments", "grain": "month"},
+          {"dataset": "extensions", "grain": "order"},
+          {"dataset": "credit", "grain": "customer"}
+        ],
+        "maximum_evidence_calls": 8,
+        "allowed_stages": ["DETERIORATING"],
+        "allowed_priorities": ["HIGH", "CRITICAL"]
+      },
       "human_review": [
         "是否明确给出风险恶化或早期预警，而不是整案证据不足",
         "是否把白名单作为反向信号而非免责结论",
@@ -60,34 +163,152 @@
     },
     {
       "eval_id": "AR-C007-EXPOSURE-BUILDUP",
-      "case_id": "case_02edfe4ca0430e8bf7fc",
-      "entity_id": "C007",
-      "case_type": "ACCOUNTS_RECEIVABLE",
       "purpose": "经营中客户新增销售高于回款且超期扩大时，应识别前瞻性敞口积累风险。",
-      "required_evidence": [
-        {"dataset": "receivables", "grain": "month"},
-        {"dataset": "receivables", "grain": "order"},
-        {"dataset": "sales_payments", "grain": "month"},
-        {"dataset": "contracts", "grain": "contract"},
-        {"dataset": "credit", "grain": "customer"}
-      ],
+      "input": {
+        "schema_version": "2.0",
+        "case_id": "eval-ar-c007",
+        "discovery_source": "RULE",
+        "case_type": "ACCOUNTS_RECEIVABLE",
+        "entity_type": "CUSTOMER",
+        "entity_id": "C007",
+        "entity_label": "C007 杭州朔图信息技术有限公司",
+        "entity_context": {
+          "customer_id": "C007",
+          "customer_name": "杭州朔图信息技术有限公司"
+        },
+        "observation_date": "2026-07-31",
+        "priority": "HIGH",
+        "exposure_amount": 142666400.64347157,
+        "summary": "最新应收 1.43 亿元，超期 878.06 万元，客户仍在经营且未进入黑名单，命中 1 条早期预警规则。",
+        "source_set_version": "2026.08-v2",
+        "signals": [
+          {
+            "signal_id": "eval-signal-ar-c007",
+            "signal_code": "AR_OPERATING_EXPOSURE_BUILDUP",
+            "signal_name": "经营中客户风险敞口积累",
+            "reason": "近三个月超期增加 789.81 万元，且新增销售 1.59 亿元高于回款 224.16 万元；客户尚未进入黑名单。",
+            "severity": "HIGH",
+            "exposure_amount": 8780604.19392324,
+            "metrics": {
+              "ar_amount": 142666400.64347157,
+              "overdue_amount": 8780604.19392324,
+              "overdue_60_amount": 882539.8249113602,
+              "overdue_60_rate": 0.006186038344913871,
+              "max_overdue_days": 669,
+              "baseline_overdue_amount": 882539.8249113602,
+              "overdue_growth_3m": 7898064.369011881,
+              "sales_amount_3m": 159282696.51227632,
+              "payment_amount_3m": 2241608.8158156,
+              "list_status": 0,
+              "credit_limit": 0
+            },
+            "source_version": "2.0.0",
+            "threshold_source": "赛事模拟数据24个月/8季度回溯后冻结的经营中客户与库存早期预警阈值",
+            "sources": ["ar_snapshots", "sales", "payments"],
+            "period": "2026-07-31"
+          }
+        ],
+        "data_quality": {
+          "status": "UNKNOWN",
+          "warnings": ["冻结案件输入不替代调查时的数据可用性检查。"]
+        }
+      },
+      "expectations": {
+        "required_evidence": [
+          {"dataset": "receivables", "grain": "month"},
+          {"dataset": "receivables", "grain": "order"},
+          {"dataset": "sales_payments", "grain": "month"},
+          {"dataset": "contracts", "grain": "contract"},
+          {"dataset": "credit", "grain": "customer"}
+        ],
+        "maximum_evidence_calls": 8,
+        "allowed_stages": ["EARLY_WARNING", "DETERIORATING"],
+        "allowed_priorities": ["HIGH", "CRITICAL"]
+      },
       "human_review": [
-        "是否把销售、回款和超期增长组合成有引用的早期预警",
+        "是否把销售、回款和超期增长组合成有引用的早期预警或恶化判断",
         "是否没有把组合相关性扩写成确定的偿债能力或坏账结论",
         "是否给出可继续监测的领先指标"
       ]
     },
     {
       "eval_id": "INV-83NN0001CD-MIXED-SIGNALS",
-      "case_id": "case_d04dd4733ca18916c289",
-      "entity_id": "83NN0001CD|仓库W008",
-      "case_type": "INVENTORY",
-      "purpose": "库存显著增加且存在多条规则时，必须结合库龄和销售速度区分事实与原因。",
-      "required_tools": [
-        "inspect_inventory_history",
-        "inspect_inventory_age_profile",
-        "inspect_material_sales"
-      ],
+      "purpose": "库存显著增加且存在多条信号时，必须结合库存历史、库龄和销售速度区分事实与原因。",
+      "input": {
+        "schema_version": "2.0",
+        "case_id": "eval-inv-83nn0001cd-w008",
+        "discovery_source": "RULE",
+        "case_type": "INVENTORY",
+        "entity_type": "MATERIAL_INVENTORY_ORG",
+        "entity_id": "83NN0001CD|仓库W008",
+        "entity_label": "83NN0001CD",
+        "entity_context": {
+          "material_code": "83NN0001CD",
+          "inventory_org": "仓库W008"
+        },
+        "observation_date": "2026-06-30",
+        "priority": "HIGH",
+        "exposure_amount": 44929756.116,
+        "summary": "当前库存 4492.98 万元，较上季增加 2890.99 万元，命中 2 条库存风险信号。",
+        "source_set_version": "2026.08-v2",
+        "signals": [
+          {
+            "signal_id": "eval-signal-inv-83nn-slowdown",
+            "signal_code": "INV_BUILDUP_SALES_SLOWDOWN",
+            "signal_name": "库存增长且销售放缓",
+            "reason": "库存增加 2890.99 万元，最近三个月销售由 186.65 万元降至 0。",
+            "severity": "HIGH",
+            "exposure_amount": 44929756.116,
+            "metrics": {
+              "inventory_amount": 44929756.116,
+              "previous_inventory_amount": 16019871.151199996,
+              "inventory_growth_amount": 28909884.9648,
+              "inventory_growth_rate": 1.8046265598481082,
+              "stale_inventory_amount": 0,
+              "stale_inventory_rate": 0,
+              "fresh_inventory_amount": 0,
+              "sales_amount_3m": 0,
+              "previous_sales_amount_3m": 1866514.944294
+            },
+            "source_version": "2.0.0",
+            "threshold_source": "赛事模拟数据24个月/8季度回溯后冻结的经营中客户与库存早期预警阈值",
+            "sources": ["inventory_snapshots", "sales"],
+            "period": "2026-06-30"
+          },
+          {
+            "signal_id": "eval-signal-inv-83nn-buildup",
+            "signal_code": "INV_MATERIAL_BUILDUP",
+            "signal_name": "库存显著积累",
+            "reason": "本季库存较上季增加 2890.99 万元，需要调查是正常补货还是需求转弱。",
+            "severity": "MEDIUM",
+            "exposure_amount": 44929756.116,
+            "metrics": {
+              "inventory_amount": 44929756.116,
+              "previous_inventory_amount": 16019871.151199996,
+              "inventory_growth_amount": 28909884.9648,
+              "inventory_growth_rate": 1.8046265598481082
+            },
+            "source_version": "2.0.0",
+            "threshold_source": "赛事模拟数据24个月/8季度回溯后冻结的经营中客户与库存早期预警阈值",
+            "sources": ["inventory_snapshots"],
+            "period": "2026-06-30"
+          }
+        ],
+        "data_quality": {
+          "status": "UNKNOWN",
+          "warnings": ["冻结案件输入不替代调查时的数据可用性检查。"]
+        }
+      },
+      "expectations": {
+        "required_evidence": [
+          {"dataset": "inventory", "grain": "quarter"},
+          {"dataset": "inventory", "grain": "age_bucket"},
+          {"dataset": "sales", "grain": "month"}
+        ],
+        "maximum_evidence_calls": 6,
+        "allowed_stages": ["EARLY_WARNING", "DETERIORATING"],
+        "allowed_priorities": ["HIGH", "CRITICAL"]
+      },
       "human_review": [
         "是否同时分析库存变化、库龄结构和销售速度",
         "是否没有虚构促销活动、下游动销或下游库存",
@@ -96,15 +317,64 @@
     },
     {
       "eval_id": "INV-ZAG60265CN-STALE",
-      "case_id": "case_13a565ade707df3a0bad",
-      "entity_id": "ZAG60265CN|仓库W012",
-      "case_type": "INVENTORY",
       "purpose": "库存金额稳定不等于没有呆滞风险，重点检查库龄证据和近期销售。",
-      "required_tools": [
-        "inspect_inventory_history",
-        "inspect_inventory_age_profile",
-        "inspect_material_sales"
-      ],
+      "input": {
+        "schema_version": "2.0",
+        "case_id": "eval-inv-zag60265cn-w012",
+        "discovery_source": "RULE",
+        "case_type": "INVENTORY",
+        "entity_type": "MATERIAL_INVENTORY_ORG",
+        "entity_id": "ZAG60265CN|仓库W012",
+        "entity_label": "ZAG60265CN",
+        "entity_context": {
+          "material_code": "ZAG60265CN",
+          "inventory_org": "仓库W012"
+        },
+        "observation_date": "2026-06-30",
+        "priority": "HIGH",
+        "exposure_amount": 3203953.1999999997,
+        "summary": "当前库存 320.40 万元，较上季持平，命中 1 条呆滞风险信号。",
+        "source_set_version": "2026.08-v2",
+        "signals": [
+          {
+            "signal_id": "eval-signal-inv-zag-stale",
+            "signal_code": "INV_STALE_NO_SALES",
+            "signal_name": "高库龄且近期无销售",
+            "reason": "180 天以上库存 320.40 万元，占比 100%，最近三个月无销售。",
+            "severity": "HIGH",
+            "exposure_amount": 3203953.1999999997,
+            "metrics": {
+              "inventory_amount": 3203953.1999999997,
+              "previous_inventory_amount": 3203953.1999999997,
+              "inventory_growth_amount": 0,
+              "inventory_growth_rate": 0,
+              "stale_inventory_amount": 3203953.1999999997,
+              "stale_inventory_rate": 1,
+              "fresh_inventory_amount": 0,
+              "sales_amount_3m": 0,
+              "previous_sales_amount_3m": 664844.355
+            },
+            "source_version": "2.0.0",
+            "threshold_source": "赛事模拟数据24个月/8季度回溯后冻结的经营中客户与库存早期预警阈值",
+            "sources": ["inventory_snapshots", "sales"],
+            "period": "2026-06-30"
+          }
+        ],
+        "data_quality": {
+          "status": "UNKNOWN",
+          "warnings": ["冻结案件输入不替代调查时的数据可用性检查。"]
+        }
+      },
+      "expectations": {
+        "required_evidence": [
+          {"dataset": "inventory", "grain": "quarter"},
+          {"dataset": "inventory", "grain": "age_bucket"},
+          {"dataset": "sales", "grain": "month"}
+        ],
+        "maximum_evidence_calls": 6,
+        "allowed_stages": ["DETERIORATING"],
+        "allowed_priorities": ["HIGH", "CRITICAL"]
+      },
       "human_review": [
         "是否避免用环比为零否定呆滞事实",
         "是否引用库龄和销售两类独立证据",
@@ -113,17 +383,66 @@
     },
     {
       "eval_id": "INV-83LV0006CD-BUILDUP-SLOWDOWN",
-      "case_id": "case_7ad34dcde62fb03905f0",
-      "entity_id": "83LV0006CD|仓库W015",
-      "case_type": "INVENTORY",
       "purpose": "库存增长和销售下降方向一致时，应形成滞销早期预警，但不能虚构促销或下游因果。",
-      "required_tools": [
-        "inspect_inventory_history",
-        "inspect_inventory_age_profile",
-        "inspect_material_sales"
-      ],
+      "input": {
+        "schema_version": "2.0",
+        "case_id": "eval-inv-83lv0006cd-w015",
+        "discovery_source": "RULE",
+        "case_type": "INVENTORY",
+        "entity_type": "MATERIAL_INVENTORY_ORG",
+        "entity_id": "83LV0006CD|仓库W015",
+        "entity_label": "83LV0006CD",
+        "entity_context": {
+          "material_code": "83LV0006CD",
+          "inventory_org": "仓库W015"
+        },
+        "observation_date": "2026-06-30",
+        "priority": "HIGH",
+        "exposure_amount": 4162289.132400002,
+        "summary": "当前库存 416.23 万元，较上季增加 303.04 万元，命中 1 条库存风险信号。",
+        "source_set_version": "2026.08-v2",
+        "signals": [
+          {
+            "signal_id": "eval-signal-inv-83lv-slowdown",
+            "signal_code": "INV_BUILDUP_SALES_SLOWDOWN",
+            "signal_name": "库存增长且销售放缓",
+            "reason": "库存增加 303.04 万元，最近三个月销售由 36.22 万元降至 0。",
+            "severity": "HIGH",
+            "exposure_amount": 4162289.132400002,
+            "metrics": {
+              "inventory_amount": 4162289.132400002,
+              "previous_inventory_amount": 1131931.3067999994,
+              "inventory_growth_amount": 3030357.8256000024,
+              "inventory_growth_rate": 2.677157003605551,
+              "stale_inventory_amount": 0,
+              "stale_inventory_rate": 0,
+              "fresh_inventory_amount": 2734875.8388,
+              "sales_amount_3m": 0,
+              "previous_sales_amount_3m": 362195.6016
+            },
+            "source_version": "2.0.0",
+            "threshold_source": "赛事模拟数据24个月/8季度回溯后冻结的经营中客户与库存早期预警阈值",
+            "sources": ["inventory_snapshots", "sales"],
+            "period": "2026-06-30"
+          }
+        ],
+        "data_quality": {
+          "status": "UNKNOWN",
+          "warnings": ["冻结案件输入不替代调查时的数据可用性检查。"]
+        }
+      },
+      "expectations": {
+        "required_evidence": [
+          {"dataset": "inventory", "grain": "quarter"},
+          {"dataset": "inventory", "grain": "age_bucket"},
+          {"dataset": "sales", "grain": "month"}
+        ],
+        "maximum_evidence_calls": 6,
+        "allowed_stages": ["EARLY_WARNING", "DETERIORATING"],
+        "allowed_priorities": ["HIGH", "CRITICAL"]
+      },
       "human_review": [
-        "是否把库存增长和销售下降组合成可行动的早期预警",
+        "是否把库存增长和销售下降组合成可行动的早期预警或恶化判断",
         "是否区分风险模式成立与具体滞销原因未知",
         "是否没有虚构促销、下游库存或特定客户应收因果"
       ]

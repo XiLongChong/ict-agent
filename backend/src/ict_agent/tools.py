@@ -7,12 +7,14 @@ import re
 from ict_agent.data import DatabaseScalar, DuckDBStore, QueryResult
 from ict_agent.models import (
     BusinessDataCatalog,
+    BusinessRecordSearchQuery,
+    CaseType,
     DatasetCapability,
-    EvidenceMetric,
     EvidenceQuery,
     JsonScalar,
     ToolResult,
 )
+from ict_agent.semantic import SemanticCapability, capabilities_for, get_capability
 
 
 class AnalysisInputError(ValueError):
@@ -858,303 +860,51 @@ _WINDOW_MONTHS = {
     "last_12_months": 12,
     "all": 24,
 }
-
-_QUERY_CAPABILITIES: dict[tuple[str, str], tuple[tuple[EvidenceMetric, ...], tuple[str, ...]]] = {
-    (
-        "receivables",
-        "month",
-    ): (
-        (
-            "ar_amount",
-            "overdue_amount",
-            "overdue_30_amount",
-            "overdue_60_amount",
-            "overdue_rate",
-            "max_overdue_days",
-        ),
-        ("latest", "last_3_months", "last_6_months", "last_12_months", "all"),
-    ),
-    (
-        "receivables",
-        "order",
-    ): (
-        (
-            "ar_amount",
-            "overdue_amount",
-            "overdue_30_amount",
-            "overdue_60_amount",
-            "max_overdue_days",
-        ),
-        ("latest",),
-    ),
-    (
-        "sales_payments",
-        "month",
-    ): (
-        (
-            "sales_amount",
-            "payment_amount",
-            "gross_profit",
-            "overdue_interest",
-            "max_payment_overdue_days",
-        ),
-        ("last_3_months", "last_6_months", "last_12_months", "all"),
-    ),
-    (
-        "extensions",
-        "order",
-    ): (
-        ("ar_amount", "overdue_amount", "matched_extension_actions"),
-        ("all",),
-    ),
-    (
-        "credit",
-        "customer",
-    ): (
-        (
-            "credit_limit",
-            "list_status",
-            "credit_rating",
-            "net_assets",
-            "net_profit",
-            "credit_insurance",
-        ),
-        ("latest",),
-    ),
-    (
-        "contracts",
-        "contract",
-    ): (
-        (
-            "contract_amount",
-            "invoiced_amount",
-            "actual_margin_rate",
-            "shipped_amount",
-            "payment_amount",
-            "ar_amount",
-            "overdue_amount",
-        ),
-        ("latest",),
-    ),
-}
-
-_METRIC_COLUMNS: dict[EvidenceMetric, str] = {
-    "ar_amount": "应收金额_元",
-    "overdue_amount": "超期应收_元",
-    "overdue_30_amount": "30天以上超期_元",
-    "overdue_60_amount": "60天以上超期_元",
-    "overdue_rate": "超期率",
-    "overdue_60_rate": "60天以上超期率",
-    "max_overdue_days": "最大超期天数",
-    "sales_amount": "销售额_元",
-    "payment_amount": "回款额_元",
-    "gross_profit": "含税粗算毛利_元",
-    "overdue_interest": "超期利息_元",
-    "max_payment_overdue_days": "回款最大超期天数",
-    "matched_extension_actions": "匹配展期动作数",
-    "credit_limit": "授信额度",
-    "list_status": "名单状态",
-    "credit_rating": "失信分级",
-    "net_assets": "净资产",
-    "net_profit": "净利润",
-    "credit_insurance": "信用保险",
-    "contract_amount": "签约金额_元",
-    "invoiced_amount": "开票金额_元",
-    "actual_margin_rate": "实际净毛利率",
-    "shipped_amount": "出库金额_元",
-}
-
-_SOURCE_METRIC_COLUMNS: dict[tuple[str, str], dict[EvidenceMetric, str]] = {
-    ("receivables", "month"): {
-        "ar_amount": "应收余额_元",
-        "overdue_amount": "超期应收_元",
-        "overdue_30_amount": "30天以上超期_元",
-        "overdue_60_amount": "60天以上超期_元",
-        "overdue_rate": "超期率",
-        "max_overdue_days": "最大超期天数",
-    },
-    ("receivables", "order"): {
-        "ar_amount": "应收金额_元",
-        "overdue_amount": "超期应收_元",
-        "overdue_30_amount": "30天以上超期_元",
-        "overdue_60_amount": "60天以上超期_元",
-        "max_overdue_days": "超期天数",
-    },
-    ("sales_payments", "month"): {
-        "sales_amount": "销售额_元",
-        "payment_amount": "回款额_元",
-        "gross_profit": "含税粗算毛利_元",
-        "overdue_interest": "超期利息_元",
-        "max_payment_overdue_days": "回款最大超期天数",
-    },
-    ("extensions", "order"): {
-        "ar_amount": "当前应收_元",
-        "overdue_amount": "当前超期_元",
-        "matched_extension_actions": "匹配展期动作数",
-    },
-    ("contracts", "contract"): {
-        "contract_amount": "签约金额_元",
-        "invoiced_amount": "开票金额_元",
-        "actual_margin_rate": "实际净毛利率",
-        "shipped_amount": "出库金额_元",
-        "payment_amount": "回款金额_元",
-        "ar_amount": "最新应收_元",
-        "overdue_amount": "最新超期_元",
-    },
-}
-
-_DIMENSION_COLUMNS: dict[tuple[str, str], tuple[str, ...]] = {
-    ("receivables", "month"): ("期间",),
-    (
-        "receivables",
-        "order",
-    ): ("合同号", "销售订单号", "物料编码", "最终承诺还款日期", "是否展期"),
-    ("sales_payments", "month"): ("月份",),
-    (
-        "extensions",
-        "order",
-    ): ("合同号", "销售订单号", "物料编码", "展期后最终承诺日", "最近展期记录日"),
-    ("credit", "customer"): ("客户编号",),
-    ("contracts", "contract"): ("合同号", "合同状态"),
+_WINDOW_QUARTERS = {
+    "latest": 1,
+    "last_3_months": 1,
+    "last_6_months": 2,
+    "last_12_months": 4,
+    "all": 8,
 }
 
 
-def get_receivable_data_catalog(customer_id: str, observation_date: str) -> BusinessDataCatalog:
-    """返回应收案件可用的语义数据地图，不暴露物理表结构。"""
-
-    normalized_id = customer_id.strip().upper()
-    if not re.fullmatch(r"C\d{3}", normalized_id):
-        raise AnalysisInputError("客户编号必须采用 C015 这样的 C 加三位数字格式。")
-    descriptions = {
-        "receivables": "月末应收趋势或最新订单级未结余额、承诺日与超期结构。",
-        "sales_payments": "按自然月对齐销售、回款、粗算毛利和超期利息。",
-        "extensions": "把当前应收订单与历史展期动作按业务键精确匹配。",
-        "credit": "客户当前授信、名单、财务概况和信用保险主数据。",
-        "contracts": "当前未结应收所关联正式项目合同的签约、开票、出库和回款闭环。",
-    }
-    limitations = {
-        "receivables": ["月末快照是时点余额，不能跨期直接求和。"],
-        "sales_payments": ["销售减回款不等于应收，只能用于比较经营方向。"],
-        "extensions": ["展期表没有审批人和审批状态。"],
-        "credit": ["只有当前状态，没有授信与名单历史。"],
-        "contracts": ["没有项目验收记录，合同闭环只能作为间接证据。"],
-    }
-    datasets = [
-        DatasetCapability(
-            dataset="receivables",
-            description=descriptions["receivables"],
-            grains=["month", "order"],
-            metrics=[
-                "ar_amount",
-                "overdue_amount",
-                "overdue_30_amount",
-                "overdue_60_amount",
-                "overdue_rate",
-                "max_overdue_days",
-            ],
-            time_windows=["latest", "last_3_months", "last_6_months", "last_12_months", "all"],
-            limitations=limitations["receivables"],
-        ),
-        DatasetCapability(
-            dataset="sales_payments",
-            description=descriptions["sales_payments"],
-            grains=["month"],
-            metrics=[
-                "sales_amount",
-                "payment_amount",
-                "gross_profit",
-                "overdue_interest",
-                "max_payment_overdue_days",
-            ],
-            time_windows=["last_3_months", "last_6_months", "last_12_months", "all"],
-            limitations=limitations["sales_payments"],
-        ),
-        DatasetCapability(
-            dataset="extensions",
-            description=descriptions["extensions"],
-            grains=["order"],
-            metrics=["ar_amount", "overdue_amount", "matched_extension_actions"],
-            time_windows=["all"],
-            limitations=limitations["extensions"],
-        ),
-        DatasetCapability(
-            dataset="credit",
-            description=descriptions["credit"],
-            grains=["customer"],
-            metrics=[
-                "credit_limit",
-                "list_status",
-                "credit_rating",
-                "net_assets",
-                "net_profit",
-                "credit_insurance",
-            ],
-            time_windows=["latest"],
-            limitations=limitations["credit"],
-        ),
-        DatasetCapability(
-            dataset="contracts",
-            description=descriptions["contracts"],
-            grains=["contract"],
-            metrics=[
-                "contract_amount",
-                "invoiced_amount",
-                "actual_margin_rate",
-                "shipped_amount",
-                "payment_amount",
-                "ar_amount",
-                "overdue_amount",
-            ],
-            time_windows=["latest"],
-            limitations=limitations["contracts"],
-        ),
-    ]
-    return BusinessDataCatalog(
-        case_type="ACCOUNTS_RECEIVABLE",
-        entity_scope=f"客户 {normalized_id}",
-        observation_date=observation_date,
-        datasets=datasets,
-        global_rules=[
-            "所有查询自动限定当前案件客户，不能改查其他主体。",
-            "金额、日期和比例必须引用 query_business_evidence 返回的 evidence_id。",
-            "模型只能选择数据集、粒度、指标、窗口、排序和行数，不能提交 SQL。",
-        ],
-    )
-
-
-def _validate_evidence_query(query: EvidenceQuery) -> None:
-    key = (query.dataset, query.grain)
-    capability = _QUERY_CAPABILITIES.get(key)
-    if capability is None:
-        raise AnalysisInputError(f"数据集 {query.dataset} 不支持粒度 {query.grain}。")
-    allowed_metrics, allowed_windows = capability
-    invalid_metrics = sorted(set(query.metrics) - set(allowed_metrics))
+def _validate_evidence_query(case_type: CaseType, query: EvidenceQuery) -> SemanticCapability:
+    capability = get_capability(query.dataset, query.grain)
+    if capability is None or capability.case_type != case_type:
+        raise AnalysisInputError(f"{case_type} 案件不支持数据集 {query.dataset}/{query.grain}。")
+    invalid_metrics = sorted(set(query.metrics) - set(capability.metrics))
     if invalid_metrics:
         raise AnalysisInputError(
             f"{query.dataset}/{query.grain} 不支持指标：{', '.join(invalid_metrics)}。"
         )
-    if query.time_window not in allowed_windows:
+    if query.time_window not in capability.time_windows:
         raise AnalysisInputError(
             f"{query.dataset}/{query.grain} 不支持时间窗口 {query.time_window}。"
         )
     if query.sort_by is not None and query.sort_by not in query.metrics:
         raise AnalysisInputError("sort_by 必须同时出现在 metrics 中。")
+    return capability
 
 
 def _project_tool_result(
     result: ToolResult,
     query: EvidenceQuery,
     *,
-    dimension_columns: tuple[str, ...],
+    capability: SemanticCapability,
 ) -> ToolResult:
-    key = (query.dataset, query.grain)
-    source_metric_columns = _SOURCE_METRIC_COLUMNS[key]
-    source_columns = [*dimension_columns, *(source_metric_columns[item] for item in query.metrics)]
-    selected_columns = [*dimension_columns, *(_METRIC_COLUMNS[item] for item in query.metrics)]
+    source_columns = [
+        *capability.dimension_columns,
+        *(capability.source_metric_columns[item] for item in query.metrics),
+    ]
+    selected_columns = [
+        *capability.dimension_columns,
+        *(capability.output_metric_columns[item] for item in query.metrics),
+    ]
     indices = [result.columns.index(column) for column in source_columns]
     rows = [[row[index] for index in indices] for row in result.rows]
     if query.sort_by is not None:
-        sort_column = _METRIC_COLUMNS[query.sort_by]
+        sort_column = capability.output_metric_columns[query.sort_by]
         sort_index = selected_columns.index(sort_column)
         rows.sort(
             key=lambda row: (row[sort_index] is None, row[sort_index]),
@@ -1164,21 +914,38 @@ def _project_tool_result(
     return result.model_copy(update={"columns": selected_columns, "rows": rows})
 
 
-def _credit_query_result(result: ToolResult, customer_id: str, query: EvidenceQuery) -> ToolResult:
+def _credit_query_result(
+    result: ToolResult,
+    customer_id: str,
+    query: EvidenceQuery,
+    capability: SemanticCapability,
+) -> ToolResult:
     values = {str(row[0]): row[1] for row in result.rows}
-    columns = ["客户编号", *(_METRIC_COLUMNS[item] for item in query.metrics)]
+    columns = ["客户编号", *(capability.output_metric_columns[item] for item in query.metrics)]
     row = [customer_id, *(values[column] for column in columns[1:])]
     return result.model_copy(update={"columns": columns, "rows": [row]})
 
 
-def query_customer_business_evidence(
-    store: DuckDBStore, customer_id: str, query: EvidenceQuery
+def query_business_evidence(
+    store: DuckDBStore,
+    case_type: CaseType,
+    entity_context: dict[str, JsonScalar],
+    query: EvidenceQuery,
 ) -> ToolResult:
-    """按冻结语义层执行受控应收证据查询。"""
+    """按单一语义注册表执行当前案件范围内的受控证据查询。"""
 
-    _validate_evidence_query(query)
-    normalized_id = customer_id.strip().upper()
+    capability = _validate_evidence_query(case_type, query)
     key = (query.dataset, query.grain)
+    if case_type == "ACCOUNTS_RECEIVABLE":
+        normalized_id = str(entity_context.get("customer_id", "")).strip().upper()
+        if not re.fullmatch(r"C\d{3}", normalized_id):
+            raise AnalysisInputError("案件缺少合法客户编号。")
+    else:
+        material = str(entity_context.get("material_code", "")).strip()
+        org = str(entity_context.get("inventory_org", "")).strip()
+        if not material or not org:
+            raise AnalysisInputError("库存案件缺少物料编码或库存组织。")
+
     if key == ("receivables", "month"):
         result = get_customer_ar_history(
             store, normalized_id, months=_WINDOW_MONTHS[query.time_window]
@@ -1193,13 +960,163 @@ def query_customer_business_evidence(
         result = get_customer_extension_evidence(store, normalized_id)
     elif key == ("credit", "customer"):
         return _credit_query_result(
-            get_customer_credit_context(store, normalized_id), normalized_id, query
+            get_customer_credit_context(store, normalized_id),
+            normalized_id,
+            query,
+            capability,
         )
     elif key == ("contracts", "contract"):
         result = get_customer_contract_context(store, normalized_id)
-    else:  # pragma: no cover - 所有组合已由白名单穷举
+    elif key == ("inventory", "quarter"):
+        result = get_material_inventory_history(store, material, org)
+        result = result.model_copy(
+            update={"rows": result.rows[: _WINDOW_QUARTERS[query.time_window]]}
+        )
+    elif key == ("inventory", "age_bucket"):
+        result = get_material_inventory_age_profile(store, material, org)
+    elif key == ("sales", "month"):
+        result = get_material_sales_context(
+            store, material, org, months=_WINDOW_MONTHS[query.time_window]
+        )
+    else:  # pragma: no cover - 所有注册项必须有固定执行器
         raise AnalysisInputError("当前查询组合尚未实现。")
-    return _project_tool_result(result, query, dimension_columns=_DIMENSION_COLUMNS[key])
+    return _project_tool_result(result, query, capability=capability)
+
+
+def discover_evidence_capabilities(
+    store: DuckDBStore,
+    case_type: CaseType,
+    entity_context: dict[str, JsonScalar],
+    observation_date: str,
+) -> BusinessDataCatalog:
+    """用真实受控查询探测当前案件可用能力，不暴露 SQL 或物理字段。"""
+
+    datasets = []
+    for capability in capabilities_for(case_type):
+        time_window = (
+            "latest" if "latest" in capability.time_windows else capability.time_windows[0]
+        )
+        query = EvidenceQuery(
+            dataset=capability.dataset,
+            grain=capability.grain,
+            metrics=list(capability.metrics),
+            time_window=time_window,
+            limit=1,
+        )
+        try:
+            result = query_business_evidence(store, case_type, entity_context, query)
+            available = True
+            returned_rows = len(result.rows)
+            period = result.period
+        except AnalysisInputError:
+            available = False
+            returned_rows = 0
+            period = None
+        datasets.append(
+            DatasetCapability(
+                dataset=capability.dataset,
+                grain=capability.grain,
+                description=capability.description,
+                metrics=list(capability.metrics),
+                time_windows=list(capability.time_windows),
+                available=available,
+                returned_rows=returned_rows,
+                period=period,
+                limitations=list(capability.limitations),
+            )
+        )
+    if case_type == "ACCOUNTS_RECEIVABLE":
+        entity_scope = f"客户 {entity_context.get('customer_id', '')}"
+    else:
+        entity_scope = (
+            f"物料 {entity_context.get('material_code', '')} / "
+            f"库存组织 {entity_context.get('inventory_org', '')}"
+        )
+    return BusinessDataCatalog(
+        case_type=case_type,
+        entity_scope=entity_scope,
+        observation_date=observation_date,
+        datasets=datasets,
+        global_rules=[
+            "目录中的 available 来自当前数据快照的真实探测，不保证返回行数代表全部记录。",
+            "所有搜索和查询自动限定当前案件主体，不能改查其他无关主体。",
+            "金额、日期、比例和状态必须引用 query_business_evidence 返回的 evidence_id。",
+            "模型不能提交 SQL、文件路径、正则表达式或代码。",
+        ],
+    )
+
+
+def search_business_records(
+    store: DuckDBStore,
+    case_type: CaseType,
+    entity_context: dict[str, JsonScalar],
+    search: BusinessRecordSearchQuery,
+) -> ToolResult:
+    """在案件主体的关联记录内按业务标识做参数化包含搜索。"""
+
+    query_text = search.query.strip()
+    rows: list[list[JsonScalar]]
+    if case_type == "ACCOUNTS_RECEIVABLE":
+        customer_id = str(entity_context.get("customer_id", "")).strip().upper()
+        if search.record_type == "customer":
+            label = str(entity_context.get("customer_name", customer_id))
+            rows = (
+                [["customer", customer_id, label]]
+                if query_text.lower() in f"{customer_id} {label}".lower()
+                else []
+            )
+            sources = ["case_input"]
+        else:
+            column_by_type = {
+                "contract": "合同号",
+                "order": "销售订单号",
+                "material": "物料编码",
+            }
+            column = column_by_type[search.record_type]
+            result = store.fetch(
+                f'''SELECT DISTINCT CAST("{column}" AS VARCHAR) AS record_id
+                    FROM ar_snapshots
+                    WHERE "客户编号" = ?
+                      AND "快照时间" = (SELECT MAX("快照时间") FROM ar_snapshots)
+                      AND contains(lower(CAST("{column}" AS VARCHAR)), lower(?))
+                    ORDER BY record_id LIMIT ?''',
+                [customer_id, query_text, search.limit],
+            )
+            rows = [[search.record_type, row[0], row[0]] for row in result.rows]
+            sources = ["ar_snapshots"]
+    else:
+        material = str(entity_context.get("material_code", "")).strip()
+        org = str(entity_context.get("inventory_org", "")).strip()
+        if search.record_type == "material":
+            rows = (
+                [["material", material, material]] if query_text.lower() in material.lower() else []
+            )
+            sources = ["case_input"]
+        else:
+            column_by_type = {
+                "customer": "客户编号",
+                "contract": "合同号",
+                "order": "销售订单号",
+            }
+            column = column_by_type[search.record_type]
+            result = store.fetch(
+                f'''SELECT DISTINCT CAST("{column}" AS VARCHAR) AS record_id
+                    FROM sales
+                    WHERE "物料编码" = ? AND "库存组织名称" = ?
+                      AND contains(lower(CAST("{column}" AS VARCHAR)), lower(?))
+                    ORDER BY record_id LIMIT ?''',
+                [material, org, query_text, search.limit],
+            )
+            rows = [[search.record_type, row[0], row[0]] for row in result.rows]
+            sources = ["sales"]
+    return ToolResult(
+        summary=f"在当前案件范围内找到 {len(rows)} 条 {search.record_type} 记录。",
+        columns=["记录类型", "业务标识", "显示名称"],
+        rows=rows[: search.limit],
+        sources=sources,
+        period="当前案件关联记录",
+        metric_definitions=["搜索只匹配业务标识，不搜索文件名、物理表或任意数据库内容。"],
+    )
 
 
 def get_material_inventory_history(
@@ -1306,8 +1223,10 @@ def get_material_sales_context(
     store: DuckDBStore,
     material_code: str,
     inventory_org: str,
+    *,
+    months: int = 6,
 ) -> ToolResult:
-    """返回指定物料与库存组织最近 6 个月销售、退货和粗算毛利。"""
+    """返回指定物料与库存组织最近若干个月销售、退货和粗算毛利。"""
 
     material = material_code.strip()
     org = inventory_org.strip()
@@ -1328,17 +1247,17 @@ def get_material_sales_context(
                       / SUM(s."销售金额_折扣后_含税") END AS gross_margin
         FROM sales s, latest l
         WHERE s."物料编码" = ? AND s."库存组织名称" = ?
-          AND s."出库日期" > l.latest_date - INTERVAL '6 months'
+          AND s."出库日期" > l.latest_date - (? * INTERVAL '1 month')
           AND s."出库日期" <= l.latest_date
         GROUP BY 1
         ORDER BY 1 DESC
         """,
-        [material, org],
+        [material, org, months],
     )
     rows = [[_period(row[0]), row[1], row[2], row[3], row[4], row[5]] for row in result.rows]
-    period = f"{rows[-1][0]} 至 {rows[0][0]}" if rows else "最近 6 个月无销售"
+    period = f"{rows[-1][0]} 至 {rows[0][0]}" if rows else f"最近 {months} 个月无销售"
     return ToolResult(
-        summary=f"物料 {material} 最近 6 个月返回 {len(rows)} 个有销售发生的月份。",
+        summary=f"物料 {material} 最近 {months} 个月返回 {len(rows)} 个有销售发生的月份。",
         columns=["月份", "销售额_元", "净数量", "退货金额_元", "含税粗算毛利_元", "粗算毛利率"],
         rows=rows,
         sources=["sales", "inventory_snapshots"],

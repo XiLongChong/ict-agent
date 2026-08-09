@@ -36,6 +36,8 @@ def main() -> int:
             f"{item.min_date} -> {item.max_date}" if item.min_date is not None else "无时间轴"
         )
         print(f"{item.table}: {item.rows:,} 行，{date_range}")
+    snapshot = DuckDBStore(args.database.resolve()).get_snapshot()
+    print(f"数据快照：{snapshot.snapshot_id}，模式指纹 {snapshot.schema_fingerprint[:16]}...")
     try:
         settings = load_settings(require_api_key=False, require_data_dir=False)
         draft = build_rule_scan(DuckDBStore(args.database.resolve()))

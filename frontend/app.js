@@ -16,11 +16,9 @@ const riskStageLabels = {
   LIMITED: "信息有限",
 };
 const toolLabels = {
-  discover_business_data: "发现业务数据",
+  discover_evidence_capabilities: "发现证据能力",
+  search_business_records: "搜索业务记录",
   query_business_evidence: "受控证据查询",
-  inspect_inventory_history: "库存历史",
-  inspect_inventory_age_profile: "库龄结构",
-  inspect_material_sales: "物料销售",
 };
 const eventLabels = {
   RUN_STARTED: "调查已启动",
@@ -36,6 +34,8 @@ const datasetLabels = {
   extensions: "展期",
   credit: "授信",
   contracts: "合同",
+  inventory: "库存",
+  sales: "物料销售",
 };
 
 function escapeHtml(value) {

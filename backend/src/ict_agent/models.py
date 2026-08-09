@@ -24,22 +24,29 @@ RiskSignalStage = Literal["EARLY_WARNING", "DETERIORATING", "LIMITED"]
 EvidenceCompleteness = Literal["LOW", "MEDIUM", "HIGH"]
 ReviewDecision = Literal["MONITOR", "ACTION_REQUIRED", "FALSE_POSITIVE", "RESOLVED"]
 InvestigationToolName = Literal[
-    "discover_business_data",
+    "discover_evidence_capabilities",
+    "search_business_records",
     "query_business_evidence",
-    "inspect_inventory_history",
-    "inspect_inventory_age_profile",
-    "inspect_material_sales",
 ]
 DiscoverySource = Literal["RULE", "ANOMALY", "MANUAL"]
 DataQualityStatus = Literal["PASS", "WARNING", "FAIL", "UNKNOWN"]
-ReceivableDataset = Literal[
+EvidenceDataset = Literal[
     "receivables",
     "sales_payments",
     "extensions",
     "credit",
     "contracts",
+    "inventory",
+    "sales",
 ]
-EvidenceGrain = Literal["customer", "month", "contract", "order"]
+EvidenceGrain = Literal[
+    "customer",
+    "month",
+    "contract",
+    "order",
+    "quarter",
+    "age_bucket",
+]
 EvidenceTimeWindow = Literal["latest", "last_3_months", "last_6_months", "last_12_months", "all"]
 EvidenceSortDirection = Literal["asc", "desc"]
 EvidenceMetric = Literal[
@@ -66,7 +73,17 @@ EvidenceMetric = Literal[
     "invoiced_amount",
     "actual_margin_rate",
     "shipped_amount",
+    "inventory_amount",
+    "fresh_inventory_amount",
+    "stale_inventory_amount",
+    "weighted_age_days",
+    "inventory_quantity",
+    "overdue_loan_amount",
+    "net_quantity",
+    "return_amount",
+    "gross_margin",
 ]
+BusinessRecordType = Literal["customer", "contract", "order", "material"]
 InvestigationTraceType = Literal[
     "TOOL_COMPLETED",
     "REPORT_VALIDATED",
@@ -122,11 +139,14 @@ class Evidence(BaseModel):
 class DatasetCapability(BaseModel):
     """Agent 可发现的一项只读业务数据能力。"""
 
-    dataset: ReceivableDataset
+    dataset: EvidenceDataset
     description: str
-    grains: list[EvidenceGrain]
+    grain: EvidenceGrain
     metrics: list[EvidenceMetric]
     time_windows: list[EvidenceTimeWindow]
+    available: bool
+    returned_rows: int = 0
+    period: str | None = None
     limitations: list[str] = []
 
 
@@ -143,13 +163,21 @@ class BusinessDataCatalog(BaseModel):
 class EvidenceQuery(BaseModel):
     """受控证据查询；所有选项都由后端语义层校验。"""
 
-    dataset: ReceivableDataset
+    dataset: EvidenceDataset
     grain: EvidenceGrain
     metrics: Annotated[list[EvidenceMetric], Field(min_length=1, max_length=12)]
     time_window: EvidenceTimeWindow = "latest"
     sort_by: EvidenceMetric | None = None
     sort_direction: EvidenceSortDirection = "desc"
     limit: Annotated[int, Field(ge=1, le=100)] = 30
+
+
+class BusinessRecordSearchQuery(BaseModel):
+    """在当前案件主体范围内搜索业务标识，不开放文件或数据库扫描。"""
+
+    record_type: BusinessRecordType
+    query: Annotated[str, Field(min_length=1, max_length=100)]
+    limit: Annotated[int, Field(ge=1, le=30)] = 10
 
 
 class DashboardResponse(BaseModel):
@@ -175,6 +203,27 @@ class ErrorResponse(BaseModel):
     request_id: str
 
 
+class DataSourceSnapshot(BaseModel):
+    """数据快照中一张固定来源文件的可复核身份。"""
+
+    table: str
+    filename: str
+    size_bytes: int
+    sha256: str
+    rows: int
+    min_date: str | None
+    max_date: str | None
+
+
+class DataSnapshotResponse(BaseModel):
+    """当前业务 DuckDB 对应的原始文件与模式身份。"""
+
+    snapshot_id: str
+    imported_at: str
+    schema_fingerprint: str
+    sources: list[DataSourceSnapshot]
+
+
 class RuleHit(BaseModel):
     """一条可审计的规则命中。"""
 
@@ -195,6 +244,7 @@ class InvestigationSignalInput(BaseModel):
     """规则、异常雷达或人工入口交给调查内核的一条信号。"""
 
     signal_id: str
+    signal_code: str
     signal_name: str
     reason: str
     severity: RiskPriority

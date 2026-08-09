@@ -20,6 +20,7 @@ from ict_agent.config import OFFICIAL_DEEPSEEK_BASE_URL, Settings
 from ict_agent.data import DuckDBStore
 from ict_agent.models import (
     BusinessDataCatalog,
+    BusinessRecordSearchQuery,
     CaseType,
     Evidence,
     EvidenceQuery,
@@ -39,30 +40,32 @@ from ict_agent.models import (
     ToolResult,
 )
 from ict_agent.prompts import INVESTIGATION_INSTRUCTIONS
+from ict_agent.semantic import time_window_covers
 
 logger = logging.getLogger(__name__)
 
-AR_TOOLS: tuple[InvestigationToolName, ...] = (
-    "discover_business_data",
+INVESTIGATION_TOOLS: tuple[InvestigationToolName, ...] = (
+    "discover_evidence_capabilities",
+    "search_business_records",
     "query_business_evidence",
-)
-INVENTORY_TOOLS: tuple[InvestigationToolName, ...] = (
-    "inspect_inventory_history",
-    "inspect_inventory_age_profile",
-    "inspect_material_sales",
 )
 AR_CORE_EVIDENCE = {
     ("receivables", "month"),
     ("receivables", "order"),
     ("sales_payments", "month"),
 }
-AR_CONTEXT_DATASETS = {"extensions", "credit", "contracts"}
+INVENTORY_CORE_EVIDENCE = {
+    ("inventory", "quarter"),
+    ("inventory", "age_bucket"),
+    ("sales", "month"),
+}
 
 
 def allowed_investigation_tools(case_type: CaseType) -> tuple[InvestigationToolName, ...]:
-    """返回当前案件类型允许使用的全部工具，不代表必须逐个调用。"""
+    """应收与库存共用同一组受治理调查工具。"""
 
-    return AR_TOOLS if case_type == "ACCOUNTS_RECEIVABLE" else INVENTORY_TOOLS
+    del case_type
+    return INVESTIGATION_TOOLS
 
 
 @dataclass
@@ -70,11 +73,13 @@ class InvestigationDependencies:
     """单次案件调查的数据地图、证据和审计轨迹。"""
 
     store: DuckDBStore
-    case: RiskCaseDetail
+    case: InvestigationCaseInput
     catalog_discovered: bool = False
     evidence: list[Evidence] = field(default_factory=list)
     called_tools: set[InvestigationToolName] = field(default_factory=set)
     query_signatures: set[str] = field(default_factory=set)
+    query_history: list[EvidenceQuery] = field(default_factory=list)
+    search_signatures: set[str] = field(default_factory=set)
     trace: list[InvestigationTraceEvent] = field(default_factory=list)
 
 
@@ -85,6 +90,8 @@ class InvestigationOutcome:
     report: InvestigationReport
     evidence: list[Evidence]
     partial: bool = False
+    usage: dict[str, int | float | str | None] | None = None
+    called_tools: tuple[InvestigationToolName, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -155,13 +162,6 @@ def _record_investigation_evidence(
     return result.model_copy(update={"evidence_id": evidence_id})
 
 
-def _inventory_tool_ready(
-    dependencies: InvestigationDependencies, tool_name: InvestigationToolName
-) -> None:
-    if tool_name in dependencies.called_tools:
-        raise ModelRetry(f"{tool_name} 已经调用过，请使用已有证据继续调查。")
-
-
 def _evidence_query_keys(dependencies: InvestigationDependencies) -> set[tuple[str, str]]:
     return {
         (str(item.arguments.get("dataset")), str(item.arguments.get("grain")))
@@ -170,25 +170,47 @@ def _evidence_query_keys(dependencies: InvestigationDependencies) -> set[tuple[s
     }
 
 
-def _missing_requirements(dependencies: InvestigationDependencies) -> list[str]:
+def _required_evidence(dependencies: InvestigationDependencies) -> set[tuple[str, str]]:
     if dependencies.case.case_type == "INVENTORY":
-        return [
-            f"未完成工具：{tool_name}"
-            for tool_name in sorted(set(INVENTORY_TOOLS) - dependencies.called_tools)
-        ]
+        return set(INVENTORY_CORE_EVIDENCE)
+    required = set(AR_CORE_EVIDENCE)
+    signal_codes = {item.signal_code for item in dependencies.case.signals}
+    if "AR_OPERATING_DEEP_OVERDUE" in signal_codes:
+        required.update({("extensions", "order"), ("credit", "customer")})
+    elif "AR_OPERATING_EXPOSURE_BUILDUP" in signal_codes:
+        required.update({("contracts", "contract"), ("credit", "customer")})
+    else:
+        required.add(("credit", "customer"))
+    return required
+
+
+def _missing_requirements(dependencies: InvestigationDependencies) -> list[str]:
     missing: list[str] = []
     if not dependencies.catalog_discovered:
         missing.append("尚未发现可用业务数据")
     query_keys = _evidence_query_keys(dependencies)
-    for dataset, grain in sorted(AR_CORE_EVIDENCE - query_keys):
-        missing.append(f"缺少基础证据：{dataset}/{grain}")
-    if not any(dataset in AR_CONTEXT_DATASETS for dataset, _ in query_keys):
-        missing.append("尚未查询展期、授信或合同中的至少一种背景证据")
+    for dataset, grain in sorted(_required_evidence(dependencies) - query_keys):
+        missing.append(f"缺少必要证据：{dataset}/{grain}")
     return missing
 
 
 def _minimum_evidence_ready(dependencies: InvestigationDependencies) -> bool:
     return not _missing_requirements(dependencies)
+
+
+def _query_is_redundant(previous_queries: Sequence[EvidenceQuery], query: EvidenceQuery) -> bool:
+    """拒绝已被同范围、更宽指标和更多行完整覆盖的语义查询。"""
+
+    return any(
+        previous.dataset == query.dataset
+        and previous.grain == query.grain
+        and time_window_covers(previous.time_window, query.time_window)
+        and previous.sort_by == query.sort_by
+        and previous.sort_direction == query.sort_direction
+        and previous.limit >= query.limit
+        and set(previous.metrics) >= set(query.metrics)
+        for previous in previous_queries
+    )
 
 
 def build_investigation_case_input(case: RiskCaseDetail) -> InvestigationCaseInput:
@@ -210,6 +232,7 @@ def build_investigation_case_input(case: RiskCaseDetail) -> InvestigationCaseInp
         signals=[
             InvestigationSignalInput(
                 signal_id=hit.rule_hit_id,
+                signal_code=hit.rule_id,
                 signal_name=hit.rule_name,
                 reason=hit.reason,
                 severity=hit.severity,
@@ -242,10 +265,9 @@ def _create_model(settings: Settings, model: Model | None) -> Model:
 
 def _create_investigation_agent(
     settings: Settings,
-    case_type: CaseType,
     model: Model | None = None,
 ) -> Agent[InvestigationDependencies, InvestigationReport]:
-    """按案件类型创建动态应收或固定库存调查 Agent。"""
+    """创建只暴露发现、搜索和查询三项受治理能力的调查 Agent。"""
 
     agent = Agent[InvestigationDependencies, InvestigationReport](
         _create_model(settings, model),
@@ -260,100 +282,77 @@ def _create_investigation_agent(
         retries=3,
     )
 
-    if case_type == "ACCOUNTS_RECEIVABLE":
+    @agent.tool(sequential=True)
+    def discover_evidence_capabilities(
+        ctx: RunContext[InvestigationDependencies],
+    ) -> BusinessDataCatalog:
+        """发现当前案件真实可用的数据集、粒度、指标、窗口和限制。"""
 
-        @agent.tool(sequential=True)
-        def discover_business_data(
-            ctx: RunContext[InvestigationDependencies],
-        ) -> BusinessDataCatalog:
-            """发现当前应收案件可查的数据集、粒度、指标、窗口和限制。"""
+        if ctx.deps.catalog_discovered:
+            raise ModelRetry("证据能力已经发现，请直接查询下一项必要证据。")
+        catalog = analysis_tools.discover_evidence_capabilities(
+            ctx.deps.store,
+            ctx.deps.case.case_type,
+            ctx.deps.case.entity_context,
+            ctx.deps.case.observation_date,
+        )
+        ctx.deps.catalog_discovered = True
+        ctx.deps.called_tools.add("discover_evidence_capabilities")
+        return catalog
 
-            if ctx.deps.catalog_discovered:
-                raise ModelRetry("数据地图已经发现，请直接查询下一项关键证据。")
-            customer_id = str(ctx.deps.case.entity_context["customer_id"])
-            catalog = analysis_tools.get_receivable_data_catalog(
-                customer_id, ctx.deps.case.observation_date
+    @agent.tool(sequential=True)
+    def search_business_records(
+        ctx: RunContext[InvestigationDependencies], search: BusinessRecordSearchQuery
+    ) -> ToolResult:
+        """在当前案件关联记录中按业务标识搜索客户、合同、订单或物料。"""
+
+        if not ctx.deps.catalog_discovered:
+            raise ModelRetry("必须先调用 discover_evidence_capabilities。")
+        signature = search.model_dump_json()
+        if signature in ctx.deps.search_signatures:
+            raise ModelRetry("相同业务记录搜索已经执行，请使用已有结果或调整关键词。")
+        result = analysis_tools.search_business_records(
+            ctx.deps.store,
+            ctx.deps.case.case_type,
+            ctx.deps.case.entity_context,
+            search,
+        )
+        ctx.deps.search_signatures.add(signature)
+        ctx.deps.called_tools.add("search_business_records")
+        return result
+
+    @agent.tool(sequential=True)
+    def query_business_evidence(
+        ctx: RunContext[InvestigationDependencies], query: EvidenceQuery
+    ) -> ToolResult:
+        """在案件主体范围内按注册的数据集、粒度、指标和窗口查询证据。"""
+
+        if not ctx.deps.catalog_discovered:
+            raise ModelRetry("必须先调用 discover_evidence_capabilities 了解可用能力。")
+        signature = query.model_dump_json()
+        if signature in ctx.deps.query_signatures or _query_is_redundant(
+            ctx.deps.query_history, query
+        ):
+            raise ModelRetry(
+                "该查询已被已有证据完整覆盖，请直接使用已有 evidence_id，不要重复取数。"
             )
-            ctx.deps.catalog_discovered = True
-            ctx.deps.called_tools.add("discover_business_data")
-            return catalog
-
-        @agent.tool(sequential=True)
-        def query_business_evidence(
-            ctx: RunContext[InvestigationDependencies], query: EvidenceQuery
-        ) -> ToolResult:
-            """在当前客户范围内按白名单数据集、粒度、指标和窗口查询证据。"""
-
-            if not ctx.deps.catalog_discovered:
-                raise ModelRetry("必须先调用 discover_business_data 了解可用能力。")
-            signature = query.model_dump_json()
-            if signature in ctx.deps.query_signatures:
-                raise ModelRetry("相同证据查询已经执行，请调整指标、窗口或下钻粒度。")
-            customer_id = str(ctx.deps.case.entity_context["customer_id"])
-            try:
-                result = analysis_tools.query_customer_business_evidence(
-                    ctx.deps.store, customer_id, query
-                )
-            except analysis_tools.AnalysisInputError as exc:
-                raise ModelRetry(
-                    f"受控查询参数不受支持：{exc} 请根据数据地图调整粒度、指标或时间窗口。"
-                ) from exc
-            ctx.deps.query_signatures.add(signature)
-            return _record_investigation_evidence(
-                ctx.deps,
-                "query_business_evidence",
-                result,
-                arguments=query.model_dump(mode="json"),
+        try:
+            result = analysis_tools.query_business_evidence(
+                ctx.deps.store,
+                ctx.deps.case.case_type,
+                ctx.deps.case.entity_context,
+                query,
             )
-
-    else:
-
-        @agent.tool(sequential=True)
-        def inspect_inventory_history(
-            ctx: RunContext[InvestigationDependencies],
-        ) -> ToolResult:
-            """检查该物料与库存组织逐季库存、库龄和新老库存变化。"""
-
-            tool_name: InvestigationToolName = "inspect_inventory_history"
-            _inventory_tool_ready(ctx.deps, tool_name)
-            material = str(ctx.deps.case.entity_context["material_code"])
-            org = str(ctx.deps.case.entity_context["inventory_org"])
-            result = analysis_tools.get_material_inventory_history(ctx.deps.store, material, org)
-            return _record_investigation_evidence(
-                ctx.deps, tool_name, result, arguments={"material_code": material, "org": org}
-            )
-
-        @agent.tool(sequential=True)
-        def inspect_inventory_age_profile(
-            ctx: RunContext[InvestigationDependencies],
-        ) -> ToolResult:
-            """检查最新季末各库龄区间和借物超期金额。"""
-
-            tool_name: InvestigationToolName = "inspect_inventory_age_profile"
-            _inventory_tool_ready(ctx.deps, tool_name)
-            material = str(ctx.deps.case.entity_context["material_code"])
-            org = str(ctx.deps.case.entity_context["inventory_org"])
-            result = analysis_tools.get_material_inventory_age_profile(
-                ctx.deps.store, material, org
-            )
-            return _record_investigation_evidence(
-                ctx.deps, tool_name, result, arguments={"material_code": material, "org": org}
-            )
-
-        @agent.tool(sequential=True)
-        def inspect_material_sales(
-            ctx: RunContext[InvestigationDependencies],
-        ) -> ToolResult:
-            """检查最近销售速度、退货和毛利，区分需求补货与滞销。"""
-
-            tool_name: InvestigationToolName = "inspect_material_sales"
-            _inventory_tool_ready(ctx.deps, tool_name)
-            material = str(ctx.deps.case.entity_context["material_code"])
-            org = str(ctx.deps.case.entity_context["inventory_org"])
-            result = analysis_tools.get_material_sales_context(ctx.deps.store, material, org)
-            return _record_investigation_evidence(
-                ctx.deps, tool_name, result, arguments={"material_code": material, "org": org}
-            )
+        except analysis_tools.AnalysisInputError as exc:
+            raise ModelRetry(f"受控查询参数不受支持：{exc} 请根据能力目录调整查询。") from exc
+        ctx.deps.query_signatures.add(signature)
+        ctx.deps.query_history.append(query)
+        return _record_investigation_evidence(
+            ctx.deps,
+            "query_business_evidence",
+            result,
+            arguments=query.model_dump(mode="json"),
+        )
 
     @agent.output_validator
     def validate_investigation_report(
@@ -380,6 +379,14 @@ def _create_investigation_agent(
             refs = set(hypothesis.supporting_evidence_ids) | set(
                 hypothesis.contradicting_evidence_ids
             )
+            overlap = set(hypothesis.supporting_evidence_ids) & set(
+                hypothesis.contradicting_evidence_ids
+            )
+            if overlap:
+                raise ModelRetry(
+                    f"假设“{hypothesis.statement}”把同一证据同时列为支持和反驳："
+                    f"{sorted(overlap)}。请按证据实际方向保留一侧。"
+                )
             invalid_ids = refs - valid_ids
             if invalid_ids:
                 raise ModelRetry(f"假设引用了不存在的证据编号：{sorted(invalid_ids)}。")
@@ -413,7 +420,17 @@ def _create_investigation_agent(
             "丧失回款能力",
             "已进入诉讼程序",
         )
-        abstention_markers = ("无法判断", "不能判断", "没有证据", "证据不足", "尚无数据")
+        abstention_markers = (
+            "无法判断",
+            "不能判断",
+            "没有证据",
+            "证据不足",
+            "尚无数据",
+            "不等于",
+            "不能断言",
+            "不得断言",
+            "未确认",
+        )
         claim_texts = [report.investigation_summary, report.risk_assessment.statement]
         claim_texts.extend(report.risk_assessment.drivers)
         claim_texts.extend(report.risk_assessment.counter_signals)
@@ -436,19 +453,12 @@ def _create_investigation_agent(
 def _evidence_completeness(
     dependencies: InvestigationDependencies,
 ) -> Literal["LOW", "MEDIUM", "HIGH"]:
-    if dependencies.case.case_type == "INVENTORY":
-        coverage = len(dependencies.called_tools & set(INVENTORY_TOOLS)) / len(INVENTORY_TOOLS)
-        if coverage == 1:
-            return "HIGH"
-        if coverage >= 0.5:
-            return "MEDIUM"
-        return "LOW"
     keys = _evidence_query_keys(dependencies)
-    core_coverage = len(keys & AR_CORE_EVIDENCE) / len(AR_CORE_EVIDENCE)
-    has_context = any(dataset in AR_CONTEXT_DATASETS for dataset, _ in keys)
-    if core_coverage == 1 and has_context:
+    required = _required_evidence(dependencies)
+    coverage = len(keys & required) / len(required)
+    if coverage == 1:
         return "HIGH"
-    if core_coverage >= 2 / 3:
+    if coverage >= 2 / 3:
         return "MEDIUM"
     return "LOW"
 
@@ -523,11 +533,11 @@ def _fallback_risk_assessment(
             watch_items=["补齐缺失证据后，重新判断风险趋势和具体原因。"],
         )
 
-    rule_ids = {hit.rule_id for hit in dependencies.case.rule_hits}
-    if rule_ids & {"AR_OPERATING_EXPOSURE_BUILDUP", "INV_BUILDUP_SALES_SLOWDOWN"}:
+    signal_codes = {signal.signal_code for signal in dependencies.case.signals}
+    if signal_codes & {"AR_OPERATING_EXPOSURE_BUILDUP", "INV_BUILDUP_SALES_SLOWDOWN"}:
         stage: Literal["EARLY_WARNING", "DETERIORATING", "LIMITED"] = "EARLY_WARNING"
         statement = "现有证据支持经营指标出现方向一致的早期风险信号，具体成因仍需补证。"
-    elif rule_ids & {"AR_OPERATING_DEEP_OVERDUE", "INV_STALE_NO_SALES"}:
+    elif signal_codes & {"AR_OPERATING_DEEP_OVERDUE", "INV_STALE_NO_SALES"}:
         stage = "DETERIORATING"
         statement = "现有证据支持风险敞口已经恶化，具体成因和最终损失仍需补证。"
     else:
@@ -547,19 +557,19 @@ def _fallback_risk_assessment(
     )
 
 
-def _investigation_prompt(case: RiskCaseDetail) -> str:
-    return build_investigation_case_input(case).model_dump_json()
+def _investigation_prompt(case: InvestigationCaseInput) -> str:
+    return case.model_dump_json()
 
 
 async def stream_investigation_agent(
     settings: Settings,
-    case: RiskCaseDetail,
+    case: InvestigationCaseInput,
     *,
     model: Model | None = None,
 ) -> AsyncIterator[InvestigationAgentProgress | InvestigationOutcome]:
     """运行调查并把动态查询和证据事件提炼成可观察进度。"""
 
-    agent = _create_investigation_agent(settings, case.case_type, model)
+    agent = _create_investigation_agent(settings, model)
     dependencies = InvestigationDependencies(store=DuckDBStore(settings.database_path), case=case)
     emitted_evidence_ids: set[str] = set()
     validation_announced = False
@@ -568,8 +578,8 @@ async def stream_investigation_agent(
             _investigation_prompt(case),
             deps=dependencies,
             usage_limits=UsageLimits(
-                request_limit=18,
-                tool_calls_limit=16,
+                request_limit=12,
+                tool_calls_limit=10,
                 output_tokens_limit=40_000,
             ),
         ) as events:
@@ -587,13 +597,19 @@ async def stream_investigation_agent(
                     event.part, ToolReturnPart
                 ):
                     raw_tool_name = event.part.tool_name
-                    if raw_tool_name == "discover_business_data":
+                    if raw_tool_name == "discover_evidence_capabilities":
                         yield InvestigationAgentProgress(
                             event_type="TOOL_COMPLETED",
                             message=(
-                                "业务数据地图已发现，Agent 可以选择数据集、粒度、指标和时间窗口。"
+                                "当前数据快照的证据能力已发现，可以选择数据集、粒度、指标和窗口。"
                             ),
-                            tool_name="discover_business_data",
+                            tool_name="discover_evidence_capabilities",
+                        )
+                    elif raw_tool_name == "search_business_records":
+                        yield InvestigationAgentProgress(
+                            event_type="TOOL_COMPLETED",
+                            message="案件范围内的业务标识搜索已经完成。",
+                            tool_name="search_business_records",
                         )
                     elif raw_tool_name in allowed_investigation_tools(case.case_type):
                         tool_name = raw_tool_name
@@ -622,7 +638,22 @@ async def stream_investigation_agent(
                         )
                 elif isinstance(event, AgentRunResultEvent):
                     report = _normalize_investigation_report(event.result.output, dependencies)
-                    yield InvestigationOutcome(report=report, evidence=list(dependencies.evidence))
+                    usage = event.result.usage
+                    yield InvestigationOutcome(
+                        report=report,
+                        evidence=list(dependencies.evidence),
+                        called_tools=tuple(sorted(dependencies.called_tools)),
+                        usage={
+                            "requests": usage.requests,
+                            "tool_calls": usage.tool_calls,
+                            "input_tokens": usage.input_tokens,
+                            "cache_write_tokens": usage.cache_write_tokens,
+                            "cache_read_tokens": usage.cache_read_tokens,
+                            "output_tokens": usage.output_tokens,
+                            "total_tokens": usage.total_tokens,
+                            "cost": str(usage.cost) if usage.cost is not None else None,
+                        },
+                    )
     except Exception:
         logger.exception(
             "调查 Agent 运行中断：case_id=%s evidence_count=%d",
@@ -639,12 +670,13 @@ async def stream_investigation_agent(
             report=_partial_investigation_report(dependencies),
             evidence=list(dependencies.evidence),
             partial=True,
+            called_tools=tuple(sorted(dependencies.called_tools)),
         )
 
 
 async def run_investigation_agent(
     settings: Settings,
-    case: RiskCaseDetail,
+    case: InvestigationCaseInput,
     *,
     model: Model | None = None,
 ) -> InvestigationOutcome:
