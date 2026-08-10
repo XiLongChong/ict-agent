@@ -9,26 +9,26 @@ const ar = computed(() => props.overview?.cases_by_type?.ACCOUNTS_RECEIVABLE || 
 const inventory = computed(() => props.overview?.cases_by_type?.INVENTORY || 0);
 const total = computed(() => Math.max(ar.value + inventory.value, 1));
 const metrics = computed(() => [
-  { label: "关键级案件", value: props.overview?.critical_cases ?? "—", note: "当前规则侧重早期预警", color: "#ea4335" },
-  { label: "等待调查", value: props.overview?.open_cases ?? "—", note: "规则已经命中", color: "#4285f4" },
-  { label: "等待审核", value: props.overview?.pending_review_cases ?? "—", note: "Agent 已完成取证", color: "#fbbc05" },
-  { label: "风险敞口", value: props.overview ? formatMoney(props.overview.exposure_amount) : "—", note: "未关闭案件合计", color: "#34a853", compact: true },
+  { label: "关键级案件", value: props.overview?.critical_cases ?? "—", note: "当前规则侧重早期预警", tone: "danger", icon: "mdi-alert-outline" },
+  { label: "等待调查", value: props.overview?.open_cases ?? "—", note: "规则已经命中", tone: "brand", icon: "mdi-clipboard-search-outline" },
+  { label: "等待审核", value: props.overview?.pending_review_cases ?? "—", note: "Agent 已完成取证", tone: "warning", icon: "mdi-clock-outline" },
+  { label: "风险敞口", value: props.overview ? formatMoney(props.overview.exposure_amount) : "—", note: "未关闭案件合计", tone: "success", icon: "mdi-wallet-outline", compact: true },
 ]);
 </script>
 
 <template>
   <div class="view-stack">
-    <section class="overview-hero">
-      <div><span class="eyebrow">规则发现 · Agent 调查 · 人工审核</span><h2>从风险信号出发，沿证据链完成可复核调查。</h2>
+    <section class="dashboard-intro">
+      <div><span class="eyebrow">规则发现 · Agent 调查 · 人工审核</span><h2>风险调查态势</h2>
         <p v-if="overview?.latest_run">规则集 {{ overview.latest_run.rule_set_version }} · 观察期 {{ overview.latest_run.observation_date }} · 命中 {{ overview.latest_run.rule_hits }} 条规则</p>
         <p v-else>尚未执行规则扫描，请点击右上角“重新扫描”。</p>
       </div>
-      <div class="hero-count"><strong>{{ overview?.total_cases ?? '—' }}</strong><span>当前风险案件</span></div>
+      <div class="case-total"><strong>{{ overview?.total_cases ?? '—' }}</strong><span>当前风险案件</span></div>
     </section>
 
     <div class="metric-grid">
-      <v-card v-for="metric in metrics" :key="metric.label" class="metric-card" :loading="loading">
-        <span class="metric-accent" :style="{ background: metric.color }"></span>
+      <v-card v-for="metric in metrics" :key="metric.label" class="metric-card" :class="`metric-${metric.tone}`" :loading="loading">
+        <div class="metric-icon"><v-icon :icon="metric.icon" /></div>
         <span>{{ metric.label }}</span><strong :class="{ compact: metric.compact }">{{ metric.value }}</strong><small>{{ metric.note }}</small>
       </v-card>
     </div>

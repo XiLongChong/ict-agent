@@ -20,19 +20,19 @@ const vuetify = createVuetify({
     VTextarea: { density: "compact", variant: "outlined", hideDetails: "auto" },
   },
   theme: {
-    defaultTheme: "googleLight",
+    defaultTheme: "tailAdminLight",
     themes: {
-      googleLight: {
+      tailAdminLight: {
         dark: false,
         colors: {
-          background: "#ffffff",
+          background: "#f9fafb",
           surface: "#ffffff",
-          primary: "#4285f4",
-          secondary: "#dbeafe",
-          error: "#ea4335",
-          warning: "#fbbc05",
-          success: "#34a853",
-          info: "#0043ad",
+          primary: "#465fff",
+          secondary: "#dde9ff",
+          error: "#d92d20",
+          warning: "#f79009",
+          success: "#039855",
+          info: "#475467",
         },
       },
     },

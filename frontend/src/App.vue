@@ -23,6 +23,7 @@ const status = ref({ text: "正在连接数据", error: false });
 const activeCase = ref(null);
 const caseOpen = ref(false);
 const mobileNav = ref(false);
+const sidebarExpanded = ref(true);
 watch(mdAndUp, (isDesktop) => { mobileNav.value = isDesktop; }, { immediate: true });
 
 const page = computed(() => views.find((item) => item.id === activeView.value));
@@ -82,21 +83,27 @@ function navigate(view) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
+function toggleNavigation() {
+  if (mdAndUp.value) sidebarExpanded.value = !sidebarExpanded.value;
+  else mobileNav.value = !mobileNav.value;
+}
+
 onMounted(loadAll);
 </script>
 
 <template>
-  <v-app class="google-workspace">
-    <v-navigation-drawer v-model="mobileNav" class="app-sidebar" :permanent="mdAndUp" :width="244">
+  <v-app class="admin-workspace">
+    <v-navigation-drawer v-model="mobileNav" class="app-sidebar" :permanent="mdAndUp" :rail="mdAndUp && !sidebarExpanded" :rail-width="88" :width="260">
       <div class="brand-block">
-        <div class="brand-mark">J</div>
-        <div><strong>佳华智审</strong><small>风险调查工作台</small></div>
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <div v-show="!mdAndUp || sidebarExpanded" class="brand-copy"><strong>佳华智审</strong><small>风险调查工作台</small></div>
       </div>
+      <span v-show="!mdAndUp || sidebarExpanded" class="nav-caption">工作台</span>
       <v-list class="nav-list" nav density="compact">
         <v-list-item v-for="item in views" :key="item.id" :active="activeView === item.id" :prepend-icon="item.icon" :title="item.label" @click="navigate(item.id)" />
       </v-list>
       <template #append>
-        <div class="sidebar-boundary">
+        <div v-show="!mdAndUp || sidebarExpanded" class="sidebar-boundary">
           <span class="status-dot"></span>
           <div><strong>只读调查模式</strong><small>Agent 不执行自动业务处置</small></div>
         </div>
@@ -104,8 +111,7 @@ onMounted(loadAll);
     </v-navigation-drawer>
 
     <v-app-bar class="app-topbar" flat height="72">
-      <v-btn v-if="smAndDown" icon="mdi-menu" variant="text" aria-label="打开导航" @click="mobileNav = !mobileNav" />
-      <div class="page-heading"><span>RISK INVESTIGATION AGENT</span><h1>{{ page.label }}</h1></div>
+      <v-btn class="nav-toggle" icon="mdi-menu" variant="outlined" aria-label="收起、展开或打开导航" @click="toggleNavigation" />
       <v-spacer />
       <div class="system-state" :class="{ error: status.error }"><span></span>{{ status.text }}</div>
       <v-btn color="primary" variant="outlined" prepend-icon="mdi-radar" :loading="scanning" @click="runScan">重新扫描</v-btn>
@@ -113,6 +119,7 @@ onMounted(loadAll);
 
     <v-main>
       <div class="page-content">
+        <div class="page-heading"><span>佳华智审 / {{ page.label }}</span><h1>{{ page.label }}</h1></div>
         <RiskOverview v-if="activeView === 'risk'" :overview="overview" :cases="cases" :loading="loading" @open-case="openCase" @show-cases="navigate('cases')" />
         <CaseQueue v-else-if="activeView === 'cases'" :cases="cases" :loading="loading" @open-case="openCase" />
         <BusinessView v-else :data="business" :loading="loading" />
