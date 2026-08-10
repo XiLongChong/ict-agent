@@ -209,6 +209,391 @@ def get_inventory_rule_features(store: DuckDBStore) -> QueryResult:
     )
 
 
+def get_unpaid_sales_features(store: DuckDBStore) -> QueryResult:
+    """生成客户级长期销售未回款特征（有正销售但无正回款的订单按账龄聚合）。"""
+
+    return store.fetch(
+        """
+        WITH periods AS (
+            SELECT MAX("快照时间") AS latest_date FROM ar_snapshots
+        ), positive_sales AS (
+            SELECT
+                s."销售订单号" AS order_id,
+                s."客户编号" AS customer_id,
+                MAX(s."出库日期") AS ship_date,
+                SUM(s."销售金额_折扣后_含税") AS sales_amount
+            FROM sales s, periods p
+            WHERE s."销售金额_折扣后_含税" > 0
+            GROUP BY s."销售订单号", s."客户编号"
+        ), positive_payments AS (
+            SELECT DISTINCT "销售订单号" AS order_id
+            FROM payments
+            WHERE "回款金额" > 0
+        ), unpaid AS (
+            SELECT ps.*
+            FROM positive_sales ps
+            LEFT JOIN positive_payments pp USING (order_id)
+            WHERE pp.order_id IS NULL
+        ), customer_names AS (
+            SELECT "客户编号" AS customer_id, MAX("客户名称") AS customer_name
+            FROM ar_snapshots
+            GROUP BY "客户编号"
+        )
+        SELECT
+            u.customer_id,
+            COALESCE(cn.customer_name, '') AS customer_name,
+            COUNT(*) AS unpaid_order_count,
+            SUM(u.sales_amount) AS unpaid_amount,
+            SUM(
+                CASE WHEN date_diff('day', u.ship_date, (SELECT latest_date FROM periods)) >= 90
+                     THEN u.sales_amount ELSE 0 END
+            ) AS unpaid_ge90_amount,
+            MAX(date_diff('day', u.ship_date, (SELECT latest_date FROM periods))) AS max_unpaid_days
+        FROM unpaid u
+        LEFT JOIN customer_names cn USING (customer_id)
+        GROUP BY u.customer_id, cn.customer_name
+        ORDER BY unpaid_ge90_amount DESC
+        """
+    )
+
+
+def get_inventory_zero_sales_features(store: DuckDBStore) -> QueryResult:
+    """生成物料×库存组织级高库存但近三个月零销售特征。"""
+
+    return store.fetch(
+        """
+        WITH periods AS (
+            SELECT MAX("快照日期") AS latest_date FROM inventory_snapshots
+        ), latest_inventory AS (
+            SELECT
+                i."物料编码" AS material_code,
+                i."库存组织名称" AS inventory_org,
+                SUM(i."含税总价") AS inventory_amount
+            FROM inventory_snapshots i, periods p
+            WHERE i."快照日期" = p.latest_date
+            GROUP BY i."物料编码", i."库存组织名称"
+        ), recent_sales AS (
+            SELECT
+                s."物料编码" AS material_code,
+                s."库存组织名称" AS inventory_org,
+                SUM(s."销售金额_折扣后_含税") AS sales_3m
+            FROM sales s, periods p
+            WHERE s."出库日期" > p.latest_date - INTERVAL '3 months'
+              AND s."出库日期" <= p.latest_date
+              AND s."销售金额_折扣后_含税" > 0
+            GROUP BY s."物料编码", s."库存组织名称"
+        )
+        SELECT
+            MAX(p.latest_date) AS observation_date,
+            li.material_code,
+            li.inventory_org,
+            li.inventory_amount,
+            COALESCE(rs.sales_3m, 0) AS sales_3m
+        FROM latest_inventory li
+        CROSS JOIN periods p
+        LEFT JOIN recent_sales rs USING (material_code, inventory_org)
+        WHERE li.inventory_amount > 0
+        GROUP BY li.material_code, li.inventory_org, li.inventory_amount, rs.sales_3m
+        ORDER BY li.inventory_amount DESC
+        """
+    )
+
+
+def get_inventory_very_old_features(store: DuckDBStore) -> QueryResult:
+    """生成物料×库存组织级超长库龄（365+ 天）库存特征。"""
+
+    return store.fetch(
+        """
+        WITH latest AS (
+            SELECT MAX("快照日期") AS latest_date FROM inventory_snapshots
+        )
+        SELECT
+            MAX(p.latest_date) AS observation_date,
+            i."物料编码" AS material_code,
+            i."库存组织名称" AS inventory_org,
+            SUM(i."含税总价") AS very_old_amount,
+            SUM(i."数量") AS very_old_quantity
+        FROM inventory_snapshots i, latest p
+        WHERE i."快照日期" = p.latest_date
+          AND i."库龄" > 365
+        GROUP BY i."物料编码", i."库存组织名称"
+        ORDER BY very_old_amount DESC
+        """
+    )
+
+
+def get_extension_rule_features(store: DuckDBStore) -> QueryResult:
+    """生成客户级展期次数特征（按 gkey 去重）。"""
+
+    return store.fetch(
+        """
+        WITH customer_names AS (
+            SELECT "客户编号" AS customer_id, MAX("客户名称") AS customer_name
+            FROM ar_snapshots GROUP BY "客户编号"
+        ), ext AS (
+            SELECT
+                "客户编号" AS customer_id,
+                COUNT(DISTINCT gkey) AS extension_count
+            FROM extensions
+            GROUP BY "客户编号"
+        )
+        SELECT
+            e.customer_id,
+            COALESCE(cn.customer_name, '') AS customer_name,
+            e.extension_count
+        FROM ext e
+        LEFT JOIN customer_names cn USING (customer_id)
+        ORDER BY e.extension_count DESC
+        """
+    )
+
+
+def get_penalty_interest_features(store: DuckDBStore) -> QueryResult:
+    """生成客户级累计逾期罚息特征。"""
+
+    return store.fetch(
+        """
+        WITH customer_names AS (
+            SELECT "客户编号" AS customer_id, MAX("客户名称") AS customer_name
+            FROM ar_snapshots GROUP BY "客户编号"
+        ), pen AS (
+            SELECT
+                "客户编号" AS customer_id,
+                COALESCE(SUM("超期利息金额"), 0) AS penalty_interest
+            FROM payments
+            GROUP BY "客户编号"
+            HAVING COALESCE(SUM("超期利息金额"), 0) > 0
+        )
+        SELECT
+            p.customer_id,
+            COALESCE(cn.customer_name, '') AS customer_name,
+            p.penalty_interest
+        FROM pen p
+        LEFT JOIN customer_names cn USING (customer_id)
+        ORDER BY p.penalty_interest DESC
+        """
+    )
+
+
+def get_inventory_stale_ratio_features(store: DuckDBStore) -> QueryResult:
+    """生成物料×库存组织级呆滞占比（180 天以上）特征。"""
+
+    return store.fetch(
+        """
+        WITH latest AS (
+            SELECT MAX("快照日期") AS latest_date FROM inventory_snapshots
+        ), agg AS (
+            SELECT
+                i."物料编码" AS material_code,
+                i."库存组织名称" AS inventory_org,
+                SUM(i."含税总价") AS inventory_amount,
+                SUM(CASE WHEN i."库龄" > 180 THEN i."含税总价" ELSE 0 END) AS stale_amount
+            FROM inventory_snapshots i, latest p
+            WHERE i."快照日期" = p.latest_date
+            GROUP BY i."物料编码", i."库存组织名称"
+        )
+        SELECT
+            MAX(p.latest_date) AS observation_date,
+            a.material_code,
+            a.inventory_org,
+            a.inventory_amount,
+            a.stale_amount,
+            CASE WHEN a.inventory_amount = 0 THEN NULL
+                 ELSE a.stale_amount / a.inventory_amount END AS stale_rate
+        FROM agg a, latest p
+        GROUP BY a.material_code, a.inventory_org, a.inventory_amount, a.stale_amount
+        ORDER BY stale_amount DESC
+        """
+    )
+
+
+def get_inventory_overdue_stock_features(store: DuckDBStore) -> QueryResult:
+    """生成物料×库存组织级超期库存（是否超期=Y）特征。"""
+
+    return store.fetch(
+        """
+        WITH latest AS (
+            SELECT MAX("快照日期") AS latest_date FROM inventory_snapshots
+        ), agg AS (
+            SELECT
+                i."物料编码" AS material_code,
+                i."库存组织名称" AS inventory_org,
+                SUM(CASE WHEN i."是否超期" = 'Y' THEN i."含税总价" ELSE 0 END) AS overdue_amount,
+                MAX(i."超期天数") AS max_overdue_days,
+                COUNT(*) FILTER (WHERE i."是否超期" = 'Y') AS overdue_rows
+            FROM inventory_snapshots i, latest p
+            WHERE i."快照日期" = p.latest_date
+            GROUP BY i."物料编码", i."库存组织名称"
+        )
+        SELECT
+            MAX(p.latest_date) AS observation_date,
+            a.material_code,
+            a.inventory_org,
+            a.overdue_amount,
+            COALESCE(a.max_overdue_days, 0) AS max_overdue_days,
+            a.overdue_rows
+        FROM agg a, latest p
+        GROUP BY a.material_code, a.inventory_org, a.overdue_amount,
+                 a.max_overdue_days, a.overdue_rows
+        ORDER BY a.overdue_amount DESC
+        """
+    )
+
+
+def get_customer_return_features(store: DuckDBStore) -> QueryResult:
+    """生成客户级退货占比特征（C1）。"""
+
+    return store.fetch(
+        """
+        WITH names AS (
+            SELECT "客户编号" AS customer_id, MAX("客户名称") AS customer_name
+            FROM ar_snapshots GROUP BY "客户编号"
+        ), agg AS (
+            SELECT
+                "客户编号" AS customer_id,
+                SUM("销售金额_折扣后_含税") AS gross_sales,
+                -SUM(CASE WHEN "销售金额_折扣后_含税" < 0
+                          THEN "销售金额_折扣后_含税" ELSE 0 END) AS return_amount
+            FROM sales
+            GROUP BY "客户编号"
+        )
+        SELECT
+            a.customer_id,
+            COALESCE(n.customer_name, '') AS customer_name,
+            a.gross_sales,
+            a.return_amount
+        FROM agg a
+        LEFT JOIN names n USING (customer_id)
+        """
+    )
+
+
+def get_negative_payment_features(store: DuckDBStore) -> QueryResult:
+    """生成客户级负回款（冲销）占比特征（C3）。"""
+
+    return store.fetch(
+        """
+        WITH names AS (
+            SELECT "客户编号" AS customer_id, MAX("客户名称") AS customer_name
+            FROM ar_snapshots GROUP BY "客户编号"
+        ), agg AS (
+            SELECT
+                "客户编号" AS customer_id,
+                SUM("回款金额") AS total_payment,
+                -SUM(CASE WHEN "回款金额" < 0 THEN "回款金额" ELSE 0 END) AS negative_payment
+            FROM payments
+            GROUP BY "客户编号"
+        )
+        SELECT
+            a.customer_id,
+            COALESCE(n.customer_name, '') AS customer_name,
+            a.total_payment,
+            a.negative_payment
+        FROM agg a
+        LEFT JOIN names n USING (customer_id)
+        """
+    )
+
+
+def get_aging_payment_features(store: DuckDBStore) -> QueryResult:
+    """生成客户级超长账龄（>365 天）回款特征（C4）。"""
+
+    return store.fetch(
+        """
+        WITH names AS (
+            SELECT "客户编号" AS customer_id, MAX("客户名称") AS customer_name
+            FROM ar_snapshots GROUP BY "客户编号"
+        ), agg AS (
+            SELECT
+                "客户编号" AS customer_id,
+                SUM(CASE WHEN "回款账龄" > 365 THEN "回款金额" ELSE 0 END) AS aging_amount
+            FROM payments
+            GROUP BY "客户编号"
+        )
+        SELECT
+            a.customer_id,
+            COALESCE(n.customer_name, '') AS customer_name,
+            a.aging_amount
+        FROM agg a
+        LEFT JOIN names n USING (customer_id)
+        """
+    )
+
+
+def get_negative_margin_features(store: DuckDBStore) -> QueryResult:
+    """生成客户级负毛利亏损特征（D1，主键统一为 customer_id）。"""
+
+    return store.fetch(
+        """
+        SELECT
+            COALESCE(
+                (SELECT MAX("客户编号_中台") FROM customer_credit cc
+                 WHERE cc."客户名称" = t.customer_name), t.customer_name
+            ) AS customer_id,
+            t.customer_name,
+            t.margin_loss
+        FROM (
+            SELECT
+                "客户名称" AS customer_name,
+                SUM(
+                    "销售金额" * CASE WHEN "实际净毛利率_不含税" < 0
+                                      THEN -"实际净毛利率_不含税" ELSE 0 END
+                ) AS margin_loss
+            FROM contracts
+            GROUP BY "客户名称"
+        ) t
+        """
+    )
+
+
+def get_margin_optimistic_features(store: DuckDBStore) -> QueryResult:
+    """生成合同级实估毛利严重高估特征（D2，金额加权聚合）。"""
+
+    return store.fetch(
+        """
+        SELECT
+            "合同编号" AS contract_number,
+            MAX("客户名称") AS customer_name,
+            SUM("销售金额") AS contract_amount,
+            SUM("销售金额" * "实估毛利率_不含税") / NULLIF(SUM("销售金额"), 0)
+                AS weighted_est_margin,
+            SUM("销售金额" * "实际净毛利率_不含税") / NULLIF(SUM("销售金额"), 0)
+                AS weighted_act_margin
+        FROM contracts
+        GROUP BY "合同编号"
+        """
+    )
+
+
+def get_term_overage_features(store: DuckDBStore) -> QueryResult:
+    """生成客户级实际账期远超约定特征（D3）。"""
+
+    return store.fetch(
+        """
+        SELECT
+            COALESCE(
+                (SELECT MAX("客户编号_中台") FROM customer_credit cc
+                 WHERE cc."客户名称" = t.customer_name), t.customer_name
+            ) AS customer_id,
+            t.customer_name,
+            t.overage_contract_count,
+            t.contract_amount,
+            t.max_overage_days
+        FROM (
+            SELECT
+                "客户名称" AS customer_name,
+                COUNT(*) AS overage_contract_count,
+                SUM("销售金额") AS contract_amount,
+                MAX("实际账期" - "合同文本账期") AS max_overage_days
+            FROM contracts
+            WHERE "实际账期" IS NOT NULL AND "合同文本账期" IS NOT NULL
+              AND "实际账期" - "合同文本账期" >= 120
+            GROUP BY "客户名称"
+        ) t
+        """
+    )
+
+
 def get_business_overview(store: DuckDBStore) -> ToolResult:
     """返回全数据窗口经营规模与最新风险敞口。"""
 
