@@ -106,7 +106,7 @@ class RuleHitWrite:
     severity: str
     exposure_amount: float
     reason: str
-    metrics: Mapping[str, DatabaseScalar]
+    metrics: Mapping[str, object]
     threshold_source: str
     sources: Sequence[str]
     period: str
