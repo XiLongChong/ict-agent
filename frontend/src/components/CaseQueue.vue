@@ -11,6 +11,7 @@ import { workspace } from "../store";
 const route = useRoute();
 const type = ref("");
 const status = ref("");
+const priority = ref("");
 const query = ref("");
 const pageSize = ref("10");
 const currentPage = ref(1);
@@ -21,13 +22,29 @@ const typeOptions = [
   { title: "库存", value: "INVENTORY" },
 ];
 const statusOptions = [{ title: "全部状态", value: "" }, ...Object.entries(labels.status).map(([value, title]) => ({ title, value }))];
+const priorityOptions = [
+  { title: "全部风险等级", value: "" },
+  { title: labels.priority.HIGH, value: "HIGH" },
+  { title: labels.priority.MEDIUM, value: "MEDIUM" },
+  { title: labels.priority.LOW, value: "LOW" },
+];
 const pageSizeOptions = [10, 20, 50].map((value) => ({ title: `${value} 行/页`, value: String(value) }));
 const filtered = computed(() => {
   const keyword = String(query.value ?? "").trim().toLocaleLowerCase();
   return workspace.cases.filter((item) => {
-    const matchesFilters = (!type.value || item.case_type === type.value) && (!status.value || item.status === status.value);
+    const matchesFilters =
+      (!type.value || item.case_type === type.value) &&
+      (!status.value || item.status === status.value) &&
+      (!priority.value || item.priority === priority.value);
     if (!matchesFilters || !keyword) return matchesFilters;
-    const searchable = [item.case_id, item.entity_label, item.risk_overview, labels.caseType[item.case_type], labels.status[item.status]]
+    const searchable = [
+      item.case_id,
+      item.entity_label,
+      item.risk_overview,
+      labels.caseType[item.case_type],
+      labels.status[item.status],
+      labels.priority[item.priority],
+    ]
       .filter(Boolean)
       .join(" ")
       .toLocaleLowerCase();
@@ -49,7 +66,7 @@ const pageNumbers = computed(() => {
 const rangeStart = computed(() => (filtered.value.length ? (currentPage.value - 1) * pageSizeValue.value + 1 : 0));
 const rangeEnd = computed(() => Math.min(currentPage.value * pageSizeValue.value, filtered.value.length));
 
-watch([type, status, query, pageSize], () => goToPage(1));
+watch([type, status, priority, query, pageSize], () => goToPage(1));
 watch(totalPages, (total) => {
   if (currentPage.value > total) goToPage(total);
 });
@@ -79,6 +96,7 @@ function jumpToPage() {
       <div class="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
         <SelectInput v-model="type" :options="typeOptions" class="w-[180px]" />
         <SelectInput v-model="status" :options="statusOptions" class="w-[180px]" />
+        <SelectInput v-model="priority" :options="priorityOptions" class="w-[180px]" />
         <TextInput v-model="query" search clearable class="w-[320px] max-w-full" placeholder="搜索案件、客户或物料" aria-label="搜索案件、客户或物料" @clear="query = ''" />
         <span class="ml-auto text-sm text-muted">共 {{ filtered.length }} 个案件</span>
       </div>
@@ -94,12 +112,20 @@ function jumpToPage() {
             <col class="w-[11%]" />
           </colgroup>
           <thead>
-            <tr><th>案件主体</th><th>案件类型</th><th>风险概况</th><th>风险等级</th><th>风险敞口</th><th>处理状态</th></tr>
+            <tr>
+              <th>案件主体</th>
+              <th>案件类型</th>
+              <th>风险概况</th>
+              <th>风险等级</th>
+              <th>风险敞口</th>
+              <th class="sticky right-0 z-10 border-l border-border bg-canvas">处理状态</th>
+            </tr>
           </thead>
           <tbody>
             <tr
               v-for="item in paginated"
               :key="item.case_id"
+              class="group"
               tabindex="0"
               @click="openCase(item.case_id)"
               @keydown.enter="openCase(item.case_id)"
@@ -111,7 +137,9 @@ function jumpToPage() {
               <td><span class="block truncate text-sm font-medium text-ink" :title="item.risk_overview">{{ item.risk_overview }}</span></td>
               <td><Badge :tone="priorityColor(item.priority)">{{ labels.priority[item.priority] }}</Badge></td>
               <td class="money-cell">{{ formatMoney(item.exposure_amount) }}</td>
-              <td><Badge :tone="statusColor(item.status)">{{ labels.status[item.status] }}</Badge></td>
+              <td class="sticky right-0 border-l border-border bg-surface group-hover:bg-canvas">
+                <Badge :tone="statusColor(item.status)">{{ labels.status[item.status] }}</Badge>
+              </td>
             </tr>
             <tr v-if="!workspace.loading && !filtered.length"><td colspan="6" class="empty-state">当前筛选条件下没有案件</td></tr>
           </tbody>
