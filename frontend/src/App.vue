@@ -14,6 +14,7 @@ const isMobile = () => (typeof window !== "undefined" ? window.innerWidth < 768 
 const pageTitle = computed(() => (route.name === "case" ? "案件工作台" : route.meta.title || "工作台"));
 const crumb = computed(() => (route.name === "case" ? "案件队列" : "工作台"));
 const expandedState = computed(() => !isMobile() && expanded.value);
+const labelsVisible = computed(() => isMobile() || expanded.value);
 const toastVisible = ref(false);
 
 function isActive(path) {
@@ -52,9 +53,9 @@ onMounted(loadAll);
 
     <aside
       class="fixed inset-y-0 left-0 z-50 flex flex-col border-r border-border bg-surface transition-all duration-150 ease-out md:translate-x-0"
-      :class="[expandedState ? 'w-[260px]' : 'w-[88px]', mobileNav ? 'translate-x-0' : '-translate-x-full']"
+      :class="[labelsVisible ? 'w-[260px]' : 'w-[88px]', mobileNav ? 'translate-x-0' : '-translate-x-full']"
     >
-      <div class="flex h-[72px] items-center gap-3 px-5" :class="{ 'justify-center px-3': !expandedState }">
+      <div class="flex h-[72px] items-center gap-3 px-5" :class="{ 'justify-center px-3': !labelsVisible }">
         <span class="grid h-9 w-9 flex-none place-items-center rounded-lg bg-brand" aria-hidden="true">
           <span class="flex items-end gap-[3px]">
             <i class="block w-1 rounded-sm bg-white" style="height: 10px"></i>
@@ -62,13 +63,13 @@ onMounted(loadAll);
             <i class="block w-1 rounded-sm bg-white" style="height: 13px"></i>
           </span>
         </span>
-        <div v-show="expandedState" class="leading-tight">
+        <div v-show="labelsVisible" class="leading-tight">
           <strong class="block text-[15px] text-ink">佳华智审</strong>
           <small class="block text-[11px] text-faint">风险调查工作台</small>
         </div>
       </div>
 
-      <span v-show="expandedState" class="px-6 pb-2 pt-4 font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-faint">工作台</span>
+      <span v-show="labelsVisible" class="px-6 pb-2 pt-4 font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-faint">工作台</span>
 
       <nav class="flex-1 space-y-1 overflow-y-auto px-4 py-2">
         <button
@@ -81,12 +82,12 @@ onMounted(loadAll);
           :class="isActive(item.path) ? 'bg-brand-wash text-brand-deep' : 'text-muted hover:bg-canvas hover:text-brand'"
         >
           <span v-if="isActive(item.path)" class="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r bg-brand"></span>
-          <component :is="item.icon" :size="18" class="flex-none" :class="{ 'mx-auto': !expandedState }" />
-          <span v-show="expandedState">{{ item.label }}</span>
+          <component :is="item.icon" :size="18" class="flex-none" :class="{ 'mx-auto': !labelsVisible }" />
+          <span v-show="labelsVisible">{{ item.label }}</span>
         </button>
       </nav>
 
-      <div v-show="expandedState" class="m-4 rounded-lg border border-border bg-canvas p-3">
+      <div v-show="labelsVisible" class="m-4 rounded-lg border border-border bg-canvas p-3">
         <span class="mb-2 block h-2 w-2 rounded-full bg-success shadow-[0_0_0_4px_#d1fadf]"></span>
         <strong class="block text-xs text-ink">只读调查模式</strong>
         <small class="block text-[11px] text-faint">Agent 不执行自动业务处置</small>
