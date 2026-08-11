@@ -202,6 +202,13 @@ def _merge_hits_into_cases(
             exposure = ar_balance_num
         else:
             exposure = max((h.exposure_amount for h in group), default=0.0)
+        primary_hit = min(
+            group,
+            key=lambda hit: (
+                {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}.get(hit.severity, 4),
+                hit.rule_id,
+            ),
+        )
         cases.append(
             CaseWrite(
                 case_id=case_id,
@@ -213,7 +220,9 @@ def _merge_hits_into_cases(
                 observation_date=observation_date,
                 priority=_priority(group),
                 exposure_amount=exposure,
-                summary=f"命中 {len(group)} 条风险规则，需人工复核。",
+                summary=(
+                    f"主要风险：{primary_hit.rule_name}；需结合 {len(group)} 条规则信号调查核实。"
+                ),
                 rule_hit_count=len(group),
                 rule_set_version=RULE_SET_VERSION,
                 created_at=max((h.period for h in group), default=""),
@@ -488,7 +497,12 @@ def _receivable_cases(
                 exposure_amount=ar_amount,
                 summary=(
                     f"最新应收 {_money(ar_amount)}，超期 {_money(overdue_amount)}，"
-                    f"客户仍在经营且未进入黑名单，命中 {len(hits)} 条早期预警规则。"
+                    f"客户当前为黑名单，命中 {len(hits)} 条风险规则。"
+                    if list_status == 2
+                    else (
+                        f"最新应收 {_money(ar_amount)}，超期 {_money(overdue_amount)}，"
+                        f"客户仍在经营且未进入黑名单，命中 {len(hits)} 条早期预警规则。"
+                    )
                 ),
                 rule_hit_count=len(hits),
                 rule_set_version=RULE_SET_VERSION,

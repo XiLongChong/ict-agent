@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
@@ -33,6 +34,7 @@ from ict_agent.service import (
     get_risk_overview,
     list_cases,
     prepare_investigation,
+    recover_interrupted_investigations,
     review_case,
     run_rule_scan,
     stream_prepared_investigation,
@@ -43,10 +45,22 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 FRONTEND_DIST_DIR = FRONTEND_DIR / "dist"
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """启动时清理由上一个服务进程遗留的临时调查状态。"""
+
+    recovered = recover_interrupted_investigations()
+    if recovered:
+        logger.warning("已恢复 %d 个被中断的 Agent 调查案件", recovered)
+    yield
+
+
 app = FastAPI(
     title="佳华智审风险调查 Agent API",
     version="0.4.0",
     description="基于可追溯七表快照、统一证据网关的可观察 Agent 调查与人工审核闭环。",
+    lifespan=lifespan,
 )
 
 

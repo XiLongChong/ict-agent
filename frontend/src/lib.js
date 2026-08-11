@@ -56,7 +56,12 @@ export async function api(path, options = {}) {
 }
 
 export async function streamNdjson(path, options, onEvent) {
-  const response = await fetch(path, options);
+  let response;
+  try {
+    response = await fetch(path, options);
+  } catch {
+    throw new Error("无法连接本地调查服务，请确认服务正在运行后重试。");
+  }
   if (!response.ok) {
     const payload = await response.json();
     throw new Error(payload.error || `请求失败（${response.status}）`);
@@ -66,7 +71,13 @@ export async function streamNdjson(path, options, onEvent) {
   const decoder = new TextDecoder();
   let buffer = "";
   while (true) {
-    const { value, done } = await reader.read();
+    let chunk;
+    try {
+      chunk = await reader.read();
+    } catch {
+      throw new Error("调查连接意外中断，请刷新案件后重新调查。");
+    }
+    const { value, done } = chunk;
     buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
     const lines = buffer.split("\n");
     buffer = lines.pop() || "";

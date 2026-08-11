@@ -1078,6 +1078,26 @@ class CaseStore:
         except duckdb.Error as exc:
             raise DataAccessError("案件状态无法更新。") from exc
 
+    def recover_interrupted_investigations(self) -> int:
+        """服务启动时释放上一个进程遗留的 Agent 临时运行状态。"""
+
+        self.ensure_ready()
+        now = datetime.now(UTC).isoformat()
+        try:
+            with duckdb.connect(str(self.database_path)) as connection:
+                rows = connection.execute(
+                    """
+                    UPDATE risk_cases
+                    SET status = 'PENDING_AGENT_REVIEW', updated_at = ?
+                    WHERE status = 'AGENT_REVIEWING'
+                    RETURNING case_id
+                    """,
+                    [now],
+                ).fetchall()
+                return len(rows)
+        except duckdb.Error as exc:
+            raise DataAccessError("中断的调查状态无法恢复。") from exc
+
     def _fetch(self, sql: str, parameters: SqlParameters = ()) -> QueryResult:
         self.ensure_ready()
         try:

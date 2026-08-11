@@ -657,6 +657,9 @@ def test_case_store_preserves_idempotency_and_review(
     assert len(case_store.fetch_cases().rows) == 4
 
     case_id = str(case_store.fetch_cases().rows[0][0])
+    assert case_store.transition_case(case_id, "PENDING_AGENT_REVIEW", "AGENT_REVIEWING")
+    assert case_store.recover_interrupted_investigations() == 1
+    assert case_store.fetch_case(case_id).rows[0][7] == "PENDING_AGENT_REVIEW"
     assert case_store.transition_case(case_id, "PENDING_AGENT_REVIEW", "PENDING_HUMAN_REVIEW")
     case_store.save_review(
         ReviewWrite(

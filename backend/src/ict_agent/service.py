@@ -350,7 +350,7 @@ def prepare_investigation(
         DuckDBStore(runtime_settings.database_path).ensure_ready()
         store = CaseStore(runtime_settings.case_database_path)
         if not store.transition_case(case_id, "PENDING_AGENT_REVIEW", "AGENT_REVIEWING"):
-            raise ServiceError("案件状态已经变化，请刷新后重试。", request_id, 409)
+            raise ServiceError("该案件正在调查，请等待本轮结束后重试。", request_id, 409)
         return PreparedInvestigation(
             settings=runtime_settings,
             case=case,
@@ -359,6 +359,17 @@ def prepare_investigation(
         )
     except ServiceError:
         raise
+    except (ConfigurationError, DataAccessError) as exc:
+        raise ServiceError(str(exc), request_id, 503) from exc
+
+
+def recover_interrupted_investigations(*, settings: Settings | None = None) -> int:
+    """恢复服务异常退出时遗留的临时调查状态。"""
+
+    request_id = uuid4().hex
+    try:
+        runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
+        return CaseStore(runtime_settings.case_database_path).recover_interrupted_investigations()
     except (ConfigurationError, DataAccessError) as exc:
         raise ServiceError(str(exc), request_id, 503) from exc
 
