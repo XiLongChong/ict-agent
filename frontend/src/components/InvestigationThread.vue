@@ -1,5 +1,7 @@
 <script setup>
 import { nextTick, ref, watch } from "vue";
+import { AlertCircle, CheckCircle2, Database, PlayCircle, Search, ShieldCheck, Sparkles, UserCheck } from "lucide-vue-next";
+import Badge from "./ui/Badge.vue";
 import { hypothesisColor, labels, priorityColor, queryArguments, stageColor, streamNdjson } from "../lib";
 
 const props = defineProps({ caseItem: Object });
@@ -10,11 +12,15 @@ const record = ref(props.caseItem?.latest_investigation || null);
 const error = ref("");
 const thread = ref(null);
 
-watch(() => props.caseItem, (value) => {
-  record.value = value?.latest_investigation || null;
-  events.value = [];
-  error.value = "";
-}, { deep: false });
+watch(
+  () => props.caseItem,
+  (value) => {
+    record.value = value?.latest_investigation || null;
+    events.value = [];
+    error.value = "";
+  },
+  { deep: false }
+);
 
 async function scrollToBottom() {
   await nextTick();
@@ -23,13 +29,18 @@ async function scrollToBottom() {
 
 async function investigate() {
   if (!props.caseItem || running.value) return;
-  running.value = true; events.value = []; record.value = null; error.value = "";
-  let finalRecord = null; let terminalError = "";
+  running.value = true;
+  events.value = [];
+  record.value = null;
+  error.value = "";
+  let finalRecord = null;
+  let terminalError = "";
   try {
     await streamNdjson(`/api/v1/cases/${encodeURIComponent(props.caseItem.case_id)}/investigations`, { method: "POST" }, (event) => {
       events.value.push(event);
       if (event.event_type === "REPORT_COMPLETED" && event.record) {
-        finalRecord = event.record; record.value = event.record;
+        finalRecord = event.record;
+        record.value = event.record;
       }
       if (event.event_type === "ERROR") terminalError = event.message;
       void scrollToBottom();
@@ -44,70 +55,177 @@ async function investigate() {
   }
 }
 
-function eventIcon(type) {
-  return ({ RUN_STARTED: "mdi-play-circle-outline", TOOL_STARTED: "mdi-magnify", TOOL_COMPLETED: "mdi-database-check-outline", VALIDATION_STARTED: "mdi-shield-check-outline", REPORT_COMPLETED: "mdi-check-circle-outline", ERROR: "mdi-alert-circle-outline" })[type] || "mdi-circle-small";
+const eventIcon = {
+  RUN_STARTED: PlayCircle,
+  TOOL_STARTED: Search,
+  TOOL_COMPLETED: Database,
+  VALIDATION_STARTED: ShieldCheck,
+  REPORT_COMPLETED: CheckCircle2,
+  ERROR: AlertCircle,
+};
+const eventTone = {
+  RUN_STARTED: "text-muted",
+  TOOL_STARTED: "text-muted",
+  TOOL_COMPLETED: "text-brand",
+  VALIDATION_STARTED: "text-muted",
+  REPORT_COMPLETED: "text-success",
+  ERROR: "text-danger",
+};
+function evidenceById(id) {  return record.value?.evidence?.find((item) => item.evidence_id === id);
 }
-function eventColor(type) { return type === "ERROR" ? "error" : type === "REPORT_COMPLETED" ? "success" : type === "TOOL_COMPLETED" ? "primary" : "grey"; }
-function evidenceById(id) { return record.value?.evidence?.find((item) => item.evidence_id === id); }
-function completeness(value) { return ({ LOW: 33, MEDIUM: 66, HIGH: 100 })[value] || 0; }
+function completeness(value) {
+  return ({ LOW: 33, MEDIUM: 66, HIGH: 100 })[value] || 0;
+}
 </script>
 
 <template>
-  <section class="investigation-shell">
-    <header class="investigation-header">
-      <div><span class="eyebrow">AGENT INVESTIGATION</span><h3>调查对话</h3><p>按真实执行顺序展示工具与证据，不展示私有思维链。</p></div>
-      <v-btn color="primary" :loading="running" prepend-icon="mdi-sparkles" @click="investigate">{{ record ? '重新调查' : '开始调查' }}</v-btn>
+  <section class="mx-auto flex h-full w-full max-w-[1100px] flex-col">
+    <header class="flex items-center gap-4 px-5 py-4">
+      <div class="leading-tight">
+        <span class="eyebrow">AGENT INVESTIGATION</span>
+        <h3 class="mt-0.5 text-[16px] font-bold text-ink">调查对话</h3>
+        <p class="text-xs text-muted">按真实执行顺序展示工具与证据，不展示私有思维链。</p>
+      </div>
+      <div class="flex-1"></div>
+      <button
+        type="button"
+        :disabled="running"
+        class="inline-flex h-10 items-center gap-2 rounded-lg bg-brand px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-dark disabled:opacity-60"
+        @click="investigate"
+      >
+        <Sparkles :size="16" :class="running ? 'animate-spin' : ''" />
+        {{ record ? "重新调查" : "开始调查" }}
+      </button>
     </header>
 
-    <div ref="thread" class="investigation-thread" aria-live="polite">
-      <div class="thread-boundary"><v-icon icon="mdi-lock-outline" /><span>只读业务工具 · 无任意 SQL · 结论输出前校验证据引用</span></div>
+    <div ref="thread" class="h-[calc(100vh-280px)] min-h-[360px] overflow-y-auto px-4 pb-10 md:px-6" aria-live="polite">
+      <div class="mx-auto flex max-w-[880px] flex-col gap-1 border-l border-border pl-6">
+        <div class="relative -ml-[31px] my-2 flex items-center gap-2">
+          <span class="grid h-8 w-8 flex-none place-items-center rounded-full border border-border bg-surface"><Database :size="14" class="text-muted" /></span>
+          <span class="text-[11px] text-muted">只读业务工具 · 无任意 SQL · 结论输出前校验证据引用</span>
+        </div>
 
-      <div v-if="!events.length && !record" class="thread-empty">
-        <div class="agent-avatar"><v-icon icon="mdi-creation" /></div><div><h4>准备从证据开始调查</h4><p>Agent 会先发现当前案件可用数据，再逐步查询、核验证据，最终报告将出现在这条时间线底部。</p></div>
-      </div>
+        <div v-if="!events.length && !record" class="my-10 flex items-start gap-4">
+          <span class="grid h-12 w-12 flex-none place-items-center rounded-xl bg-brand-wash text-brand-deep"><Sparkles :size="22" /></span>
+          <div>
+            <h4 class="text-[15px] font-semibold text-ink">准备从证据开始调查</h4>
+            <p class="mt-1 max-w-[520px] text-[13px] leading-6 text-muted">Agent 会先发现当前案件可用数据，再逐步查询、核验证据，最终报告将出现在这条时间线底部。</p>
+          </div>
+        </div>
 
-      <div v-for="event in events" :key="event.sequence" class="thread-message">
-        <div class="event-rail"><span :class="`event-dot ${eventColor(event.event_type)}`"><v-icon :icon="eventIcon(event.event_type)" size="17" /></span></div>
-        <div class="event-card" :class="event.event_type.toLowerCase()">
-          <div class="event-heading"><strong>{{ event.tool_name ? labels.tool[event.tool_name] : labels.event[event.event_type] }}</strong><span>#{{ String(event.sequence).padStart(2, '0') }}</span></div>
-          <p>{{ event.message }}</p>
-          <small v-if="event.evidence?.arguments || event.arguments">{{ queryArguments(event.evidence || event) }}</small>
-          <div v-if="event.evidence" class="evidence-preview"><v-icon icon="mdi-database-outline" /><div><strong>{{ event.evidence.summary }}</strong><small>{{ event.evidence.period }} · 证据 {{ event.evidence.evidence_id.slice(0, 8) }}</small></div></div>
+        <div v-for="event in events" :key="event.sequence" class="relative -ml-[31px] grid grid-cols-[28px_minmax(0,1fr)] gap-3 py-2">
+          <span class="grid h-8 w-8 flex-none place-items-center rounded-full border border-border bg-surface" :class="eventTone[event.event_type]">
+            <component :is="eventIcon[event.event_type] || PlayCircle" :size="15" />
+          </span>
+          <div class="rounded-lg border border-border bg-surface p-3.5">
+            <div class="flex items-center gap-2">
+              <strong class="text-[13px] text-ink">{{ event.tool_name ? labels.tool[event.tool_name] : labels.event[event.event_type] }}</strong>
+              <span class="ml-auto font-mono text-[10px] text-faint">#{{ String(event.sequence).padStart(2, "0") }}</span>
+            </div>
+            <p class="mt-1 text-[13px] leading-6 text-muted">{{ event.message }}</p>
+            <small v-if="event.evidence?.arguments || event.arguments" class="mt-1 block font-mono text-[11px] text-faint">{{ queryArguments(event.evidence || event) }}</small>
+            <div v-if="event.evidence" class="mt-2 flex items-start gap-2 rounded-md bg-canvas p-2.5">
+              <Database :size="14" class="mt-0.5 flex-none text-muted" />
+              <div>
+                <strong class="block text-xs text-ink">{{ event.evidence.summary }}</strong>
+                <small class="block text-[11px] text-faint">{{ event.evidence.period }} · 证据 {{ event.evidence.evidence_id.slice(0, 8) }}</small>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="running" class="relative -ml-[31px] my-3 flex items-center gap-2 text-muted">
+          <span class="flex items-end gap-1"><i class="h-2 w-1 animate-bounce rounded bg-faint"></i><i class="h-3 w-1 animate-bounce rounded bg-faint" style="animation-delay: 0.12s"></i><i class="h-2 w-1 animate-bounce rounded bg-faint" style="animation-delay: 0.24s"></i></span>
+          <small class="text-xs">Agent 正在继续调查</small>
+        </div>
+
+        <div v-if="record" class="relative -ml-[31px] mt-4 space-y-4">
+          <div class="flex items-center gap-3">
+            <span class="grid h-10 w-10 place-items-center rounded-xl bg-success-wash text-success"><CheckCircle2 :size="20" /></span>
+            <div><small class="block font-mono text-[10px] uppercase tracking-wide text-faint">VERIFIED OUTCOME</small><h3 class="text-lg font-bold text-ink">调查报告</h3></div>
+          </div>
+
+          <section class="card p-5">
+            <div class="flex flex-wrap items-center gap-3">
+              <Badge :tone="priorityColor(record.report.recommended_priority)">建议{{ labels.priority[record.report.recommended_priority] }}优先级</Badge>
+              <span class="text-xs text-muted">证据完整度 {{ record.report.evidence_completeness }}</span>
+            </div>
+            <p class="mt-3 text-sm leading-6 text-muted">{{ record.report.investigation_summary }}</p>
+            <div class="mt-3 h-1.5 rounded-full bg-gray-100"><div class="h-1.5 rounded-full bg-brand" :style="{ width: completeness(record.report.evidence_completeness) + '%' }"></div></div>
+          </section>
+
+          <section class="card p-5">
+            <div class="flex items-center gap-2">
+              <h4 class="text-[15px] font-bold text-ink">风险信号判断</h4>
+              <Badge :tone="stageColor(record.report.risk_assessment.stage)">{{ labels.riskStage[record.report.risk_assessment.stage] }}</Badge>
+            </div>
+            <p class="mt-2 text-[13px] leading-6 text-muted">{{ record.report.risk_assessment.statement }}</p>
+            <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div><strong class="text-xs text-ink">主要驱动</strong><ul class="mt-1 space-y-1 text-[13px] text-muted"><li v-for="item in record.report.risk_assessment.drivers" :key="item">· {{ item }}</li></ul></div>
+              <div><strong class="text-xs text-ink">反向信号</strong><ul class="mt-1 space-y-1 text-[13px] text-muted"><li v-for="item in record.report.risk_assessment.counter_signals" :key="item">· {{ item }}</li><li v-if="!record.report.risk_assessment.counter_signals.length">· 暂无</li></ul></div>
+              <div><strong class="text-xs text-ink">后续监测</strong><ul class="mt-1 space-y-1 text-[13px] text-muted"><li v-for="item in record.report.risk_assessment.watch_items" :key="item">· {{ item }}</li></ul></div>
+            </div>
+          </section>
+
+          <section class="card p-5">
+            <div class="flex items-center justify-between"><h4 class="text-[15px] font-bold text-ink">确定事实</h4><span class="text-xs text-faint">{{ record.report.facts.length }} 项</span></div>
+            <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+              <article v-for="fact in record.report.facts" :key="fact.statement" class="rounded-lg border border-border p-3">
+                <p class="text-[13px] leading-6 text-muted">{{ fact.statement }}</p>
+                <div class="mt-2 flex flex-wrap gap-1.5">
+                  <Badge v-for="id in fact.evidence_ids" :key="id" tone="brand">{{ labels.tool[evidenceById(id)?.tool_name] || "证据" }} · {{ evidenceById(id)?.period }}</Badge>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="card p-5">
+            <div class="flex items-center justify-between"><h4 class="text-[15px] font-bold text-ink">证据支持的判断</h4><span class="text-xs text-faint">{{ record.report.hypotheses.length }} 项</span></div>
+            <div class="mt-3 space-y-3">
+              <article v-for="item in record.report.hypotheses" :key="item.hypothesis_id" class="rounded-lg border border-border p-3">
+                <div class="flex items-start gap-2"><Badge :tone="hypothesisColor(item.status)">{{ labels.hypothesis[item.status] }}</Badge><strong class="text-[13px] text-ink">{{ item.statement }}</strong></div>
+                <p v-if="item.missing_evidence.length" class="mt-1.5 text-[12px] text-warning-deep"><b>仍需补证：</b>{{ item.missing_evidence.join("；") }}</p>
+              </article>
+            </div>
+          </section>
+
+          <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <section class="card p-5"><h4 class="text-[15px] font-bold text-ink">建议动作</h4><ul class="mt-2 space-y-1.5 text-[13px] text-muted"><li v-for="item in record.report.recommended_actions" :key="item">· {{ item }}</li></ul></section>
+            <section class="card p-5"><h4 class="text-[15px] font-bold text-ink">数据限制</h4><ul class="mt-2 space-y-1.5 text-[13px] text-muted"><li v-for="item in record.report.limitations" :key="item">· {{ item }}</li><li v-if="!record.report.limitations.length">· 未报告额外限制</li></ul></section>
+          </div>
+
+          <details class="card">
+            <summary class="cursor-pointer select-none px-5 py-4 text-sm font-semibold text-ink">查看本轮 {{ record.evidence.length }} 项工具证据</summary>
+            <div class="space-y-3 border-t border-border px-5 py-4">
+              <article v-for="(item, index) in record.evidence" :key="item.evidence_id" class="grid grid-cols-[24px_minmax(0,1fr)] gap-3">
+                <span class="font-mono text-xs text-faint">{{ String(index + 1).padStart(2, "0") }}</span>
+                <div>
+                  <div class="flex items-center gap-2"><strong class="text-[13px] text-ink">{{ labels.tool[item.tool_name] }}</strong><small class="text-[11px] text-faint">{{ item.period }} · {{ item.sources.join(" / ") }}</small></div>
+                  <p class="mt-1 text-[13px] leading-6 text-muted">{{ item.summary }}</p>
+                  <code class="mt-1 block font-mono text-[11px] text-faint">{{ item.evidence_id }}</code>
+                </div>
+              </article>
+            </div>
+          </details>
+
+          <details v-if="record.report.trace?.length" class="card">
+            <summary class="cursor-pointer select-none px-5 py-4 text-sm font-semibold text-ink">回放调查轨迹</summary>
+            <div class="space-y-3 border-t border-border px-5 py-4">
+              <article v-for="item in record.report.trace" :key="item.created_at + item.title">
+                <div class="flex items-center gap-2"><strong class="text-[13px] text-ink">{{ item.title }}</strong><small class="ml-auto text-[11px] text-faint">{{ item.created_at }}</small></div>
+                <p class="mt-1 text-[12px] leading-5 text-muted">{{ item.detail }}</p>
+              </article>
+            </div>
+          </details>
+
+          <div class="flex items-center gap-2 rounded-lg bg-canvas p-3 text-xs text-muted"><UserCheck :size="15" class="flex-none" />Agent 提供调查证据，最终业务处置仍由人工审核决定。</div>
+        </div>
+
+        <div v-if="error" class="my-4 flex items-start gap-3 rounded-lg border border-danger/30 bg-danger-wash p-4">
+          <AlertCircle :size="18" class="mt-0.5 flex-none text-danger" />
+          <div><strong class="block text-sm text-danger">本次调查未生成报告</strong><p class="mt-1 text-[13px] text-danger-deep">{{ error }}</p></div>
         </div>
       </div>
-
-      <div v-if="running" class="agent-typing"><span></span><span></span><span></span><small>Agent 正在继续调查</small></div>
-
-      <div v-if="record" class="final-report">
-        <div class="report-arrival"><span><v-icon icon="mdi-check-decagram" /></span><div><small>VERIFIED OUTCOME</small><h3>调查报告</h3></div></div>
-        <v-card class="report-summary-card">
-          <div class="report-title"><v-chip :color="priorityColor(record.report.recommended_priority)" variant="tonal">建议{{ labels.priority[record.report.recommended_priority] }}优先级</v-chip><span>证据完整度 {{ record.report.evidence_completeness }}</span></div>
-          <p>{{ record.report.investigation_summary }}</p><v-progress-linear :model-value="completeness(record.report.evidence_completeness)" color="primary" height="6" rounded />
-        </v-card>
-
-        <v-card class="report-section risk-assessment"><div class="report-section-title"><h4>风险信号判断</h4><v-chip size="small" :color="stageColor(record.report.risk_assessment.stage)" variant="tonal">{{ labels.riskStage[record.report.risk_assessment.stage] }}</v-chip></div>
-          <p>{{ record.report.risk_assessment.statement }}</p>
-          <div class="assessment-grid"><div><strong>主要驱动</strong><ul><li v-for="item in record.report.risk_assessment.drivers" :key="item">{{ item }}</li></ul></div><div><strong>反向信号</strong><ul><li v-for="item in record.report.risk_assessment.counter_signals" :key="item">{{ item }}</li><li v-if="!record.report.risk_assessment.counter_signals.length">暂无</li></ul></div><div><strong>后续监测</strong><ul><li v-for="item in record.report.risk_assessment.watch_items" :key="item">{{ item }}</li></ul></div></div>
-        </v-card>
-
-        <section class="report-section"><div class="report-section-title"><h4>确定事实</h4><span>{{ record.report.facts.length }} 项</span></div>
-          <div class="fact-grid"><article v-for="fact in record.report.facts" :key="fact.statement"><p>{{ fact.statement }}</p><div class="citation-row"><v-chip v-for="id in fact.evidence_ids" :key="id" size="x-small" variant="outlined" color="primary">{{ labels.tool[evidenceById(id)?.tool_name] || '证据' }} · {{ evidenceById(id)?.period }}</v-chip></div></article></div>
-        </section>
-
-        <section class="report-section"><div class="report-section-title"><h4>证据支持的判断</h4><span>{{ record.report.hypotheses.length }} 项</span></div>
-          <article v-for="item in record.report.hypotheses" :key="item.hypothesis_id" class="hypothesis-card"><div><v-chip size="small" :color="hypothesisColor(item.status)" variant="tonal">{{ labels.hypothesis[item.status] }}</v-chip><strong>{{ item.statement }}</strong></div><p v-if="item.missing_evidence.length"><b>仍需补证：</b>{{ item.missing_evidence.join('；') }}</p></article>
-        </section>
-
-        <div class="report-two-column"><v-card class="report-section"><h4>建议动作</h4><ul><li v-for="item in record.report.recommended_actions" :key="item">{{ item }}</li></ul></v-card><v-card class="report-section"><h4>数据限制</h4><ul><li v-for="item in record.report.limitations" :key="item">{{ item }}</li><li v-if="!record.report.limitations.length">未报告额外限制</li></ul></v-card></div>
-
-        <v-expansion-panels class="evidence-panels" variant="accordion">
-          <v-expansion-panel :title="`查看本轮 ${record.evidence.length} 项工具证据`"><v-expansion-panel-text><article v-for="(item, index) in record.evidence" :key="item.evidence_id" class="evidence-record"><span>{{ String(index + 1).padStart(2, '0') }}</span><div><strong>{{ labels.tool[item.tool_name] }}</strong><small>{{ item.period }} · {{ item.sources.join(' / ') }}</small><p>{{ item.summary }}</p><code>{{ item.evidence_id }}</code></div></article></v-expansion-panel-text></v-expansion-panel>
-          <v-expansion-panel v-if="record.report.trace?.length" title="回放调查轨迹"><v-expansion-panel-text><article v-for="item in record.report.trace" :key="item.created_at + item.title" class="trace-record"><strong>{{ item.title }}</strong><small>{{ item.created_at }}</small><p>{{ item.detail }}</p></article></v-expansion-panel-text></v-expansion-panel>
-        </v-expansion-panels>
-        <div class="human-boundary"><v-icon icon="mdi-account-check-outline" />Agent 提供调查证据，最终业务处置仍由人工审核决定。</div>
-      </div>
-
-      <v-alert v-if="error" type="error" variant="tonal" title="本次调查未生成报告">{{ error }}</v-alert>
     </div>
   </section>
 </template>
