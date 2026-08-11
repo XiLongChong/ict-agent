@@ -69,7 +69,10 @@ onMounted(loadAll);
             </span>
           </span>
         </span>
-        <div v-show="labelsVisible" class="ml-2 leading-tight">
+        <div
+          class="ml-2 flex-none whitespace-nowrap leading-tight transition-opacity duration-100"
+          :class="labelsVisible ? 'delay-100 opacity-100' : 'opacity-0'"
+        >
           <strong class="block text-[15px] text-ink">佳华智审</strong>
         </div>
       </div>
@@ -86,7 +89,10 @@ onMounted(loadAll);
         >
           <span v-if="isActive(item.path)" class="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r bg-brand"></span>
           <span class="grid h-11 w-10 flex-none place-items-center"><component :is="item.icon" :size="18" /></span>
-          <span v-show="labelsVisible" class="ml-2">{{ item.label }}</span>
+          <span
+            class="ml-2 flex-none whitespace-nowrap transition-opacity duration-100"
+            :class="labelsVisible ? 'delay-100 opacity-100' : 'opacity-0'"
+          >{{ item.label }}</span>
         </button>
       </nav>
 
@@ -101,7 +107,10 @@ onMounted(loadAll);
           <PanelLeftClose v-if="labelsVisible" :size="18" />
           <PanelLeftOpen v-else :size="18" />
         </span>
-        <span v-show="labelsVisible" class="ml-2 whitespace-nowrap">收起侧边栏</span>
+        <span
+          class="ml-2 flex-none whitespace-nowrap transition-opacity duration-100"
+          :class="labelsVisible ? 'delay-100 opacity-100' : 'opacity-0'"
+        >收起侧边栏</span>
       </button>
     </aside>
 
