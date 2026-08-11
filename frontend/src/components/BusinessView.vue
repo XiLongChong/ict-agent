@@ -1,26 +1,94 @@
 <script setup>
 import { computed } from "vue";
+import VueApexCharts from "vue3-apexcharts";
+import { AlertCircle, ChartLine, HandCoins, Wallet } from "lucide-vue-next";
 import { formatMoney, formatPercent, metricMap } from "../lib";
-const props = defineProps({ data: Object, loading: Boolean });
+import { workspace } from "../store";
+
+const data = computed(() => workspace.business);
+const loading = computed(() => workspace.loading);
 const cards = computed(() => {
-  if (!props.data) return [];
-  const overview = metricMap(props.data.overview); const ar = metricMap(props.data.latest_ar);
+  if (!workspace.business) return [];
+  const overview = metricMap(workspace.business.overview);
+  const ar = metricMap(workspace.business.latest_ar);
   return [
-    ["累计销售额", formatMoney(overview["销售额"]), "含退货负值", "brand", "mdi-chart-line"],
-    ["累计回款额", formatMoney(overview["回款额"]), "全数据窗口", "success", "mdi-cash-check"],
-    ["最新应收余额", formatMoney(ar["应收余额"]), props.data.latest_ar.period, "warning", "mdi-wallet-outline"],
-    ["最新超期率", formatPercent(ar["超期率"]), `超期 ${formatMoney(ar["超期应收"])}`, "danger", "mdi-alert-circle-outline"],
+    { label: "累计销售额", value: formatMoney(overview["销售额"]), note: "含退货负值", tone: "brand", icon: ChartLine },
+    { label: "累计回款额", value: formatMoney(overview["回款额"]), note: "全数据窗口", tone: "success", icon: HandCoins },
+    { label: "最新应收余额", value: formatMoney(ar["应收余额"]), note: workspace.business.latest_ar.period, tone: "warning", icon: Wallet },
+    { label: "最新超期率", value: formatPercent(ar["超期率"]), note: `超期 ${formatMoney(ar["超期应收"])}`, tone: "danger", icon: AlertCircle },
   ];
 });
-const trend = computed(() => (props.data?.ar_trend?.rows || []).slice(-8).reverse());
+const toneIcon = {
+  brand: "bg-brand-wash text-brand-deep",
+  success: "bg-success-wash text-success-deep",
+  warning: "bg-warning-wash text-warning-deep",
+  danger: "bg-danger-wash text-danger",
+};
+const trend = computed(() => (workspace.business?.ar_trend?.rows || []).slice(-8).reverse());
+const trendCategories = computed(() => trend.value.map((r) => r[0]));
+const trendSeries = computed(() => [
+  { name: "应收余额", data: trend.value.map((r) => Number(r[1])) },
+  { name: "超期应收", data: trend.value.map((r) => Number(r[2])) },
+]);
+function axisMoney(value) {
+  const n = Number(value);
+  if (Math.abs(n) >= 100000000) return `${(n / 100000000).toFixed(1)}亿`;
+  if (Math.abs(n) >= 10000) return `${(n / 10000).toFixed(0)}万`;
+  return String(n);
+}
+const trendOptions = computed(() => ({
+  chart: { type: "area", toolbar: { show: false }, fontFamily: "DM Sans, 'Microsoft YaHei', sans-serif" },
+  colors: ["#465fff", "#d92d20"],
+  stroke: { curve: "smooth", width: 2 },
+  fill: { type: "gradient", gradient: { opacityFrom: 0.15, opacityTo: 0 } },
+  dataLabels: { enabled: false },
+  xaxis: { categories: trendCategories.value, axisBorder: { show: false }, axisTicks: { show: false }, labels: { style: { colors: "#98a2b3", fontSize: "12px" } } },
+  yaxis: { labels: { formatter: axisMoney, style: { colors: "#98a2b3", fontSize: "12px" } } },
+  grid: { borderColor: "#e4e7ec", strokeDashArray: 3 },
+  legend: { position: "top", horizontalAlign: "right", fontSize: "12px", labels: { colors: "#667085" }, markers: { size: 4 } },
+  tooltip: { y: { formatter: (value) => formatMoney(value) } },
+}));
 </script>
 
 <template>
-  <div class="view-stack">
-    <div class="section-intro"><div><span class="eyebrow">BUSINESS FACTS</span><h2>经营分析</h2></div><p>{{ data?.overview?.period || '正在读取' }} · 确定性指标，不消耗模型额度。</p></div>
-    <div class="metric-grid"><v-card v-for="card in cards" :key="card[0]" class="metric-card" :class="`metric-${card[3]}`" :loading="loading"><div class="metric-icon"><v-icon :icon="card[4]" /></div><span>{{ card[0] }}</span><strong class="compact">{{ card[1] }}</strong><small>{{ card[2] }}</small></v-card></div>
-    <v-card class="flat-panel"><div class="panel-title"><div><span class="section-index">C</span><h3>最近应收趋势</h3></div><span class="subtle-copy">每个月末独立聚合</span></div>
-      <div class="table-scroll"><v-table density="comfortable"><thead><tr><th>期间</th><th>应收余额</th><th>超期应收</th><th>超期率</th></tr></thead><tbody><tr v-for="row in trend" :key="row[0]"><td>{{ row[0] }}</td><td>{{ formatMoney(row[1]) }}</td><td>{{ formatMoney(row[2]) }}</td><td>{{ formatPercent(row[3]) }}</td></tr></tbody></v-table></div>
-    </v-card>
+  <div class="space-y-5">
+    <div class="section-intro flex items-end justify-between gap-6">
+      <div><span class="eyebrow">BUSINESS FACTS</span><h2>经营分析</h2></div>
+      <p>{{ data?.overview?.period || "正在读取" }} · 确定性指标，不消耗模型额度。</p>
+    </div>
+
+    <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
+      <section v-for="card in cards" :key="card.label" class="card min-h-[148px] p-5">
+        <span class="mb-4 grid h-10 w-10 place-items-center rounded-lg" :class="toneIcon[card.tone]"><component :is="card.icon" :size="20" /></span>
+        <span class="block text-xs text-muted">{{ card.label }}</span>
+        <strong class="mt-1 block text-[19px] leading-tight text-ink">{{ card.value }}</strong>
+        <small class="mt-1 block text-[11px] text-faint">{{ card.note }}</small>
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="panel-head">
+        <div class="flex items-center gap-2"><span class="section-index">C</span><h3>最近应收趋势</h3></div>
+        <span class="subtle-copy">每个月末独立聚合</span>
+      </div>
+      <div class="px-5 pt-4">
+        <VueApexCharts type="area" height="260" :options="trendOptions" :series="trendSeries" />
+      </div>
+      <div class="overflow-x-auto border-t border-border">
+        <table class="table-base">
+          <thead><tr><th>期间</th><th>应收余额</th><th>超期应收</th><th>超期率</th></tr></thead>
+          <tbody>
+            <tr v-for="row in trend" :key="row[0]">
+              <td><span class="font-mono text-xs text-muted">{{ row[0] }}</span></td>
+              <td class="money-cell">{{ formatMoney(row[1]) }}</td>
+              <td class="money-cell">{{ formatMoney(row[2]) }}</td>
+              <td>
+                <span class="inline-flex rounded-md px-2 py-0.5 text-xs font-semibold" :class="Number(row[3]) > 0.3 ? 'bg-danger-wash text-danger' : 'bg-success-wash text-success-deep'">{{ formatPercent(row[3]) }}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </div>
 </template>
