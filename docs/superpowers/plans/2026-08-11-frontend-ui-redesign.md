@@ -600,7 +600,7 @@ git commit -m "feat: rebuild app shell with Tailwind (sidebar, topbar, main)"
 import { computed } from "vue";
 import { useRouter } from "vue-router";
 import VueApexCharts from "vue3-apexcharts";
-import { AlertTriangle, ArrowRight, ClipboardSearch, Clock, DatabaseBackup, Radar, Wallet } from "lucide-vue-next";
+import { AlertTriangle, ArrowRight, ClipboardList, Clock, DatabaseBackup, Radar, Wallet } from "lucide-vue-next";
 import Badge from "./ui/Badge.vue";
 import { formatMoney, labels, statusColor } from "../lib";
 import { workspace } from "../store";
@@ -618,7 +618,7 @@ const invShare = computed(() => (total.value ? Math.round((inventory.value / tot
 
 const metrics = computed(() => [
   { label: "关键级案件", value: workspace.overview?.critical_cases ?? "—", note: "当前规则侧重早期预警", tone: "danger", icon: AlertTriangle },
-  { label: "等待调查", value: workspace.overview?.open_cases ?? "—", note: "规则已经命中", tone: "brand", icon: ClipboardSearch },
+  { label: "等待调查", value: workspace.overview?.open_cases ?? "—", note: "规则已经命中", tone: "brand", icon: ClipboardList },
   { label: "等待审核", value: workspace.overview?.pending_review_cases ?? "—", note: "Agent 已完成取证", tone: "warning", icon: Clock },
   { label: "风险敞口", value: workspace.overview ? formatMoney(workspace.overview.exposure_amount) : "—", note: "未关闭案件合计", tone: "success", icon: Wallet, compact: true },
 ]);
@@ -1413,7 +1413,7 @@ git commit -m "feat: rebuild investigation thread with Tailwind timeline and rep
 <script setup>
 import { computed } from "vue";
 import VueApexCharts from "vue3-apexcharts";
-import { AlertCircle, CashCheck, ChartLine, Wallet } from "lucide-vue-next";
+import { AlertCircle, ChartLine, HandCoins, Wallet } from "lucide-vue-next";
 import { formatMoney, formatPercent, metricMap } from "../lib";
 import { workspace } from "../store";
 
@@ -1425,7 +1425,7 @@ const cards = computed(() => {
   const ar = metricMap(workspace.business.latest_ar);
   return [
     { label: "累计销售额", value: formatMoney(overview["销售额"]), note: "含退货负值", tone: "brand", icon: ChartLine },
-    { label: "累计回款额", value: formatMoney(overview["回款额"]), note: "全数据窗口", tone: "success", icon: CashCheck },
+    { label: "累计回款额", value: formatMoney(overview["回款额"]), note: "全数据窗口", tone: "success", icon: HandCoins },
     { label: "最新应收余额", value: formatMoney(ar["应收余额"]), note: workspace.business.latest_ar.period, tone: "warning", icon: Wallet },
     { label: "最新超期率", value: formatPercent(ar["超期率"]), note: `超期 ${formatMoney(ar["超期应收"])}`, tone: "danger", icon: AlertCircle },
   ];
@@ -1569,8 +1569,10 @@ http://127.0.0.1:8000/cases/AR|C058
 
 对 Step 2-4 发现的问题逐条修复后重新 build 并复测。全部通过后提交剩余改动（若有）：
 ```bash
-git add -A && git commit -m "feat: finalize Tailwind UI migration acceptance"
+git add frontend/src frontend/dist
+git commit -m "feat: finalize Tailwind UI migration acceptance"
 ```
+注意：**只提交 `frontend/src` 与 `frontend/dist`**。工作区里 `backend/src/ict_agent/api.py`、`backend/tests/test_api.py` 等是本次任务范围外的未提交改动，一律不要 `git add`（尤其不要用 `git add -A`）；根目录/前端根目录的 `*.log` 文件也不要提交。
 
 - [ ] **Step 6: 收尾报告**
 
