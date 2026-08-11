@@ -39,6 +39,13 @@ export function formatMoney(value) {
 export const formatPercent = (value) => value == null ? "—" : `${(Number(value) * 100).toFixed(1)}%`;
 export const metricMap = (result) => Object.fromEntries(result.rows.map(([name, value]) => [name, value]));
 
+export function openCaseWorkspace(caseId, sourcePath) {
+  const url = new URL(`/cases/${encodeURIComponent(caseId)}`, window.location.origin);
+  url.searchParams.set("from", sourcePath);
+  const detailWindow = window.open(url.toString(), "_blank");
+  if (!detailWindow) throw new Error("浏览器阻止了新标签页，请允许本站打开新标签页后重试。");
+}
+
 export function queryArguments(item) {
   const args = item?.arguments || {};
   if (args.dataset) {

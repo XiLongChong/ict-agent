@@ -1,14 +1,14 @@
 <script setup>
 import { computed, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute } from "vue-router";
 import { ChevronLeft, ChevronRight } from "lucide-vue-next";
 import Badge from "./ui/Badge.vue";
 import SelectInput from "./ui/SelectInput.vue";
 import TextInput from "./ui/TextInput.vue";
-import { formatMoney, labels, priorityColor, statusColor } from "../lib";
+import { formatMoney, labels, openCaseWorkspace, priorityColor, statusColor } from "../lib";
 import { workspace } from "../store";
 
-const router = useRouter();
+const route = useRoute();
 const type = ref("");
 const status = ref("");
 const query = ref("");
@@ -55,7 +55,11 @@ watch(totalPages, (total) => {
 });
 
 function openCase(caseId) {
-  router.push(`/cases/${encodeURIComponent(caseId)}`);
+  try {
+    openCaseWorkspace(caseId, route.fullPath);
+  } catch (exception) {
+    workspace.status = { text: exception.message, error: true };
+  }
 }
 
 function goToPage(page) {

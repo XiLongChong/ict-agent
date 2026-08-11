@@ -17,7 +17,8 @@ if (mobileQuery) {
   mobileQuery.addEventListener("change", onMobileChange);
 }
 
-const pageTitle = computed(() => (route.name === "case" ? "案件工作台" : route.meta.title || "佳华智审"));
+const pageTitle = computed(() => route.meta.title || "佳华智审");
+const isStandalone = computed(() => Boolean(route.meta.standalone));
 const expandedState = computed(() => !isMobile.value && expanded.value);
 const labelsVisible = computed(() => isMobile.value || expanded.value);
 const toastVisible = ref(false);
@@ -54,9 +55,10 @@ onMounted(loadAll);
 
 <template>
   <div class="min-h-screen bg-canvas">
-    <div v-if="mobileNav" class="fixed inset-0 z-40 bg-black/40 md:hidden" @click="mobileNav = false"></div>
+    <div v-if="mobileNav && !isStandalone" class="fixed inset-0 z-40 bg-black/40 md:hidden" @click="mobileNav = false"></div>
 
     <aside
+      v-if="!isStandalone"
       class="fixed inset-y-0 left-0 z-50 flex flex-col overflow-hidden border-r border-border bg-surface transition-[width,transform] duration-200 ease-out motion-reduce:transition-none md:translate-x-0"
       :class="[labelsVisible ? 'w-[200px]' : 'w-16', mobileNav ? 'translate-x-0' : '-translate-x-full']"
     >
@@ -111,9 +113,9 @@ onMounted(loadAll);
 
     <div
       class="flex min-h-screen min-w-0 flex-col overflow-x-clip transition-[padding-left] duration-200 ease-out motion-reduce:transition-none md:will-change-[padding-left]"
-      :class="expandedState ? 'md:pl-[200px]' : 'md:pl-16'"
+      :class="isStandalone ? '' : expandedState ? 'md:pl-[200px]' : 'md:pl-16'"
     >
-      <header class="sticky top-0 z-30 flex h-[72px] items-center gap-4 border-b border-border bg-surface/95 px-4 backdrop-blur md:px-6">
+      <header v-if="!isStandalone" class="sticky top-0 z-30 flex h-[72px] items-center gap-4 border-b border-border bg-surface/95 px-4 backdrop-blur md:px-6">
         <button
           type="button"
           class="grid h-10 w-10 flex-none place-items-center rounded-lg border border-border text-muted transition-colors hover:bg-brand-wash hover:text-brand md:hidden"
@@ -139,7 +141,10 @@ onMounted(loadAll);
         </button>
       </header>
 
-      <main class="mx-auto w-full max-w-[1536px] px-4 py-7 md:px-8">
+      <main
+        class="mx-auto w-full"
+        :class="isStandalone ? 'max-w-[1600px] px-4 py-5 md:px-7' : 'max-w-[1536px] px-4 py-7 md:px-8'"
+      >
         <router-view v-slot="{ Component, route: currentRoute }">
           <component :is="Component" :key="currentRoute.fullPath" />
         </router-view>

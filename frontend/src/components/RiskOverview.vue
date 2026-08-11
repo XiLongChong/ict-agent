@@ -1,14 +1,15 @@
 <script setup>
 import { computed } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import VueApexCharts from "vue3-apexcharts";
 import { ArrowRight, CircleDollarSign, ClipboardCheck, Search, ShieldAlert } from "lucide-vue-next";
 import Badge from "./ui/Badge.vue";
-import { formatMoney, labels, priorityColor, statusColor } from "../lib";
+import { formatMoney, labels, openCaseWorkspace, priorityColor, statusColor } from "../lib";
 import { workspace } from "../store";
 import { useResponsiveChart } from "../composables/useResponsiveChart";
 
 const router = useRouter();
+const route = useRoute();
 const { chartRef: donutChartRef, chartHostRef: donutHostRef } = useResponsiveChart();
 const loading = computed(() => workspace.loading);
 const priorityCases = computed(() => workspace.cases.slice(0, 5));
@@ -62,7 +63,11 @@ const barTone = {
 };
 
 function openCase(caseId) {
-  router.push(`/cases/${encodeURIComponent(caseId)}`);
+  try {
+    openCaseWorkspace(caseId, route.fullPath);
+  } catch (exception) {
+    workspace.status = { text: exception.message, error: true };
+  }
 }
 function showCases() {
   router.push("/cases");

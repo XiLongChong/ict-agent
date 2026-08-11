@@ -1,7 +1,8 @@
 <script setup>
 import { computed, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { AlertCircle, ArrowLeft, CalendarDays, CodeXml, LoaderCircle, Radar, Sparkles, UserCheck, Wallet } from "lucide-vue-next";
+import { AlertCircle, ArrowLeft, CalendarDays, CodeXml, LoaderCircle, Radar, Sparkles, UserCheck, Wallet, X } from "lucide-vue-next";
+import BrandMark from "./BrandMark.vue";
 import Badge from "./ui/Badge.vue";
 import Button from "./ui/Button.vue";
 import SelectInput from "./ui/SelectInput.vue";
@@ -28,6 +29,10 @@ const decisionOptions = [
 ];
 const canReview = computed(() => caseItem.value?.status === "PENDING_HUMAN_REVIEW");
 const canSubmit = computed(() => canReview.value && form.decision && form.reviewer.trim() && form.reason.trim().length >= 2);
+const sourcePath = computed(() => {
+  const value = typeof route.query.from === "string" ? route.query.from : "";
+  return value.startsWith("/risk") || value.startsWith("/cases") ? value : "/cases";
+});
 const tabs = [
   { value: "investigation", label: "Agent 调查", icon: Sparkles },
   { value: "signals", label: "规则信号", icon: Radar },
@@ -49,6 +54,7 @@ async function loadCase(id) {
   error.value = "";
   try {
     caseItem.value = await api(`/api/v1/cases/${encodeURIComponent(id)}`);
+    document.title = `${caseItem.value.entity_label} · 案件处理`;
   } catch (exception) {
     error.value = exception.message;
     caseItem.value = null;
@@ -97,22 +103,41 @@ async function submitReview() {
 function reviewLabel(decision) {
   return ({ CONFIRMED_RISK: "风险成立", NEEDS_MORE_EVIDENCE: "需补充调查", NO_RISK: "确认无风险" })[decision] || decision;
 }
+
+function returnToSource() {
+  if (window.opener && !window.opener.closed) {
+    window.opener.focus();
+  }
+  window.close();
+  window.setTimeout(() => {
+    if (!window.closed) router.replace(sourcePath.value);
+  }, 100);
+}
 </script>
 
 <template>
   <div class="space-y-4">
-    <section class="card overflow-hidden">
-    <header class="flex flex-wrap items-center gap-3 px-4 py-4 md:px-5">
+    <header class="flex min-h-[64px] flex-wrap items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3 shadow-sm md:px-5">
+      <BrandMark />
+      <div class="leading-tight">
+        <strong class="block text-[15px] text-ink">佳华智审</strong>
+        <span class="text-sm text-muted">案件处理</span>
+      </div>
+      <div class="flex-1"></div>
       <button
         type="button"
-        class="grid h-10 w-10 flex-none place-items-center rounded-lg border border-border text-muted transition-colors hover:bg-canvas"
-        aria-label="返回案件队列"
-        @click="router.push('/cases')"
+        class="inline-flex h-10 items-center gap-2 rounded-lg border border-border px-4 text-sm font-semibold text-muted transition-colors hover:bg-canvas hover:text-ink"
+        @click="returnToSource"
       >
-        <ArrowLeft :size="18" />
+        <X :size="17" />
+        返回并关闭
       </button>
+    </header>
+
+    <section class="card overflow-hidden">
+    <header class="flex flex-wrap items-center gap-3 px-4 py-4 md:px-5">
       <div class="leading-tight">
-        <h2 class="text-xl font-bold text-ink">{{ caseItem ? caseItem.entity_label : "案件工作台" }}</h2>
+        <h2 class="text-xl font-bold text-ink">{{ caseItem ? caseItem.entity_label : "案件详情" }}</h2>
         <span v-if="caseItem" class="block text-sm text-muted">{{ labels.caseType[caseItem.case_type] }} · {{ caseItem.case_id }}</span>
       </div>
       <div class="flex-1"></div>
@@ -131,7 +156,7 @@ function reviewLabel(decision) {
       <AlertCircle :size="42" class="text-danger" />
       <h3 class="text-lg font-bold text-ink">案件加载失败</h3>
       <p class="text-sm text-muted">{{ error }}</p>
-      <Button @click="router.push('/cases')"><ArrowLeft :size="16" /> 返回案件队列</Button>
+      <Button @click="returnToSource"><ArrowLeft :size="16" /> 返回来源页面</Button>
     </div>
 
     <template v-else-if="caseItem">
