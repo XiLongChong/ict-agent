@@ -56,7 +56,7 @@ onMounted(loadAll);
     <div v-if="mobileNav" class="fixed inset-0 z-40 bg-black/40 md:hidden" @click="mobileNav = false"></div>
 
     <aside
-      class="fixed inset-y-0 left-0 z-50 flex flex-col overflow-x-hidden border-r border-border bg-surface transition-[width,transform] duration-200 ease-out motion-reduce:transition-none md:translate-x-0"
+      class="fixed inset-y-0 left-0 z-50 flex flex-col overflow-hidden border-r border-border bg-surface transition-[width,transform] duration-200 ease-out motion-reduce:transition-none md:translate-x-0"
       :class="[labelsVisible ? 'w-[224px]' : 'w-[72px]', mobileNav ? 'translate-x-0' : '-translate-x-full']"
     >
       <div class="flex h-[72px] items-center px-4">
@@ -77,7 +77,7 @@ onMounted(loadAll);
         </div>
       </div>
 
-      <nav class="flex-1 space-y-1 overflow-y-auto px-4 py-4">
+      <nav class="flex-1 space-y-1 overflow-x-hidden overflow-y-auto px-4 py-4">
         <button
           v-for="item in navItems"
           :key="item.path"
