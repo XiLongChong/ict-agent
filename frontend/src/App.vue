@@ -1,125 +1,155 @@
 <script setup>
 import { computed, onMounted, ref, watch } from "vue";
-import { useDisplay } from "vuetify";
-import RiskOverview from "./components/RiskOverview.vue";
-import CaseQueue from "./components/CaseQueue.vue";
-import BusinessView from "./components/BusinessView.vue";
-import CaseWorkspace from "./components/CaseWorkspace.vue";
-import { api } from "./lib";
+import { useRoute, useRouter } from "vue-router";
+import { AlertCircle, Menu, Radar } from "lucide-vue-next";
+import { navItems } from "./router";
+import { loadAll, runScan, workspace } from "./store";
 
-const views = [
-  { id: "risk", label: "风险总览", icon: "mdi-view-dashboard-outline" },
-  { id: "cases", label: "案件队列", icon: "mdi-format-list-bulleted-square" },
-  { id: "business", label: "经营分析", icon: "mdi-chart-line" },
-];
-const activeView = ref("risk");
-const { mdAndUp, smAndDown } = useDisplay();
-const cases = ref([]);
-const overview = ref(null);
-const business = ref(null);
-const loading = ref(true);
-const scanning = ref(false);
-const status = ref({ text: "正在连接数据", error: false });
-const activeCase = ref(null);
-const caseOpen = ref(false);
+const route = useRoute();
+const router = useRouter();
 const mobileNav = ref(false);
-watch(mdAndUp, (isDesktop) => { mobileNav.value = isDesktop; }, { immediate: true });
-
-const page = computed(() => views.find((item) => item.id === activeView.value));
-
-async function loadRiskData() {
-  const [riskOverview, caseList] = await Promise.all([api("/api/v1/risk/overview"), api("/api/v1/cases")]);
-  overview.value = riskOverview;
-  cases.value = caseList;
+const expanded = ref(true);
+const mobileQuery = typeof window !== "undefined" ? window.matchMedia("(max-width: 767px)") : null;
+const isMobile = ref(mobileQuery ? mobileQuery.matches : false);
+if (mobileQuery) {
+  const onMobileChange = (event) => { isMobile.value = event.matches; };
+  mobileQuery.addEventListener("change", onMobileChange);
 }
 
-async function loadAll() {
-  loading.value = true;
-  try {
-    const [, businessData] = await Promise.all([loadRiskData(), api("/api/v1/overview")]);
-    business.value = businessData;
-    status.value = { text: "数据与案件已就绪", error: false };
-  } catch (error) {
-    status.value = { text: error.message, error: true };
-  } finally {
-    loading.value = false;
+const pageTitle = computed(() => (route.name === "case" ? "案件工作台" : route.meta.title || "工作台"));
+const crumb = computed(() => (route.name === "case" ? "案件队列" : "工作台"));
+const expandedState = computed(() => !isMobile.value && expanded.value);
+const labelsVisible = computed(() => isMobile.value || expanded.value);
+const toastVisible = ref(false);
+
+function isActive(path) {
+  if (path === "/cases") return route.path.startsWith("/cases");
+  return route.path === path;
+}
+function navigate(path) {
+  router.push(path);
+  if (isMobile.value) mobileNav.value = false;
+}
+function toggleNavigation() {
+  if (!isMobile.value) expanded.value = !expanded.value;
+  else mobileNav.value = !mobileNav.value;
+}
+watch(
+  () => route.fullPath,
+  () => {
+    if (isMobile.value) mobileNav.value = false;
   }
-}
-
-async function runScan() {
-  scanning.value = true;
-  try {
-    const result = await api("/api/v1/rule-runs", { method: "POST" });
-    await loadRiskData();
-    status.value = { text: `扫描完成 · ${result.cases_detected} 个案件`, error: false };
-  } catch (error) {
-    status.value = { text: error.message, error: true };
-  } finally {
-    scanning.value = false;
+);
+watch(
+  () => workspace.status.error,
+  (err) => {
+    if (err) {
+      toastVisible.value = true;
+      setTimeout(() => (toastVisible.value = false), 6000);
+    }
   }
-}
-
-async function openCase(caseId) {
-  activeCase.value = null;
-  caseOpen.value = true;
-  try {
-    activeCase.value = await api(`/api/v1/cases/${encodeURIComponent(caseId)}`);
-  } catch (error) {
-    status.value = { text: error.message, error: true };
-    caseOpen.value = false;
-  }
-}
-
-async function refreshCase() {
-  if (!activeCase.value) return;
-  activeCase.value = await api(`/api/v1/cases/${encodeURIComponent(activeCase.value.case_id)}`);
-  await loadRiskData();
-}
-
-function navigate(view) {
-  activeView.value = view;
-  if (smAndDown.value) mobileNav.value = false;
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
-
+);
 onMounted(loadAll);
 </script>
 
 <template>
-  <v-app class="google-workspace">
-    <v-navigation-drawer v-model="mobileNav" class="app-sidebar" :permanent="mdAndUp" :width="244">
-      <div class="brand-block">
-        <div class="brand-mark">J</div>
-        <div><strong>佳华智审</strong><small>风险调查工作台</small></div>
-      </div>
-      <v-list class="nav-list" nav density="compact">
-        <v-list-item v-for="item in views" :key="item.id" :active="activeView === item.id" :prepend-icon="item.icon" :title="item.label" @click="navigate(item.id)" />
-      </v-list>
-      <template #append>
-        <div class="sidebar-boundary">
-          <span class="status-dot"></span>
-          <div><strong>只读调查模式</strong><small>Agent 不执行自动业务处置</small></div>
+  <div class="min-h-screen bg-canvas">
+    <div v-if="mobileNav" class="fixed inset-0 z-40 bg-black/40 md:hidden" @click="mobileNav = false"></div>
+
+    <aside
+      class="fixed inset-y-0 left-0 z-50 flex flex-col border-r border-border bg-surface transition-all duration-150 ease-out md:translate-x-0"
+      :class="[labelsVisible ? 'w-[260px]' : 'w-[88px]', mobileNav ? 'translate-x-0' : '-translate-x-full']"
+    >
+      <div class="flex h-[72px] items-center gap-3 px-5" :class="{ 'justify-center px-3': !labelsVisible }">
+        <span class="grid h-9 w-9 flex-none place-items-center rounded-lg bg-brand" aria-hidden="true">
+          <span class="flex items-end gap-[3px]">
+            <i class="block w-1 rounded-sm bg-white" style="height: 10px"></i>
+            <i class="block w-1 rounded-sm bg-white" style="height: 16px"></i>
+            <i class="block w-1 rounded-sm bg-white" style="height: 13px"></i>
+          </span>
+        </span>
+        <div v-show="labelsVisible" class="leading-tight">
+          <strong class="block text-[15px] text-ink">佳华智审</strong>
+          <small class="block text-[11px] text-faint">风险调查工作台</small>
         </div>
-      </template>
-    </v-navigation-drawer>
-
-    <v-app-bar class="app-topbar" flat height="72">
-      <v-btn v-if="smAndDown" icon="mdi-menu" variant="text" aria-label="打开导航" @click="mobileNav = !mobileNav" />
-      <div class="page-heading"><span>RISK INVESTIGATION AGENT</span><h1>{{ page.label }}</h1></div>
-      <v-spacer />
-      <div class="system-state" :class="{ error: status.error }"><span></span>{{ status.text }}</div>
-      <v-btn color="primary" variant="outlined" prepend-icon="mdi-radar" :loading="scanning" @click="runScan">重新扫描</v-btn>
-    </v-app-bar>
-
-    <v-main>
-      <div class="page-content">
-        <RiskOverview v-if="activeView === 'risk'" :overview="overview" :cases="cases" :loading="loading" @open-case="openCase" @show-cases="navigate('cases')" />
-        <CaseQueue v-else-if="activeView === 'cases'" :cases="cases" :loading="loading" @open-case="openCase" />
-        <BusinessView v-else :data="business" :loading="loading" />
       </div>
-    </v-main>
 
-    <CaseWorkspace v-model="caseOpen" :case-item="activeCase" @refresh="refreshCase" />
-    <v-snackbar v-model="status.error" color="error" timeout="6000">{{ status.text }}</v-snackbar>
-  </v-app>
+      <span v-show="labelsVisible" class="px-6 pb-2 pt-4 font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-faint">工作台</span>
+
+      <nav class="flex-1 space-y-1 overflow-y-auto px-4 py-2">
+        <button
+          v-for="item in navItems"
+          :key="item.path"
+          type="button"
+          @click="navigate(item.path)"
+          :title="item.label"
+          class="relative flex h-11 w-full items-center gap-3 rounded-lg px-3 text-[13px] font-semibold transition-colors"
+          :class="isActive(item.path) ? 'bg-brand-wash text-brand-deep' : 'text-muted hover:bg-canvas hover:text-brand'"
+        >
+          <span v-if="isActive(item.path)" class="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r bg-brand"></span>
+          <component :is="item.icon" :size="18" class="flex-none" :class="{ 'mx-auto': !labelsVisible }" />
+          <span v-show="labelsVisible">{{ item.label }}</span>
+        </button>
+      </nav>
+
+      <div v-show="labelsVisible" class="m-4 rounded-lg border border-border bg-canvas p-3">
+        <span class="mb-2 block h-2 w-2 rounded-full bg-success shadow-[0_0_0_4px_#d1fadf]"></span>
+        <strong class="block text-xs text-ink">只读调查模式</strong>
+        <small class="block text-[11px] text-faint">Agent 不执行自动业务处置</small>
+      </div>
+    </aside>
+
+    <div class="flex min-h-screen flex-col" :class="expandedState ? 'md:pl-[260px]' : 'md:pl-[88px]'">
+      <header class="sticky top-0 z-30 flex h-[72px] items-center gap-4 border-b border-border bg-surface/95 px-4 backdrop-blur md:px-6">
+        <button
+          type="button"
+          class="grid h-10 w-10 flex-none place-items-center rounded-lg border border-border text-muted transition-colors hover:bg-brand-wash hover:text-brand"
+          aria-label="切换导航"
+          @click="toggleNavigation"
+        >
+          <Menu :size="20" />
+        </button>
+        <div class="leading-tight">
+          <span class="block text-[11px] text-faint">{{ crumb }}</span>
+          <strong class="block text-[15px] text-ink">{{ pageTitle }}</strong>
+        </div>
+        <div class="flex-1"></div>
+        <div class="hidden items-center gap-2 text-xs text-muted sm:flex">
+          <span class="h-2 w-2 rounded-full" :class="workspace.status.error ? 'bg-danger' : 'bg-success'"></span>
+          {{ workspace.status.text }}
+        </div>
+        <button
+          type="button"
+          :disabled="workspace.scanning"
+          class="inline-flex h-10 items-center gap-2 rounded-lg bg-brand px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-dark disabled:opacity-50"
+          @click="runScan"
+        >
+          <Radar :size="16" :class="workspace.scanning ? 'animate-spin' : ''" />
+          重新扫描
+        </button>
+      </header>
+
+      <main :class="route.meta.full ? '' : 'mx-auto w-full max-w-[1536px] px-4 py-7 md:px-8'">
+        <router-view v-slot="{ Component, route: currentRoute }">
+          <transition name="page" mode="out-in">
+            <component :is="Component" :key="currentRoute.fullPath" />
+          </transition>
+        </router-view>
+      </main>
+    </div>
+
+    <div
+      v-if="toastVisible"
+      class="fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-danger/30 bg-danger text-white px-4 py-3 text-sm shadow-lg"
+    >
+      <AlertCircle :size="16" />
+      {{ workspace.status.text }}
+    </div>
+  </div>
 </template>
+
+<style>
+.page-enter-active, .page-leave-active { transition: opacity 0.12s ease-out, transform 0.12s ease-out; }
+.page-enter-from { opacity: 0; transform: translateY(4px); }
+.page-leave-to { opacity: 0; }
+</style>

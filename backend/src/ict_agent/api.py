@@ -190,4 +190,14 @@ async def frontend_index() -> FileResponse:
     return FileResponse(FRONTEND_DIST_DIR / "index.html")
 
 
+@app.get("/risk", include_in_schema=False)
+@app.get("/cases", include_in_schema=False)
+@app.get("/cases/{case_id}", include_in_schema=False)
+@app.get("/business", include_in_schema=False)
+async def frontend_route(case_id: str | None = None) -> FileResponse:
+    """为已发布的 Vue history 路由提供同源入口。"""
+
+    return FileResponse(FRONTEND_DIST_DIR / "index.html")
+
+
 app.mount("/static", StaticFiles(directory=FRONTEND_DIST_DIR), name="static")

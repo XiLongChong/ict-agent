@@ -26,7 +26,7 @@ flowchart LR
 
 | 层 | 实现 | 职责 |
 |---|---|---|
-| 页面 | Vue 3 + Vite + Vuetify 3 | Google/Material 风格的风险总览、案件、顺序流式调查、报告回放、审核和经营看板 |
+| 页面 | Vue 3 + Vite + Tailwind CSS 4 | TailAdmin 风格的风险总览、案件、顺序流式调查、报告回放、审核和经营看板 |
 | HTTP | FastAPI + Pydantic | `/api/v1` 校验、错误映射、NDJSON 流和 OpenAPI |
 | 应用服务 | `service.py` | 经营、扫描、案件、调查保存和审核用例 |
 | Agent | Pydantic AI | DeepSeek 高强度思考、工具事件、结构化输出和输出校验 |
