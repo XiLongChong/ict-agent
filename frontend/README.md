@@ -1,7 +1,18 @@
 # 风险调查工作台前端
 
-前端使用 Vue 3、Vite 与 Vuetify 3，采用紧凑、扁平的 Google/Material 数据工作台风格。主流程为风险总览 →
-案件队列 → Agent 调查 → 人工审核；经营分析只展示确定性指标，不调用模型。
+前端使用 Vue 3、Vite、Tailwind CSS 4 与 vue-router（history 模式），采用 TailAdmin 风格的现代数据工作台。
+主流程为风险总览 → 案件队列 → Agent 调查 → 人工审核；经营分析只展示确定性指标，不调用模型。
+
+## 路由
+
+| 路径 | 页面 |
+| --- | --- |
+| `/risk` | 风险总览 |
+| `/cases` | 案件队列 |
+| `/cases/:caseId` | 案件工作台（Agent 调查 / 规则信号 / 人工审核） |
+| `/business` | 经营分析 |
+
+任何未知前端路径会由后端 SPA 兜底路由回退到 `index.html`，交给客户端路由处理；`/api/*` 与 `/static/*` 不受影响。
 
 ## 开发与构建
 

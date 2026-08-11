@@ -54,6 +54,21 @@ def test_chat_api_is_removed() -> None:
     assert response.status_code == 404
 
 
+def test_spa_fallback_serves_index_for_frontend_routes() -> None:
+    for path in ("/risk", "/cases", "/cases/demo-case-1", "/business"):
+        response = client.get(path)
+
+        assert response.status_code == 200
+        assert "佳华智审" in response.text
+
+
+def test_unknown_api_path_still_returns_json_404() -> None:
+    response = client.get("/api/v1/does-not-exist")
+
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/json")
+
+
 def test_investigation_contract_streams_ndjson(monkeypatch: MonkeyPatch) -> None:
     async def fake_stream(_prepared: object) -> AsyncIterator[InvestigationStreamEvent]:
         yield InvestigationStreamEvent(

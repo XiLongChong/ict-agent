@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -191,3 +191,16 @@ async def frontend_index() -> FileResponse:
 
 
 app.mount("/static", StaticFiles(directory=FRONTEND_DIST_DIR), name="static")
+
+
+@app.api_route(
+    "/{full_path:path}",
+    methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    include_in_schema=False,
+)
+async def spa_fallback(full_path: str) -> FileResponse:
+    """history 路由模式的 SPA 兜底：未知前端路径返回 index.html，交给客户端路由处理。"""
+
+    if full_path.startswith(("api/", "static/")):
+        raise HTTPException(status_code=404)
+    return FileResponse(FRONTEND_DIST_DIR / "index.html")
