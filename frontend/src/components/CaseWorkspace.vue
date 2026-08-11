@@ -113,9 +113,8 @@ function reviewLabel(decision) {
         <ArrowLeft :size="18" />
       </button>
       <div class="leading-tight">
-        <span v-if="caseItem" class="block font-mono text-[10px] font-medium uppercase tracking-wide text-brand-deep">{{ labels.caseType[caseItem.case_type] }} · {{ caseItem.case_id }}</span>
-        <span v-else class="block font-mono text-[10px] font-medium uppercase tracking-wide text-faint">CASE WORKSPACE</span>
         <h2 class="text-xl font-bold text-ink">{{ caseItem ? caseItem.entity_label : "案件工作台" }}</h2>
+        <span v-if="caseItem" class="block text-sm text-muted">{{ labels.caseType[caseItem.case_type] }} · {{ caseItem.case_id }}</span>
       </div>
       <div class="flex-1"></div>
       <template v-if="caseItem">
@@ -141,8 +140,8 @@ function reviewLabel(decision) {
         <div v-for="f in facts" :key="f.label" class="flex items-center gap-3 bg-surface px-5 py-4">
           <span class="grid h-9 w-9 flex-none place-items-center rounded-lg" :class="f.tone"><component :is="f.icon" :size="16" /></span>
           <div>
-            <span class="block text-[11px] text-muted">{{ f.label }}</span>
-            <strong class="block text-sm text-ink">{{ f.value }}</strong>
+            <span class="block text-sm text-muted">{{ f.label }}</span>
+            <strong class="block text-base text-ink">{{ f.value }}</strong>
           </div>
         </div>
       </div>
@@ -154,27 +153,23 @@ function reviewLabel(decision) {
       </div>
 
       <div v-else-if="tab === 'signals'" class="mx-auto w-full max-w-[1200px] px-5 py-6">
-        <div class="section-intro mb-5">
-          <div><span class="eyebrow">RULE SIGNALS</span><h2>规则触发</h2></div>
-          <p>{{ caseItem.summary }}</p>
-        </div>
+        <h2 class="mb-5 text-[27px] font-bold text-ink">规则触发</h2>
         <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
           <section v-for="hit in caseItem.rule_hits" :key="hit.rule_hit_id" class="card p-4">
             <div class="flex items-center justify-between">
-              <span class="font-mono text-[10px] font-semibold text-brand-deep">{{ hit.rule_id }}</span>
+              <span class="font-mono text-sm font-semibold text-brand-deep">{{ hit.rule_id }}</span>
               <Badge :tone="priorityColor(hit.severity)">{{ labels.priority[hit.severity] }}</Badge>
             </div>
             <h3 class="mt-2 text-[15px] font-semibold text-ink">{{ hit.rule_name }}</h3>
             <p class="mt-1 text-[13px] leading-6 text-muted">{{ hit.reason }}</p>
-            <small class="mt-2 block text-xs text-faint">{{ hit.sources.join(" / ") }} · {{ hit.period }}</small>
+            <span class="mt-2 block text-sm text-muted">{{ hit.sources.join(" / ") }} · {{ hit.period }}</span>
           </section>
         </div>
       </div>
 
       <div v-else class="mx-auto grid w-full max-w-[1100px] grid-cols-1 gap-6 px-5 py-6 md:grid-cols-[380px_1fr]">
         <section class="card h-fit p-5">
-          <span class="eyebrow">HUMAN REVIEW</span>
-          <h2 class="mt-1 text-xl font-bold text-ink">提交审核决定</h2>
+          <h2 class="text-xl font-bold text-ink">提交审核决定</h2>
           <div class="mt-4 space-y-4">
             <SelectInput v-model="form.decision" :options="decisionOptions" />
             <TextInput v-model="form.reviewer" maxlength="100" placeholder="审核人" />
@@ -189,18 +184,16 @@ function reviewLabel(decision) {
         </section>
 
         <section>
-          <div class="section-intro mb-4">
-            <div><span class="eyebrow">AUDIT TRAIL</span><h2>审核历史</h2></div>
-          </div>
+          <h2 class="mb-4 text-[27px] font-bold text-ink">审核历史</h2>
           <div class="space-y-3">
             <article v-for="review in caseItem.reviews" :key="review.review_id" class="card p-4">
               <div class="flex items-center gap-2">
                 <strong class="text-sm text-ink">{{ review.reviewer }}</strong>
                 <Badge tone="neutral">{{ reviewLabel(review.decision) }}</Badge>
-                <span class="ml-auto text-[10px] text-faint">{{ review.created_at }}</span>
+                <span class="ml-auto text-sm text-muted">{{ review.created_at }}</span>
               </div>
               <p class="mt-2 text-sm leading-6 text-muted">{{ review.reason }}</p>
-              <small v-if="review.action" class="mt-1 block text-xs text-muted">后续动作：{{ review.action }}</small>
+              <p v-if="review.action" class="mt-1 text-sm text-muted">后续动作：{{ review.action }}</p>
             </article>
             <div v-if="!caseItem.reviews.length" class="card empty-state">还没有人工审核记录</div>
           </div>

@@ -5,17 +5,15 @@ import { AlertCircle, ChartLine, HandCoins, Wallet } from "lucide-vue-next";
 import { formatMoney, formatPercent, metricMap } from "../lib";
 import { workspace } from "../store";
 
-const data = computed(() => workspace.business);
-const loading = computed(() => workspace.loading);
 const cards = computed(() => {
   if (!workspace.business) return [];
   const overview = metricMap(workspace.business.overview);
   const ar = metricMap(workspace.business.latest_ar);
   return [
-    { label: "累计销售额", value: formatMoney(overview["销售额"]), note: "含退货负值", tone: "brand", icon: ChartLine },
-    { label: "累计回款额", value: formatMoney(overview["回款额"]), note: "全数据窗口", tone: "success", icon: HandCoins },
-    { label: "最新应收余额", value: formatMoney(ar["应收余额"]), note: workspace.business.latest_ar.period, tone: "warning", icon: Wallet },
-    { label: "最新超期率", value: formatPercent(ar["超期率"]), note: `超期 ${formatMoney(ar["超期应收"])}`, tone: "danger", icon: AlertCircle },
+    { label: "累计销售额", value: formatMoney(overview["销售额"]), tone: "brand", icon: ChartLine },
+    { label: "累计回款额", value: formatMoney(overview["回款额"]), tone: "success", icon: HandCoins },
+    { label: "最新应收余额", value: formatMoney(ar["应收余额"]), tone: "warning", icon: Wallet },
+    { label: "最新超期率", value: formatPercent(ar["超期率"]), tone: "danger", icon: AlertCircle },
   ];
 });
 const toneIcon = {
@@ -52,24 +50,19 @@ const trendOptions = computed(() => ({
 
 <template>
   <div class="space-y-5">
-    <div class="section-intro flex items-end justify-between gap-6">
-      <div><span class="eyebrow">BUSINESS FACTS</span><h2>经营分析</h2></div>
-      <p>{{ data?.overview?.period || "正在读取" }} · 确定性指标，不消耗模型额度。</p>
-    </div>
+    <h2 class="text-[27px] font-bold text-ink">经营分析</h2>
 
     <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
-      <section v-for="card in cards" :key="card.label" class="card min-h-[148px] p-5">
-        <span class="mb-4 grid h-10 w-10 place-items-center rounded-lg" :class="toneIcon[card.tone]"><component :is="card.icon" :size="20" /></span>
-        <span class="block text-xs text-muted">{{ card.label }}</span>
+      <section v-for="card in cards" :key="card.label" class="card min-h-[132px] p-5">
+        <span class="mb-3 grid h-10 w-10 place-items-center rounded-lg" :class="toneIcon[card.tone]"><component :is="card.icon" :size="20" /></span>
+        <span class="block text-sm font-medium text-muted">{{ card.label }}</span>
         <strong class="mt-1 block text-[19px] leading-tight text-ink">{{ card.value }}</strong>
-        <small class="mt-1 block text-[11px] text-faint">{{ card.note }}</small>
       </section>
     </div>
 
     <section class="card">
       <div class="panel-head">
-        <div class="flex items-center gap-2"><span class="section-index">C</span><h3>最近应收趋势</h3></div>
-        <span class="subtle-copy">每个月末独立聚合</span>
+        <h3>最近应收趋势</h3>
       </div>
       <div class="px-5 pt-4">
         <VueApexCharts type="area" height="260" :options="trendOptions" :series="trendSeries" />
@@ -79,11 +72,11 @@ const trendOptions = computed(() => ({
           <thead><tr><th>期间</th><th>应收余额</th><th>超期应收</th><th>超期率</th></tr></thead>
           <tbody>
             <tr v-for="row in trend" :key="row[0]">
-              <td><span class="font-mono text-xs text-muted">{{ row[0] }}</span></td>
+              <td><span class="font-mono text-sm text-muted">{{ row[0] }}</span></td>
               <td class="money-cell">{{ formatMoney(row[1]) }}</td>
               <td class="money-cell">{{ formatMoney(row[2]) }}</td>
               <td>
-                <span class="inline-flex rounded-md px-2 py-0.5 text-xs font-semibold" :class="Number(row[3]) > 0.3 ? 'bg-danger-wash text-danger' : 'bg-success-wash text-success-deep'">{{ formatPercent(row[3]) }}</span>
+                <span class="inline-flex rounded-md px-2 py-0.5 text-sm font-semibold" :class="Number(row[3]) > 0.3 ? 'bg-danger-wash text-danger' : 'bg-success-wash text-success-deep'">{{ formatPercent(row[3]) }}</span>
               </td>
             </tr>
           </tbody>

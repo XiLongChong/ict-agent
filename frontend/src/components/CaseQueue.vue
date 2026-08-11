@@ -1,7 +1,7 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { ChevronRight } from "lucide-vue-next";
+import { ChevronLeft, ChevronRight } from "lucide-vue-next";
 import Badge from "./ui/Badge.vue";
 import SelectInput from "./ui/SelectInput.vue";
 import TextInput from "./ui/TextInput.vue";
@@ -12,12 +12,16 @@ const router = useRouter();
 const type = ref("");
 const status = ref("");
 const query = ref("");
+const pageSize = ref("10");
+const currentPage = ref(1);
+const pageJump = ref("1");
 const typeOptions = [
   { title: "全部类型", value: "" },
   { title: "客户应收", value: "ACCOUNTS_RECEIVABLE" },
   { title: "库存积压", value: "INVENTORY" },
 ];
 const statusOptions = [{ title: "全部状态", value: "" }, ...Object.entries(labels.status).map(([value, title]) => ({ title, value }))];
+const pageSizeOptions = [10, 20, 50].map((value) => ({ title: `${value} 行/页`, value: String(value) }));
 const filtered = computed(() => {
   const keyword = String(query.value ?? "").trim().toLocaleLowerCase();
   return workspace.cases.filter((item) => {
@@ -30,25 +34,51 @@ const filtered = computed(() => {
     return searchable.includes(keyword);
   });
 });
+const pageSizeValue = computed(() => Number(pageSize.value));
+const totalPages = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSizeValue.value)));
+const paginated = computed(() => {
+  const start = (currentPage.value - 1) * pageSizeValue.value;
+  return filtered.value.slice(start, start + pageSizeValue.value);
+});
+const pageNumbers = computed(() => {
+  const visibleCount = Math.min(5, totalPages.value);
+  let start = Math.max(1, currentPage.value - 2);
+  start = Math.min(start, totalPages.value - visibleCount + 1);
+  return Array.from({ length: visibleCount }, (_, index) => start + index);
+});
+const rangeStart = computed(() => (filtered.value.length ? (currentPage.value - 1) * pageSizeValue.value + 1 : 0));
+const rangeEnd = computed(() => Math.min(currentPage.value * pageSizeValue.value, filtered.value.length));
+
+watch([type, status, query, pageSize], () => goToPage(1));
+watch(totalPages, (total) => {
+  if (currentPage.value > total) goToPage(total);
+});
 
 function openCase(caseId) {
   router.push(`/cases/${encodeURIComponent(caseId)}`);
+}
+
+function goToPage(page) {
+  const normalized = Math.min(totalPages.value, Math.max(1, Math.trunc(Number(page) || 1)));
+  currentPage.value = normalized;
+  pageJump.value = String(normalized);
+}
+
+function jumpToPage() {
+  goToPage(pageJump.value);
 }
 </script>
 
 <template>
   <div class="space-y-5">
-    <div class="section-intro flex items-end justify-between gap-6">
-      <div><span class="eyebrow">CASE QUEUE</span><h2>风险案件队列</h2></div>
-      <p>规则命中是调查入口；优先级用于排队，不代表自动业务定性。</p>
-    </div>
+    <h2 class="text-[27px] font-bold text-ink">风险案件队列</h2>
 
     <section class="card overflow-hidden">
       <div class="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
         <SelectInput v-model="type" :options="typeOptions" class="w-[180px]" />
         <SelectInput v-model="status" :options="statusOptions" class="w-[180px]" />
         <TextInput v-model="query" search clearable class="w-[320px] max-w-full" placeholder="搜索案件、客户或物料" aria-label="搜索案件、客户或物料" @clear="query = ''" />
-        <span class="ml-auto text-xs text-muted">共 {{ filtered.length }} 个案件</span>
+        <span class="ml-auto text-sm text-muted">共 {{ filtered.length }} 个案件</span>
       </div>
 
       <div class="overflow-x-auto">
@@ -58,7 +88,7 @@ function openCase(caseId) {
           </thead>
           <tbody>
             <tr
-              v-for="item in filtered"
+              v-for="item in paginated"
               :key="item.case_id"
               tabindex="0"
               @click="openCase(item.case_id)"
@@ -67,9 +97,9 @@ function openCase(caseId) {
               <td><Badge :tone="priorityColor(item.priority)">{{ labels.priority[item.priority] }}</Badge></td>
               <td>
                 <strong class="block text-[13px] text-ink">{{ item.entity_label }}</strong>
-                <small class="block text-xs text-muted">{{ labels.caseType[item.case_type] }}</small>
+                <span class="block text-sm text-muted">{{ labels.caseType[item.case_type] }}</span>
               </td>
-              <td class="text-xs leading-[1.55] text-muted">{{ item.summary }}</td>
+              <td class="text-sm leading-[1.55] text-muted">{{ item.summary }}</td>
               <td class="money-cell">{{ formatMoney(item.exposure_amount) }}</td>
               <td><Badge :tone="statusColor(item.status)">{{ labels.status[item.status] }}</Badge></td>
               <td class="text-muted">{{ item.observation_date }}</td>
@@ -78,6 +108,61 @@ function openCase(caseId) {
             <tr v-if="!workspace.loading && !filtered.length"><td colspan="7" class="empty-state">当前筛选条件下没有案件</td></tr>
           </tbody>
         </table>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-3 border-t border-border px-5 py-4">
+        <span class="text-sm text-muted">第 {{ rangeStart }}–{{ rangeEnd }} 条，共 {{ filtered.length }} 条</span>
+        <SelectInput v-model="pageSize" :options="pageSizeOptions" class="w-[120px]" />
+
+        <div class="ml-auto flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            class="grid h-9 w-9 place-items-center rounded-lg border border-border text-muted transition-colors hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40"
+            :disabled="currentPage === 1"
+            aria-label="上一页"
+            @click="goToPage(currentPage - 1)"
+          >
+            <ChevronLeft :size="16" />
+          </button>
+          <button
+            v-for="page in pageNumbers"
+            :key="page"
+            type="button"
+            class="grid h-9 min-w-9 place-items-center rounded-lg border px-2 text-sm font-semibold transition-colors"
+            :class="page === currentPage ? 'border-brand bg-brand text-white' : 'border-border text-muted hover:bg-canvas'"
+            :aria-current="page === currentPage ? 'page' : undefined"
+            @click="goToPage(page)"
+          >
+            {{ page }}
+          </button>
+          <button
+            type="button"
+            class="grid h-9 w-9 place-items-center rounded-lg border border-border text-muted transition-colors hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40"
+            :disabled="currentPage === totalPages"
+            aria-label="下一页"
+            @click="goToPage(currentPage + 1)"
+          >
+            <ChevronRight :size="16" />
+          </button>
+          <span class="ml-1 text-sm text-muted">跳至</span>
+          <input
+            v-model="pageJump"
+            type="number"
+            min="1"
+            :max="totalPages"
+            step="1"
+            class="h-9 w-16 rounded-lg border border-border bg-white px-2 text-center text-sm text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand-wash"
+            aria-label="跳转页码"
+            @keydown.enter="jumpToPage"
+          />
+          <button
+            type="button"
+            class="h-9 rounded-lg border border-border px-3 text-sm font-semibold text-muted transition-colors hover:bg-canvas hover:text-ink"
+            @click="jumpToPage"
+          >
+            跳转
+          </button>
+        </div>
       </div>
     </section>
   </div>

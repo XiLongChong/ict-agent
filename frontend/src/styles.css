@@ -34,15 +34,11 @@
 
 @layer components {
   .card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; box-shadow: var(--shadow-card); }
-  .eyebrow { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-faint); }
   .page-heading { margin-bottom: 24px; }
   .page-heading span { color: var(--color-faint); font-size: 11px; font-weight: 500; }
   .page-heading h1 { margin: 7px 0 0; font-size: 28px; font-weight: 700; color: var(--color-ink); }
-  .section-intro h2 { margin: 7px 0 0; font-size: 27px; font-weight: 700; color: var(--color-ink); }
-  .section-intro p { margin: 0; max-width: 600px; color: var(--color-muted); font-size: 13px; }
   .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 58px; padding: 12px 18px; border-bottom: 1px solid var(--color-border); }
   .panel-head h3 { margin: 0; font-size: 15px; color: #1d2939; }
-  .section-index { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; background: var(--color-brand-wash); color: var(--color-brand-deep); font-family: var(--font-mono); font-size: 11px; font-weight: 600; }
   .table-base { width: 100%; border-collapse: collapse; font-size: 13px; }
   .table-base thead th { padding: 10px 16px; text-align: left; color: var(--color-muted); font-size: 12px; font-weight: 600; background: var(--color-canvas); border-bottom: 1px solid var(--color-border); white-space: nowrap; }
   .table-base tbody td { padding: 13px 16px; border-bottom: 1px solid var(--color-border); vertical-align: middle; }
@@ -50,5 +46,4 @@
   .table-base tbody tr:hover { background: var(--color-canvas); }
   .empty-state { padding: 32px; text-align: center; color: var(--color-muted); }
   .money-cell { font-weight: 600; white-space: nowrap; }
-  .subtle-copy { color: var(--color-muted); font-size: 12px; }
 }
