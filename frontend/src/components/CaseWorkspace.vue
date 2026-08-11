@@ -10,7 +10,7 @@ import TextArea from "./ui/TextArea.vue";
 import TextInput from "./ui/TextInput.vue";
 import InvestigationThread from "./InvestigationThread.vue";
 import { api, formatMoney, labels, priorityColor, statusColor } from "../lib";
-import { loadRiskData } from "../store";
+import { loadRiskData, workspace } from "../store";
 
 const route = useRoute();
 const router = useRouter();
@@ -21,6 +21,7 @@ const tab = ref("investigation");
 const submitting = ref(false);
 const form = reactive({ decision: "", reviewer: "", reason: "", action: "", next_review_at: "" });
 const decisionOptions = [
+  { title: "请选择审核决定", value: "" },
   { title: "暂时接受，持续观察", value: "MONITOR" },
   { title: "风险成立，需要处置", value: "ACTION_REQUIRED" },
   { title: "确认误报或数据问题", value: "FALSE_POSITIVE" },
@@ -88,6 +89,8 @@ async function submitReview() {
     });
     Object.assign(form, { decision: "", reason: "", action: "", next_review_at: "" });
     await refresh();
+  } catch (exception) {
+    workspace.status = { text: exception.message, error: true };
   } finally {
     submitting.value = false;
   }

@@ -47,7 +47,7 @@ function openCase(caseId) {
       <div class="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
         <SelectInput v-model="type" :options="typeOptions" class="w-[180px]" />
         <SelectInput v-model="status" :options="statusOptions" class="w-[180px]" />
-        <TextInput v-model="query" search clearable class="w-[320px] max-w-full" placeholder="搜索案件、客户或物料" @clear="query = ''" />
+        <TextInput v-model="query" search clearable class="w-[320px] max-w-full" placeholder="搜索案件、客户或物料" aria-label="搜索案件、客户或物料" @clear="query = ''" />
         <span class="ml-auto text-xs text-muted">共 {{ filtered.length }} 个案件</span>
       </div>
 

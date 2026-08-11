@@ -1,6 +1,6 @@
 <script setup>
 import { Search, X } from "lucide-vue-next";
-defineProps({ modelValue: String, type: { type: String, default: "text" }, placeholder: String, search: Boolean, clearable: Boolean });
+defineProps({ modelValue: String, type: { type: String, default: "text" }, placeholder: String, search: Boolean, clearable: Boolean, maxlength: Number, ariaLabel: String });
 defineEmits(["update:modelValue", "clear"]);
 </script>
 <template>
@@ -10,6 +10,8 @@ defineEmits(["update:modelValue", "clear"]);
       :type="type"
       :value="modelValue"
       :placeholder="placeholder"
+      :maxlength="maxlength"
+      :aria-label="ariaLabel"
       @input="$emit('update:modelValue', $event.target.value)"
       class="h-10 w-full rounded-lg border border-border bg-white text-sm text-ink outline-none transition-colors placeholder:text-faint hover:border-gray-300 focus:border-brand focus:ring-2 focus:ring-brand-wash"
       :class="search ? 'pl-9 pr-9' : 'px-3'"

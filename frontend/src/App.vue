@@ -9,12 +9,17 @@ const route = useRoute();
 const router = useRouter();
 const mobileNav = ref(false);
 const expanded = ref(true);
-const isMobile = () => (typeof window !== "undefined" ? window.innerWidth < 768 : false);
+const mobileQuery = typeof window !== "undefined" ? window.matchMedia("(max-width: 767px)") : null;
+const isMobile = ref(mobileQuery ? mobileQuery.matches : false);
+if (mobileQuery) {
+  const onMobileChange = (event) => { isMobile.value = event.matches; };
+  mobileQuery.addEventListener("change", onMobileChange);
+}
 
 const pageTitle = computed(() => (route.name === "case" ? "案件工作台" : route.meta.title || "工作台"));
 const crumb = computed(() => (route.name === "case" ? "案件队列" : "工作台"));
-const expandedState = computed(() => !isMobile() && expanded.value);
-const labelsVisible = computed(() => isMobile() || expanded.value);
+const expandedState = computed(() => !isMobile.value && expanded.value);
+const labelsVisible = computed(() => isMobile.value || expanded.value);
 const toastVisible = ref(false);
 
 function isActive(path) {
@@ -23,16 +28,16 @@ function isActive(path) {
 }
 function navigate(path) {
   router.push(path);
-  if (isMobile()) mobileNav.value = false;
+  if (isMobile.value) mobileNav.value = false;
 }
 function toggleNavigation() {
-  if (!isMobile()) expanded.value = !expanded.value;
+  if (!isMobile.value) expanded.value = !expanded.value;
   else mobileNav.value = !mobileNav.value;
 }
 watch(
   () => route.fullPath,
   () => {
-    if (isMobile()) mobileNav.value = false;
+    if (isMobile.value) mobileNav.value = false;
   }
 );
 watch(
