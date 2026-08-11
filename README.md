@@ -102,6 +102,42 @@ python backend/scripts/evidence_cli.py query --case-type INVENTORY `
   --time-window last_6_months
 ```
 
+## Docker 服务器部署
+
+服务器安装 Docker 与 Docker Compose 后，可以按下面的方式部署：
+
+```bash
+git clone <仓库地址> ict-agent
+cd ict-agent
+cp .env.example .env
+# 编辑 .env，至少填写 DEEPSEEK_API_KEY
+```
+
+将比赛提供的 7 张 CSV 上传到服务器的 `data/raw/`。文件名必须与“运行”章节列出的名称完全一致。数据集包含业务数据，不进入 Git；推荐使用 `scp`、SFTP 或服务器私有对象存储传输，例如：
+
+```bash
+scp 本地数据目录/*.csv user@server:/path/to/ict-agent/data/raw/
+```
+
+然后一条命令构建并启动：
+
+```bash
+docker compose up -d --build
+docker compose logs -f ict-agent
+```
+
+首次启动时，容器会检查 `data/processed/`：数据库不存在时自动从 7 张 CSV 原子导入并生成案件库；后续重启会复用数据库。默认访问地址为 `http://服务器IP:8000`。端口、原始数据目录和数据库目录可在 `.env` 中分别通过 `ICT_PORT`、`ICT_SERVER_DATA_DIR`、`ICT_SERVER_PROCESSED_DIR` 调整。
+
+数据集更新后，建议先停止服务，再显式重新导入，避免服务与导入程序同时访问 DuckDB：
+
+```bash
+docker compose stop ict-agent
+docker compose run --rm ict-agent python backend/scripts/import_data.py
+docker compose up -d ict-agent
+```
+
+`data/processed/` 是服务器持久化数据目录，升级代码前应备份；`.env`、CSV、DuckDB、日志和密钥都已从 Git 与 Docker 构建上下文中排除，不应手工强制提交。
+
 ## 工程验收与 Agent 评测
 
 日常工程验收不调用真实模型：

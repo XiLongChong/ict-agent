@@ -1,0 +1,27 @@
+services:
+  ict-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      ICT_DATA_DIR: /app/data/raw
+      ICT_DATABASE_PATH: /app/data/processed/ict_agent.duckdb
+      ICT_CASE_DATABASE_PATH: /app/data/processed/ict_agent_cases.duckdb
+    ports:
+      - "${ICT_PORT:-8000}:8000"
+    volumes:
+      - "${ICT_SERVER_DATA_DIR:-./data/raw}:/app/data/raw:ro"
+      - "${ICT_SERVER_PROCESSED_DIR:-./data/processed}:/app/data/processed"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=5)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
