@@ -4,7 +4,7 @@ import { useRouter } from "vue-router";
 import VueApexCharts from "vue3-apexcharts";
 import { ArrowRight, CircleDollarSign, ClipboardCheck, Search, ShieldAlert } from "lucide-vue-next";
 import Badge from "./ui/Badge.vue";
-import { formatMoney, labels, statusColor } from "../lib";
+import { formatMoney, labels, priorityColor, statusColor } from "../lib";
 import { workspace } from "../store";
 import { useResponsiveChart } from "../composables/useResponsiveChart";
 
@@ -56,9 +56,9 @@ const donutOptions = computed(() => ({
 const donutSeries = computed(() => [ar.value, inventory.value]);
 
 const barTone = {
-  HIGH: "bg-warning",
-  MEDIUM: "bg-brand",
-  LOW: "bg-gray-200",
+  HIGH: "bg-danger",
+  MEDIUM: "bg-warning",
+  LOW: "bg-gray-300",
 };
 
 function openCase(caseId) {
@@ -100,7 +100,11 @@ function showCases() {
             <span class="h-full w-[3px] rounded" :class="barTone[item.priority] || 'bg-gray-200'"></span>
             <span>
               <strong class="block text-[13px] text-ink">{{ item.entity_label }}</strong>
-              <span class="mt-0.5 block max-w-[650px] truncate text-[13px] text-muted">{{ item.summary }}</span>
+              <span class="mt-1 flex max-w-[650px] items-center gap-1.5 overflow-hidden">
+                <Badge :tone="priorityColor(item.priority)">{{ labels.priority[item.priority] }}风险</Badge>
+                <Badge tone="neutral">{{ labels.caseType[item.case_type] }}</Badge>
+                <span class="min-w-0 truncate text-[12px] text-muted">{{ item.risk_overview }}</span>
+              </span>
             </span>
             <span class="text-right">
               <strong class="block text-[13px] text-ink">{{ formatMoney(item.exposure_amount) }}</strong>

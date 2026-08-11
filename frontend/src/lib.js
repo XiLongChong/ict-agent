@@ -24,7 +24,7 @@ export const labels = {
   },
 };
 
-export const priorityColor = (value) => ({ HIGH: "warning", MEDIUM: "brand", LOW: "neutral" }[value] || "neutral");
+export const priorityColor = (value) => ({ HIGH: "danger", MEDIUM: "warning", LOW: "neutral" }[value] || "neutral");
 export const statusColor = (value) => ({ PENDING_AGENT_REVIEW: "brand", PENDING_HUMAN_REVIEW: "warning", ACTION_IN_PROGRESS: "danger", CLOSED: "success" }[value] || "brand");
 export const stageColor = (value) => ({ DETERIORATING: "danger", EARLY_WARNING: "warning", LIMITED: "neutral" }[value] || "neutral");
 export const hypothesisColor = (value) => ({ SUPPORTED: "success", WEAKENED: "neutral", UNRESOLVED: "warning" }[value] || "neutral");
