@@ -149,11 +149,12 @@ function reviewLabel(decision) {
 }
 
 function returnToSource() {
-  if (window.opener && !window.opener.closed) window.opener.focus();
-  window.close();
-  window.setTimeout(() => {
-    if (!window.closed) router.replace(sourcePath.value);
-  }, 100);
+  if (window.opener && !window.opener.closed) {
+    window.opener.focus();
+    window.close();
+    return;
+  }
+  router.replace(sourcePath.value);
 }
 </script>
 
