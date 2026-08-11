@@ -3,7 +3,13 @@
 from pathlib import Path
 
 import pytest
-from ict_agent.config import ConfigurationError, load_settings
+from ict_agent.config import ConfigurationError, load_frontend_dist_dir, load_settings
+
+
+def test_frontend_dist_dir_can_be_overridden_for_packaged_runtime(tmp_path: Path) -> None:
+    dist_dir = tmp_path / "frontend" / "dist"
+
+    assert load_frontend_dist_dir({"ICT_FRONTEND_DIST_DIR": str(dist_dir)}) == dist_dir.resolve()
 
 
 def test_load_settings_resolves_paths(tmp_path: Path) -> None:

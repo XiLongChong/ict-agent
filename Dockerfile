@@ -12,7 +12,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     ICT_DATA_DIR=/app/data/raw \
     ICT_DATABASE_PATH=/app/data/processed/ict_agent.duckdb \
-    ICT_CASE_DATABASE_PATH=/app/data/processed/ict_agent_cases.duckdb
+    ICT_CASE_DATABASE_PATH=/app/data/processed/ict_agent_cases.duckdb \
+    ICT_FRONTEND_DIST_DIR=/app/frontend/dist
 
 WORKDIR /app
 

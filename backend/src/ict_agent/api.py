@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from ict_agent.config import load_frontend_dist_dir
 from ict_agent.models import (
     CaseStatus,
     CaseType,
@@ -41,9 +41,7 @@ from ict_agent.service import (
 )
 
 logger = logging.getLogger(__name__)
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-FRONTEND_DIR = PROJECT_ROOT / "frontend"
-FRONTEND_DIST_DIR = FRONTEND_DIR / "dist"
+FRONTEND_DIST_DIR = load_frontend_dist_dir()
 
 
 @asynccontextmanager

@@ -45,6 +45,13 @@ def _merged_environment(environ: Mapping[str, str] | None) -> dict[str, str]:
     return {**file_values, **dict(os.environ if environ is None else environ)}
 
 
+def load_frontend_dist_dir(environ: Mapping[str, str] | None = None) -> Path:
+    """返回当前运行环境中的前端构建产物目录。"""
+
+    values = _merged_environment(environ)
+    return _resolve_path(values.get("ICT_FRONTEND_DIST_DIR", "frontend/dist"))
+
+
 def load_settings(
     require_api_key: bool = True,
     *,
