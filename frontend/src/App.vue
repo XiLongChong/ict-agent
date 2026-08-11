@@ -142,8 +142,8 @@ onMounted(loadAll);
       </header>
 
       <main
-        class="mx-auto w-full"
-        :class="isStandalone ? 'max-w-[1600px] px-4 py-5 md:px-7' : 'max-w-[1536px] px-4 py-7 md:px-8'"
+        class="w-full"
+        :class="isStandalone ? '' : 'mx-auto max-w-[1536px] px-4 py-7 md:px-8'"
       >
         <router-view v-slot="{ Component, route: currentRoute }">
           <component :is="Component" :key="currentRoute.fullPath" />

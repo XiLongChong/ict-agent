@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-vue-next";
 import Badge from "./ui/Badge.vue";
+import BrandMark from "./BrandMark.vue";
 import Button from "./ui/Button.vue";
 import SelectInput from "./ui/SelectInput.vue";
 import TextArea from "./ui/TextArea.vue";
@@ -157,11 +158,46 @@ function returnToSource() {
 </script>
 
 <template>
-  <div class="space-y-4">
-    <header
-      class="flex min-h-[64px] flex-wrap items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3 shadow-sm md:px-5"
+  <div class="min-h-screen bg-canvas md:pl-[200px]">
+    <aside
+      class="fixed inset-y-0 left-0 z-40 hidden w-[200px] flex-col overflow-hidden border-r border-border bg-surface md:flex"
     >
-      <h1 class="text-lg font-bold text-ink">案件处理</h1>
+      <div class="flex h-[72px] items-center px-3">
+        <span class="grid h-9 w-10 flex-none place-items-center">
+          <BrandMark />
+        </span>
+        <strong class="ml-2 whitespace-nowrap text-[15px] text-ink">佳华智审</strong>
+      </div>
+
+      <nav class="flex-1 space-y-1 overflow-y-auto px-3 py-4" aria-label="案件处理导航">
+        <button
+          v-for="item in sections"
+          :key="item.value"
+          type="button"
+          class="relative flex h-11 w-full items-center rounded-lg text-[13px] font-semibold transition-colors"
+          :class="
+            section === item.value
+              ? 'bg-brand-wash text-brand-deep'
+              : 'text-muted hover:bg-canvas hover:text-brand'
+          "
+          @click="section = item.value"
+        >
+          <span
+            v-if="section === item.value"
+            class="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r bg-brand"
+          ></span>
+          <span class="grid h-11 w-10 flex-none place-items-center">
+            <component :is="item.icon" :size="18" />
+          </span>
+          <span class="ml-2 whitespace-nowrap">{{ item.label }}</span>
+        </button>
+      </nav>
+    </aside>
+
+    <header
+      class="sticky top-0 z-30 flex h-[72px] items-center gap-3 border-b border-border bg-surface/95 px-4 backdrop-blur md:px-6"
+    >
+      <h1 class="text-[15px] font-bold text-ink">案件处理</h1>
       <div class="flex-1"></div>
       <template v-if="caseItem">
         <Badge :tone="statusColor(caseItem.status)">{{ labels.status[caseItem.status] }}</Badge>
@@ -173,50 +209,51 @@ function returnToSource() {
         @click="returnToSource"
       >
         <X :size="17" />
-        返回并关闭
+        <span class="hidden sm:inline">返回并关闭</span>
       </button>
     </header>
 
-    <section
-      v-if="loading"
-      class="card grid min-h-[420px] place-content-center justify-items-center gap-3 text-muted"
+    <nav
+      class="flex gap-1 overflow-x-auto border-b border-border bg-surface px-3 py-2 md:hidden"
+      aria-label="案件处理导航"
     >
-      <LoaderCircle :size="28" class="animate-spin text-brand" />
-      <span class="text-sm">正在装载案件、证据和复核记录</span>
-    </section>
+      <button
+        v-for="item in sections"
+        :key="item.value"
+        type="button"
+        class="flex h-10 flex-none items-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors"
+        :class="
+          section === item.value
+            ? 'bg-brand-wash text-brand-deep'
+            : 'text-muted hover:bg-canvas hover:text-brand'
+        "
+        @click="section = item.value"
+      >
+        <component :is="item.icon" :size="17" />
+        {{ item.label }}
+      </button>
+    </nav>
 
-    <section
-      v-else-if="error"
-      class="card grid min-h-[420px] place-content-center justify-items-center gap-3 text-center"
-    >
-      <AlertCircle :size="42" class="text-danger" />
-      <h2 class="text-lg font-bold text-ink">案件加载失败</h2>
-      <p class="text-sm text-muted">{{ error }}</p>
-      <Button @click="returnToSource"><ArrowLeft :size="16" /> 返回来源页面</Button>
-    </section>
+    <div class="mx-auto w-full max-w-[1536px] px-4 py-7 md:px-8">
+      <section
+        v-if="loading"
+        class="card grid min-h-[420px] place-content-center justify-items-center gap-3 text-muted"
+      >
+        <LoaderCircle :size="28" class="animate-spin text-brand" />
+        <span class="text-sm">正在装载案件、证据和复核记录</span>
+      </section>
 
-    <div v-else-if="caseItem" class="grid items-start gap-4 lg:grid-cols-[200px_minmax(0,1fr)]">
-      <aside class="card p-2 lg:sticky lg:top-5">
-        <nav class="space-y-1" aria-label="案件处理导航">
-          <button
-            v-for="item in sections"
-            :key="item.value"
-            type="button"
-            class="flex h-11 w-full items-center gap-3 rounded-lg px-3 text-sm font-semibold transition-colors"
-            :class="
-              section === item.value
-                ? 'bg-brand-wash text-brand-deep'
-                : 'text-muted hover:bg-canvas hover:text-ink'
-            "
-            @click="section = item.value"
-          >
-            <component :is="item.icon" :size="18" />
-            {{ item.label }}
-          </button>
-        </nav>
-      </aside>
+      <section
+        v-else-if="error"
+        class="card grid min-h-[420px] place-content-center justify-items-center gap-3 text-center"
+      >
+        <AlertCircle :size="42" class="text-danger" />
+        <h2 class="text-lg font-bold text-ink">案件加载失败</h2>
+        <p class="text-sm text-muted">{{ error }}</p>
+        <Button @click="returnToSource"><ArrowLeft :size="16" /> 返回来源页面</Button>
+      </section>
 
-      <main class="min-w-0">
+      <main v-else-if="caseItem" class="min-w-0">
         <div v-if="section === 'overview'" class="space-y-4">
           <section class="card overflow-hidden">
             <header class="flex flex-wrap items-center gap-3 px-5 py-5">
