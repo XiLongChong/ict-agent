@@ -6,9 +6,9 @@ from collections.abc import AsyncIterator
 import pytest
 from ict_agent.config import Settings
 from ict_agent.data import CaseStore, DuckDBStore
-from ict_agent.models import ToolResult
+from ict_agent.models import ReviewRequest, ToolResult
 from ict_agent.rules import RuleThresholds, build_rule_scan
-from ict_agent.service import get_case_detail, get_dashboard, investigate_case
+from ict_agent.service import get_case_detail, get_dashboard, investigate_case, review_case
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 
@@ -175,8 +175,19 @@ async def test_investigation_service_persists_report(settings: Settings) -> None
 
     assert record.report.risk_assessment is not None
     assert len(record.evidence) == 6
-    assert detail.status == "PENDING_REVIEW"
+    assert detail.status == "PENDING_HUMAN_REVIEW"
     assert detail.latest_investigation is not None
+
+    review_case(
+        case_id,
+        ReviewRequest(
+            decision="CONFIRMED_RISK",
+            reviewer="测试审核人",
+            reason="证据支持风险成立。",
+        ),
+        settings=settings,
+    )
+    assert get_case_detail(case_id, settings=settings).status == "ACTION_IN_PROGRESS"
 
 
 async def test_investigation_service_persists_partial_report(settings: Settings) -> None:
@@ -191,5 +202,16 @@ async def test_investigation_service_persists_partial_report(settings: Settings)
     assert record.report.risk_assessment is not None
     assert record.report.risk_assessment.stage == "LIMITED"
     assert len(record.evidence) == 1
-    assert detail.status == "PENDING_REVIEW"
+    assert detail.status == "PENDING_HUMAN_REVIEW"
     assert detail.latest_investigation is not None
+
+    review_case(
+        case_id,
+        ReviewRequest(
+            decision="NEEDS_MORE_EVIDENCE",
+            reviewer="测试审核人",
+            reason="现有证据不足，需要重新调查。",
+        ),
+        settings=settings,
+    )
+    assert get_case_detail(case_id, settings=settings).status == "PENDING_AGENT_REVIEW"

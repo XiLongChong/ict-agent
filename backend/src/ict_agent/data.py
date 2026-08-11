@@ -146,8 +146,6 @@ class ReviewWrite:
     decision: str
     reviewer: str
     reason: str
-    action: str | None
-    next_review_at: str | None
     created_at: str
 
 
@@ -695,8 +693,7 @@ class CaseStore:
                 rule_hit_count INTEGER NOT NULL,
                 rule_set_version VARCHAR NOT NULL,
                 created_at TIMESTAMP NOT NULL,
-                updated_at TIMESTAMP NOT NULL,
-                next_review_at DATE
+                updated_at TIMESTAMP NOT NULL
             )
             """
         )
@@ -737,8 +734,6 @@ class CaseStore:
                 decision VARCHAR NOT NULL,
                 reviewer VARCHAR NOT NULL,
                 reason VARCHAR NOT NULL,
-                action VARCHAR,
-                next_review_at DATE,
                 created_at TIMESTAMP NOT NULL
             )
             """
@@ -776,7 +771,7 @@ class CaseStore:
                     connection.execute(
                         """
                         INSERT INTO risk_cases VALUES (
-                            ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, NULL
+                            ?, ?, ?, ?, ?, ?, ?, 'PENDING_AGENT_REVIEW', ?, ?, ?, ?, ?, ?, ?
                         )
                         ON CONFLICT (case_id) DO UPDATE SET
                             priority = excluded.priority,
@@ -884,7 +879,7 @@ class CaseStore:
             f"""
             SELECT case_id, case_type, entity_type, entity_id, entity_label,
                    observation_date, status, priority, exposure_amount, summary,
-                   rule_hit_count, rule_set_version, updated_at, next_review_at
+                   rule_hit_count, rule_set_version, updated_at
             FROM risk_cases
             {where}
             ORDER BY
@@ -904,7 +899,7 @@ class CaseStore:
             SELECT case_id, case_type, entity_type, entity_id, entity_label,
                    entity_context_json, observation_date, status, priority,
                    exposure_amount, summary, rule_hit_count, rule_set_version,
-                   updated_at, next_review_at
+                   updated_at
             FROM risk_cases WHERE case_id = ?
             """,
             [case_id],
@@ -941,8 +936,7 @@ class CaseStore:
 
         return self._fetch(
             """
-            SELECT review_id, case_id, decision, reviewer, reason, action,
-                   next_review_at, created_at
+            SELECT review_id, case_id, decision, reviewer, reason, created_at
             FROM reviews WHERE case_id = ? ORDER BY created_at DESC
             """,
             [case_id],
@@ -955,13 +949,16 @@ class CaseStore:
             """
             SELECT
                 COUNT(*) AS total_cases,
-                COUNT(*) FILTER (WHERE status IN ('OPEN', 'INVESTIGATING')) AS open_cases,
-                COUNT(*) FILTER (WHERE status = 'PENDING_REVIEW') AS pending_review_cases,
-                COUNT(*) FILTER (WHERE status = 'MONITORING') AS monitoring_cases,
-                COUNT(*) FILTER (WHERE status = 'ACTION_REQUIRED') AS action_required_cases,
+                COUNT(*) FILTER (WHERE status = 'PENDING_AGENT_REVIEW') AS pending_agent_cases,
+                COUNT(*) FILTER (WHERE status = 'AGENT_REVIEWING') AS agent_reviewing_cases,
+                COUNT(*) FILTER (
+                    WHERE status = 'PENDING_HUMAN_REVIEW'
+                ) AS pending_human_review_cases,
+                COUNT(*) FILTER (WHERE status = 'ACTION_IN_PROGRESS') AS action_in_progress_cases,
+                COUNT(*) FILTER (WHERE status = 'CLOSED') AS closed_cases,
                 COUNT(*) FILTER (WHERE priority = 'CRITICAL') AS critical_cases,
                 COALESCE(SUM(exposure_amount) FILTER (
-                    WHERE status NOT IN ('CLOSED_FALSE_POSITIVE', 'CLOSED_RESOLVED')
+                    WHERE status != 'CLOSED'
                 ), 0) AS exposure_amount,
                 COUNT(*) FILTER (WHERE case_type = 'ACCOUNTS_RECEIVABLE') AS ar_cases,
                 COUNT(*) FILTER (WHERE case_type = 'INVENTORY') AS inventory_cases
@@ -989,14 +986,18 @@ class CaseStore:
                         record.created_at,
                     ],
                 )
-                connection.execute(
+                updated = connection.execute(
                     """
                     UPDATE risk_cases
-                    SET status = 'PENDING_REVIEW', updated_at = ?
-                    WHERE case_id = ?
+                    SET status = 'PENDING_HUMAN_REVIEW', updated_at = ?
+                    WHERE case_id = ? AND status = 'AGENT_REVIEWING'
+                    RETURNING case_id
                     """,
                     [record.created_at, record.case_id],
-                )
+                ).fetchone()
+                if updated is None:
+                    connection.rollback()
+                    raise DataAccessError("当前案件状态不允许保存调查报告。")
                 connection.commit()
         except duckdb.Error as exc:
             raise DataAccessError("调查结果无法写入案件数据库。") from exc
@@ -1009,29 +1010,51 @@ class CaseStore:
             with duckdb.connect(str(self.database_path)) as connection:
                 connection.begin()
                 connection.execute(
-                    "INSERT INTO reviews VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO reviews VALUES (?, ?, ?, ?, ?, ?)",
                     [
                         record.review_id,
                         record.case_id,
                         record.decision,
                         record.reviewer,
                         record.reason,
-                        record.action,
-                        record.next_review_at,
                         record.created_at,
                     ],
                 )
-                connection.execute(
+                updated = connection.execute(
                     """
                     UPDATE risk_cases
-                    SET status = ?, next_review_at = ?, updated_at = ?
-                    WHERE case_id = ?
+                    SET status = ?, updated_at = ?
+                    WHERE case_id = ? AND status = 'PENDING_HUMAN_REVIEW'
+                    RETURNING case_id
                     """,
-                    [new_status, record.next_review_at, record.created_at, record.case_id],
-                )
+                    [new_status, record.created_at, record.case_id],
+                ).fetchone()
+                if updated is None:
+                    connection.rollback()
+                    raise DataAccessError("当前案件状态不允许保存人工复核。")
                 connection.commit()
         except duckdb.Error as exc:
             raise DataAccessError("人工审核无法写入案件数据库。") from exc
+
+    def transition_case(self, case_id: str, expected_status: str, new_status: str) -> bool:
+        """仅在案件处于预期状态时推进，避免重复调查或越级审核。"""
+
+        self.ensure_ready()
+        now = datetime.now(UTC).isoformat()
+        try:
+            with duckdb.connect(str(self.database_path)) as connection:
+                row = connection.execute(
+                    """
+                    UPDATE risk_cases
+                    SET status = ?, updated_at = ?
+                    WHERE case_id = ? AND status = ?
+                    RETURNING case_id
+                    """,
+                    [new_status, now, case_id, expected_status],
+                ).fetchone()
+                return row is not None
+        except duckdb.Error as exc:
+            raise DataAccessError("案件状态无法更新。") from exc
 
     def _fetch(self, sql: str, parameters: SqlParameters = ()) -> QueryResult:
         self.ensure_ready()

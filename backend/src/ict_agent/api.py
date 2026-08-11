@@ -155,6 +155,7 @@ async def case_detail(case_id: str) -> RiskCaseDetail:
             "content": {"application/x-ndjson": {}},
         },
         404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
         503: {"model": ErrorResponse},
     },
     tags=["agent"],
@@ -174,11 +175,15 @@ async def create_case_investigation(case_id: str) -> StreamingResponse:
 @app.post(
     "/api/v1/cases/{case_id}/reviews",
     response_model=ReviewRecord,
-    responses={404: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+    responses={
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
     tags=["risk-cases"],
 )
 async def submit_case_review(case_id: str, request: ReviewRequest) -> ReviewRecord:
-    """提交人工审核、处置或持续观察决定。"""
+    """提交风险成立、需补充调查或确认无风险的人工复核结论。"""
 
     return review_case(case_id, request)
 

@@ -20,9 +20,9 @@ const arShare = computed(() => (total.value ? Math.round((ar.value / total.value
 const invShare = computed(() => (total.value ? Math.round((inventory.value / total.value) * 100) : 0));
 
 const metrics = computed(() => [
-  { label: "风险案件", value: workspace.overview?.total_cases ?? "—", tone: "brand", icon: ShieldAlert },
-  { label: "等待调查", value: workspace.overview?.open_cases ?? "—", tone: "warning", icon: Search },
-  { label: "等待审核", value: workspace.overview?.pending_review_cases ?? "—", tone: "success", icon: ClipboardCheck },
+  { label: "案件总数", value: workspace.overview?.total_cases ?? "—", tone: "brand", icon: ShieldAlert },
+  { label: "待 Agent 调查", value: workspace.overview?.pending_agent_cases ?? "—", tone: "warning", icon: Search },
+  { label: "待人工复核", value: workspace.overview?.pending_human_review_cases ?? "—", tone: "success", icon: ClipboardCheck },
   { label: "风险敞口", value: workspace.overview ? formatMoney(workspace.overview.exposure_amount) : "—", tone: "danger", icon: CircleDollarSign, compact: true },
 ]);
 const toneIcon = {

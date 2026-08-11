@@ -1,5 +1,5 @@
 <script setup>
-import { nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { AlertCircle, CheckCircle2, Database, PlayCircle, Search, ShieldCheck, Sparkles } from "lucide-vue-next";
 import Badge from "./ui/Badge.vue";
 import { hypothesisColor, labels, priorityColor, queryArguments, stageColor, streamNdjson } from "../lib";
@@ -11,6 +11,7 @@ const events = ref([]);
 const record = ref(props.caseItem?.latest_investigation || null);
 const error = ref("");
 const thread = ref(null);
+const canInvestigate = computed(() => props.caseItem?.status === "PENDING_AGENT_REVIEW");
 
 watch(
   () => props.caseItem,
@@ -86,6 +87,7 @@ function completeness(value) {
       </div>
       <div class="flex-1"></div>
       <button
+        v-if="canInvestigate || running"
         type="button"
         :disabled="running"
         class="inline-flex h-10 items-center gap-2 rounded-lg bg-brand px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-dark disabled:opacity-60"
@@ -94,6 +96,9 @@ function completeness(value) {
         <Sparkles :size="16" :class="running ? 'animate-spin' : ''" />
         {{ record ? "重新调查" : "开始调查" }}
       </button>
+      <Badge v-else :tone="props.caseItem?.status === 'AGENT_REVIEWING' ? 'info' : 'neutral'">
+        {{ labels.status[props.caseItem?.status] }}
+      </Badge>
     </header>
 
     <div ref="thread" class="h-[calc(100vh-460px)] min-h-[360px] overflow-y-auto px-4 pb-10 md:px-6" aria-live="polite">

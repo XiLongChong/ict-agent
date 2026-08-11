@@ -73,7 +73,7 @@ def _case() -> RiskCaseDetail:
         entity_label="C015 测试客户",
         entity_context={"customer_id": "C015", "customer_name": "测试客户"},
         observation_date="2026-07-31",
-        status="OPEN",
+        status="PENDING_AGENT_REVIEW",
         priority="HIGH",
         exposure_amount=1000,
         summary="测试应收案件",

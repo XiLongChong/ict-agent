@@ -130,7 +130,6 @@ def _case_summary(row: tuple[DatabaseScalar, ...]) -> RiskCaseSummary:
         rule_hit_count=_as_int(row[10]),
         rule_set_version=str(row[11]),
         updated_at=str(row[12]),
-        next_review_at=None if row[13] is None else str(row[13]).split("T", maxsplit=1)[0],
     )
 
 
@@ -208,15 +207,16 @@ def get_risk_overview(*, settings: Settings | None = None) -> RiskOverviewRespon
         return RiskOverviewResponse(
             latest_run=_rule_run(tuple(latest_rows[0])) if latest_rows else None,
             total_cases=_as_int(overview_row[0]),
-            open_cases=_as_int(overview_row[1]),
-            pending_review_cases=_as_int(overview_row[2]),
-            monitoring_cases=_as_int(overview_row[3]),
-            action_required_cases=_as_int(overview_row[4]),
-            critical_cases=_as_int(overview_row[5]),
-            exposure_amount=_as_float(overview_row[6]),
+            pending_agent_cases=_as_int(overview_row[1]),
+            agent_reviewing_cases=_as_int(overview_row[2]),
+            pending_human_review_cases=_as_int(overview_row[3]),
+            action_in_progress_cases=_as_int(overview_row[4]),
+            closed_cases=_as_int(overview_row[5]),
+            critical_cases=_as_int(overview_row[6]),
+            exposure_amount=_as_float(overview_row[7]),
             cases_by_type={
-                "ACCOUNTS_RECEIVABLE": _as_int(overview_row[7]),
-                "INVENTORY": _as_int(overview_row[8]),
+                "ACCOUNTS_RECEIVABLE": _as_int(overview_row[8]),
+                "INVENTORY": _as_int(overview_row[9]),
             },
         )
     except (ConfigurationError, DataAccessError) as exc:
@@ -253,7 +253,6 @@ def get_case_detail(
                 row[11],
                 row[12],
                 row[13],
-                row[14],
             )
         )
         hits = [
@@ -290,11 +289,7 @@ def get_case_detail(
                 decision=cast(ReviewDecision, str(review[2])),
                 reviewer=str(review[3]),
                 reason=str(review[4]),
-                action=None if review[5] is None else str(review[5]),
-                next_review_at=(
-                    None if review[6] is None else str(review[6]).split("T", maxsplit=1)[0]
-                ),
-                created_at=str(review[7]),
+                created_at=str(review[5]),
             )
             for review in store.fetch_reviews(case_id).rows
         ]
@@ -335,7 +330,12 @@ def prepare_investigation(
             require_api_key=model is None, require_data_dir=False
         )
         case = get_case_detail(case_id, settings=runtime_settings)
+        if case.status != "PENDING_AGENT_REVIEW":
+            raise ServiceError("当前案件状态不允许启动 Agent 调查。", request_id, 409)
         DuckDBStore(runtime_settings.database_path).ensure_ready()
+        store = CaseStore(runtime_settings.case_database_path)
+        if not store.transition_case(case_id, "PENDING_AGENT_REVIEW", "AGENT_REVIEWING"):
+            raise ServiceError("案件状态已经变化，请刷新后重试。", request_id, 409)
         return PreparedInvestigation(
             settings=runtime_settings,
             case=case,
@@ -380,12 +380,13 @@ async def stream_prepared_investigation(
     """流式执行调查，结束时保存完整或部分报告。"""
 
     sequence = 1
-    yield InvestigationStreamEvent(
-        sequence=sequence,
-        event_type="RUN_STARTED",
-        message="已载入案件，DeepSeek 高强度思考正在发现数据并调查证据。",
-    )
+    report_saved = False
     try:
+        yield InvestigationStreamEvent(
+            sequence=sequence,
+            event_type="RUN_STARTED",
+            message="案件已进入 Agent 调查中，正在发现数据并核对证据。",
+        )
         async for event in stream_investigation_agent(
             prepared.settings, prepared.investigation_input, model=prepared.model
         ):
@@ -400,6 +401,7 @@ async def stream_prepared_investigation(
                 )
                 continue
             record = _save_investigation(prepared, event)
+            report_saved = True
             yield InvestigationStreamEvent(
                 sequence=sequence,
                 event_type="REPORT_COMPLETED",
@@ -418,6 +420,11 @@ async def stream_prepared_investigation(
             event_type="ERROR",
             message="DeepSeek 调查未能开始，请检查 API Key、账户余额和网络后重试。",
         )
+    finally:
+        if not report_saved:
+            CaseStore(prepared.settings.case_database_path).transition_case(
+                prepared.case.case_id, "AGENT_REVIEWING", "PENDING_AGENT_REVIEW"
+            )
 
 
 async def investigate_case(
@@ -450,17 +457,19 @@ def review_case(
     """保存人工审核并推进案件状态。"""
 
     request_id = uuid4().hex
-    status_by_decision: dict[str, CaseStatus] = {
-        "MONITOR": "MONITORING",
-        "ACTION_REQUIRED": "ACTION_REQUIRED",
-        "FALSE_POSITIVE": "CLOSED_FALSE_POSITIVE",
-        "RESOLVED": "CLOSED_RESOLVED",
+    status_by_decision: dict[ReviewDecision, CaseStatus] = {
+        "CONFIRMED_RISK": "ACTION_IN_PROGRESS",
+        "NEEDS_MORE_EVIDENCE": "PENDING_AGENT_REVIEW",
+        "NO_RISK": "CLOSED",
     }
     try:
         runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
         store = CaseStore(runtime_settings.case_database_path)
-        if not store.fetch_case(case_id).rows:
+        case_rows = store.fetch_case(case_id).rows
+        if not case_rows:
             raise ServiceError("未找到指定风险案件。", request_id, 404)
+        if str(case_rows[0][7]) != "PENDING_HUMAN_REVIEW":
+            raise ServiceError("当前案件状态不允许提交人工复核。", request_id, 409)
         created_at = datetime.now(UTC).isoformat()
         record = ReviewWrite(
             review_id=uuid4().hex,
@@ -468,10 +477,6 @@ def review_case(
             decision=request.decision,
             reviewer=request.reviewer,
             reason=request.reason,
-            action=request.action,
-            next_review_at=(
-                request.next_review_at.isoformat() if request.next_review_at is not None else None
-            ),
             created_at=created_at,
         )
         store.save_review(record, status_by_decision[request.decision])
@@ -481,8 +486,6 @@ def review_case(
             decision=request.decision,
             reviewer=record.reviewer,
             reason=record.reason,
-            action=record.action,
-            next_review_at=record.next_review_at,
             created_at=record.created_at,
         )
     except ServiceError:

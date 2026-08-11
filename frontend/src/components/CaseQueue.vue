@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { ChevronLeft } from "lucide-vue-next";
+import { ChevronLeft, ChevronRight } from "lucide-vue-next";
 import Badge from "./ui/Badge.vue";
 import SelectInput from "./ui/SelectInput.vue";
 import TextInput from "./ui/TextInput.vue";

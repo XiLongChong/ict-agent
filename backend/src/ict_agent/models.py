@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import date
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -10,19 +9,17 @@ from pydantic import BaseModel, Field, model_validator
 type JsonScalar = str | int | float | bool | None
 CaseType = Literal["ACCOUNTS_RECEIVABLE", "INVENTORY"]
 CaseStatus = Literal[
-    "OPEN",
-    "INVESTIGATING",
-    "PENDING_REVIEW",
-    "MONITORING",
-    "ACTION_REQUIRED",
-    "CLOSED_FALSE_POSITIVE",
-    "CLOSED_RESOLVED",
+    "PENDING_AGENT_REVIEW",
+    "AGENT_REVIEWING",
+    "PENDING_HUMAN_REVIEW",
+    "ACTION_IN_PROGRESS",
+    "CLOSED",
 ]
 RiskPriority = Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
 HypothesisStatus = Literal["SUPPORTED", "WEAKENED", "UNRESOLVED"]
 RiskSignalStage = Literal["EARLY_WARNING", "DETERIORATING", "LIMITED"]
 EvidenceCompleteness = Literal["LOW", "MEDIUM", "HIGH"]
-ReviewDecision = Literal["MONITOR", "ACTION_REQUIRED", "FALSE_POSITIVE", "RESOLVED"]
+ReviewDecision = Literal["CONFIRMED_RISK", "NEEDS_MORE_EVIDENCE", "NO_RISK"]
 InvestigationToolName = Literal[
     "discover_evidence_capabilities",
     "search_business_records",
@@ -299,7 +296,6 @@ class RiskCaseSummary(BaseModel):
     rule_hit_count: int
     rule_set_version: str
     updated_at: str
-    next_review_at: str | None = None
 
 
 class InvestigationHypothesis(BaseModel):
@@ -384,14 +380,6 @@ class ReviewRequest(BaseModel):
     decision: ReviewDecision
     reviewer: Annotated[str, Field(min_length=1, max_length=100)]
     reason: Annotated[str, Field(min_length=2, max_length=1_000)]
-    action: Annotated[str | None, Field(max_length=1_000)] = None
-    next_review_at: date | None = None
-
-    @model_validator(mode="after")
-    def monitoring_requires_review_date(self) -> ReviewRequest:
-        if self.decision == "MONITOR" and self.next_review_at is None:
-            raise ValueError("持续观察必须填写下一次复查日期")
-        return self
 
 
 class ReviewRecord(BaseModel):
@@ -402,8 +390,6 @@ class ReviewRecord(BaseModel):
     decision: ReviewDecision
     reviewer: str
     reason: str
-    action: str | None
-    next_review_at: str | None
     created_at: str
 
 
@@ -435,10 +421,11 @@ class RiskOverviewResponse(BaseModel):
 
     latest_run: RuleRunResponse | None
     total_cases: int
-    open_cases: int
-    pending_review_cases: int
-    monitoring_cases: int
-    action_required_cases: int
+    pending_agent_cases: int
+    agent_reviewing_cases: int
+    pending_human_review_cases: int
+    action_in_progress_cases: int
+    closed_cases: int
     critical_cases: int
     exposure_amount: float
     cases_by_type: dict[str, int]

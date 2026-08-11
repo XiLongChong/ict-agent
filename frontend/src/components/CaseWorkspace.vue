@@ -19,19 +19,19 @@ const loading = ref(true);
 const error = ref("");
 const tab = ref("investigation");
 const submitting = ref(false);
-const form = reactive({ decision: "", reviewer: "", reason: "", action: "", next_review_at: "" });
+const form = reactive({ decision: "", reviewer: "", reason: "" });
 const decisionOptions = [
-  { title: "请选择审核决定", value: "" },
-  { title: "暂时接受，持续观察", value: "MONITOR" },
-  { title: "风险成立，需要处置", value: "ACTION_REQUIRED" },
-  { title: "确认误报或数据问题", value: "FALSE_POSITIVE" },
-  { title: "风险已经解决", value: "RESOLVED" },
+  { title: "请选择复核结论", value: "" },
+  { title: "风险成立，转入处理中", value: "CONFIRMED_RISK" },
+  { title: "证据不足，需要重新调查", value: "NEEDS_MORE_EVIDENCE" },
+  { title: "确认无风险，关闭案件", value: "NO_RISK" },
 ];
-const canSubmit = computed(() => form.decision && form.reviewer.trim() && form.reason.trim().length >= 2 && (form.decision !== "MONITOR" || form.next_review_at));
+const canReview = computed(() => caseItem.value?.status === "PENDING_HUMAN_REVIEW");
+const canSubmit = computed(() => canReview.value && form.decision && form.reviewer.trim() && form.reason.trim().length >= 2);
 const tabs = [
   { value: "investigation", label: "Agent 调查", icon: Sparkles },
   { value: "signals", label: "规则信号", icon: Radar },
-  { value: "review", label: "人工审核", icon: UserCheck },
+  { value: "review", label: "人工复核", icon: UserCheck },
 ];
 const facts = computed(() =>
   caseItem.value
@@ -61,7 +61,7 @@ watch(
   () => route.params.caseId,
   (id) => {
     tab.value = "investigation";
-    Object.assign(form, { decision: "", reviewer: "", reason: "", action: "", next_review_at: "" });
+    Object.assign(form, { decision: "", reviewer: "", reason: "" });
     if (id) loadCase(id);
   },
   { immediate: true }
@@ -83,11 +83,9 @@ async function submitReview() {
         decision: form.decision,
         reviewer: form.reviewer.trim(),
         reason: form.reason.trim(),
-        action: form.action.trim() || null,
-        next_review_at: form.decision === "MONITOR" ? form.next_review_at : null,
       }),
     });
-    Object.assign(form, { decision: "", reason: "", action: "", next_review_at: "" });
+    Object.assign(form, { decision: "", reason: "" });
     await refresh();
   } catch (exception) {
     workspace.status = { text: exception.message, error: true };
@@ -97,7 +95,7 @@ async function submitReview() {
 }
 
 function reviewLabel(decision) {
-  return ({ MONITOR: "持续观察", ACTION_REQUIRED: "需要处置", FALSE_POSITIVE: "确认误报", RESOLVED: "已经解决" })[decision] || decision;
+  return ({ CONFIRMED_RISK: "风险成立", NEEDS_MORE_EVIDENCE: "需补充调查", NO_RISK: "确认无风险" })[decision] || decision;
 }
 </script>
 
@@ -173,22 +171,20 @@ function reviewLabel(decision) {
 
       <div v-else class="mx-auto grid w-full max-w-[1100px] grid-cols-1 gap-6 px-5 py-6 md:grid-cols-[380px_1fr]">
         <section class="card h-fit p-5">
-          <h2 class="text-lg font-bold text-ink">提交审核决定</h2>
-          <div class="mt-4 space-y-4">
+          <h2 class="text-lg font-bold text-ink">提交人工复核</h2>
+          <p v-if="!canReview" class="mt-3 rounded-lg bg-canvas px-3 py-2 text-sm leading-6 text-muted">
+            当前状态为“{{ labels.status[caseItem.status] }}”，无需提交人工复核。
+          </p>
+          <div v-else class="mt-4 space-y-4">
             <SelectInput v-model="form.decision" :options="decisionOptions" />
             <TextInput v-model="form.reviewer" maxlength="100" placeholder="审核人" />
-            <TextArea v-model="form.reason" rows="3" maxlength="1000" placeholder="审核原因" />
-            <TextInput v-model="form.action" maxlength="1000" placeholder="后续动作（可选）" />
-            <div v-if="form.decision === 'MONITOR'">
-              <span class="mb-1.5 block text-sm font-medium text-ink">复查日期</span>
-              <TextInput v-model="form.next_review_at" type="date" />
-            </div>
-            <Button block :disabled="!canSubmit" :loading="submitting" @click="submitReview">提交人工审核</Button>
+            <TextArea v-model="form.reason" rows="3" maxlength="1000" placeholder="说明判断依据" />
+            <Button block :disabled="!canSubmit" :loading="submitting" @click="submitReview">提交复核结论</Button>
           </div>
         </section>
 
         <section>
-          <h2 class="mb-4 text-lg font-bold text-ink">审核历史</h2>
+          <h2 class="mb-4 text-lg font-bold text-ink">复核历史</h2>
           <div class="space-y-3">
             <article v-for="review in caseItem.reviews" :key="review.review_id" class="card p-4">
               <div class="flex items-center gap-2">
@@ -197,9 +193,8 @@ function reviewLabel(decision) {
                 <span class="ml-auto text-sm text-muted">{{ review.created_at }}</span>
               </div>
               <p class="mt-2 text-sm leading-6 text-muted">{{ review.reason }}</p>
-              <p v-if="review.action" class="mt-1 text-sm text-muted">后续动作：{{ review.action }}</p>
             </article>
-            <div v-if="!caseItem.reviews.length" class="card empty-state">还没有人工审核记录</div>
+            <div v-if="!caseItem.reviews.length" class="card empty-state">还没有人工复核记录</div>
           </div>
         </section>
       </div>

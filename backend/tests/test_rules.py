@@ -657,19 +657,18 @@ def test_case_store_preserves_idempotency_and_review(
     assert len(case_store.fetch_cases().rows) == 4
 
     case_id = str(case_store.fetch_cases().rows[0][0])
+    assert case_store.transition_case(case_id, "PENDING_AGENT_REVIEW", "PENDING_HUMAN_REVIEW")
     case_store.save_review(
         ReviewWrite(
             review_id="review-1",
             case_id=case_id,
-            decision="MONITOR",
+            decision="CONFIRMED_RISK",
             reviewer="测试审核人",
-            reason="持续回款，七日后复查。",
-            action="跟踪回款",
-            next_review_at="2026-08-15",
+            reason="证据支持风险成立。",
             created_at="2026-08-08T00:00:00+00:00",
         ),
-        "MONITORING",
+        "ACTION_IN_PROGRESS",
     )
 
-    assert case_store.fetch_case(case_id).rows[0][7] == "MONITORING"
-    assert case_store.fetch_reviews(case_id).rows[0][2] == "MONITOR"
+    assert case_store.fetch_case(case_id).rows[0][7] == "ACTION_IN_PROGRESS"
+    assert case_store.fetch_reviews(case_id).rows[0][2] == "CONFIRMED_RISK"

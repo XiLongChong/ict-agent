@@ -16,7 +16,7 @@ flowchart LR
     GATEWAY --> TOOLS["类型化语义注册表"]
     TOOLS --> VALIDATE["证据与结论校验"]
     VALIDATE --> REPORT["完整或部分报告"]
-    REPORT --> REVIEW["人工审核与处置记录"]
+    REPORT --> REVIEW["人工复核结论"]
     CATALOG --> STREAM["NDJSON 调查事件流"]
     GATEWAY --> STREAM
     VALIDATE --> STREAM
@@ -28,7 +28,7 @@ flowchart LR
 |---|---|---|
 | 页面 | Vue 3 + Vite + Tailwind CSS 4 | TailAdmin 风格的风险总览、案件、顺序流式调查、报告回放、审核和经营看板 |
 | HTTP | FastAPI + Pydantic | `/api/v1` 校验、错误映射、NDJSON 流和 OpenAPI |
-| 应用服务 | `service.py` | 经营、扫描、案件、调查保存和审核用例 |
+| 应用服务 | `service.py` | 经营、扫描、案件状态流转、调查保存和人工复核用例 |
 | Agent | Pydantic AI | DeepSeek 高强度思考、工具事件、结构化输出和输出校验 |
 | 业务分析 | `semantic.py` / `tools.py` / `rules.py` | 单一语义注册表、参数化指标查询和版本化确定性规则 |
 | 数据 | `data.py` | 业务 DuckDB 加固只读查询、带快照身份的原子导入、独立案件库写入 |
@@ -119,6 +119,11 @@ Pydantic AI 输出校验器拒绝以下报告并要求模型修正：
 
 最终 `REPORT_COMPLETED` 携带完整 `InvestigationRecord`。页面使用 Fetch Streams 增量解析；报告中的
 trace 保存工具完成和报告校验轨迹，供刷新后回放。页面不展示模型私有思维链。
+
+案件初始状态为 `PENDING_AGENT_REVIEW`。启动调查时原子推进为 `AGENT_REVIEWING`，完整或部分报告
+保存后进入 `PENDING_HUMAN_REVIEW`；未形成报告的失败运行恢复为待 Agent 调查。人工复核只有三个
+结论：风险成立进入 `ACTION_IN_PROGRESS`，证据不足返回待 Agent 调查，确认无风险或误报进入
+`CLOSED`。处理中表示调查系统已经完成交接，不在本系统建设或跟踪工单和具体处置流程。
 
 ## 6. HTTP 接口
 
