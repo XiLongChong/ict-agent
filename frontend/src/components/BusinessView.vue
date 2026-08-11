@@ -4,6 +4,9 @@ import VueApexCharts from "vue3-apexcharts";
 import { AlertCircle, ChartLine, HandCoins, Wallet } from "lucide-vue-next";
 import { formatMoney, formatPercent, metricMap } from "../lib";
 import { workspace } from "../store";
+import { useResponsiveChart } from "../composables/useResponsiveChart";
+
+const { chartRef: trendChartRef, chartHostRef: trendHostRef } = useResponsiveChart();
 
 const cards = computed(() => {
   if (!workspace.business) return [];
@@ -35,7 +38,14 @@ function axisMoney(value) {
   return String(n);
 }
 const trendOptions = computed(() => ({
-  chart: { type: "area", toolbar: { show: false }, fontFamily: "DM Sans, 'Microsoft YaHei', sans-serif" },
+  chart: {
+    type: "area",
+    animations: { enabled: false },
+    toolbar: { show: false },
+    fontFamily: "DM Sans, 'Microsoft YaHei', sans-serif",
+    redrawOnParentResize: false,
+    redrawOnWindowResize: false,
+  },
   colors: ["#465fff", "#d92d20"],
   stroke: { curve: "smooth", width: 2 },
   fill: { type: "gradient", gradient: { opacityFrom: 0.15, opacityTo: 0 } },
@@ -64,8 +74,8 @@ const trendOptions = computed(() => ({
       <div class="panel-head">
         <h3>最近应收趋势</h3>
       </div>
-      <div class="px-5 pt-4">
-        <VueApexCharts type="area" height="260" :options="trendOptions" :series="trendSeries" />
+      <div ref="trendHostRef" class="px-5 pt-4">
+        <VueApexCharts ref="trendChartRef" type="area" height="260" :options="trendOptions" :series="trendSeries" />
       </div>
       <div class="overflow-x-auto border-t border-border">
         <table class="table-base">

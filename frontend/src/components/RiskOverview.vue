@@ -6,8 +6,10 @@ import { ArrowRight, CircleDollarSign, ClipboardCheck, Search, ShieldAlert } fro
 import Badge from "./ui/Badge.vue";
 import { formatMoney, labels, statusColor } from "../lib";
 import { workspace } from "../store";
+import { useResponsiveChart } from "../composables/useResponsiveChart";
 
 const router = useRouter();
+const { chartRef: donutChartRef, chartHostRef: donutHostRef } = useResponsiveChart();
 const loading = computed(() => workspace.loading);
 const priorityCases = computed(() => workspace.cases.slice(0, 5));
 
@@ -31,7 +33,7 @@ const toneIcon = {
 };
 
 const donutOptions = computed(() => ({
-  chart: { type: "donut" },
+  chart: { type: "donut", animations: { enabled: false }, redrawOnParentResize: false, redrawOnWindowResize: false },
   labels: ["客户应收", "库存积压"],
   colors: ["#465fff", "#039855"],
   stroke: { width: 0 },
@@ -112,8 +114,8 @@ function showCases() {
 
       <section class="card pb-4">
         <div class="panel-head"><h3>案件构成</h3></div>
-        <div class="px-5 pt-3">
-          <VueApexCharts type="donut" height="210" :options="donutOptions" :series="donutSeries" />
+        <div ref="donutHostRef" class="px-5 pt-3">
+          <VueApexCharts ref="donutChartRef" type="donut" height="210" :options="donutOptions" :series="donutSeries" />
         </div>
         <div class="space-y-4 px-5 pt-1">
           <div>
