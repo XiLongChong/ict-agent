@@ -23,10 +23,10 @@ export const labels = {
   },
 };
 
-export const priorityColor = (value) => ({ CRITICAL: "error", HIGH: "warning", MEDIUM: "primary", LOW: "default" }[value] || "default");
-export const statusColor = (value) => ({ PENDING_REVIEW: "warning", ACTION_REQUIRED: "error", MONITORING: "info", CLOSED_RESOLVED: "success", CLOSED_FALSE_POSITIVE: "success" }[value] || "primary");
-export const stageColor = (value) => ({ DETERIORATING: "error", EARLY_WARNING: "warning", LIMITED: "default" }[value] || "default");
-export const hypothesisColor = (value) => ({ SUPPORTED: "success", WEAKENED: "default", UNRESOLVED: "warning" }[value] || "default");
+export const priorityColor = (value) => ({ CRITICAL: "danger", HIGH: "warning", MEDIUM: "brand", LOW: "neutral" }[value] || "neutral");
+export const statusColor = (value) => ({ PENDING_REVIEW: "warning", ACTION_REQUIRED: "danger", MONITORING: "info", CLOSED_RESOLVED: "success", CLOSED_FALSE_POSITIVE: "success", OPEN: "brand", INVESTIGATING: "brand" }[value] || "brand");
+export const stageColor = (value) => ({ DETERIORATING: "danger", EARLY_WARNING: "warning", LIMITED: "neutral" }[value] || "neutral");
+export const hypothesisColor = (value) => ({ SUPPORTED: "success", WEAKENED: "neutral", UNRESOLVED: "warning" }[value] || "neutral");
 
 export function formatMoney(value) {
   const number = Number(value || 0);
