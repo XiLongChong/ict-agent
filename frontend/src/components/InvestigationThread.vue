@@ -10,7 +10,6 @@ const running = ref(false);
 const events = ref([]);
 const record = ref(props.caseItem?.latest_investigation || null);
 const error = ref("");
-const thread = ref(null);
 const canInvestigate = computed(() => props.caseItem?.status === "PENDING_AGENT_REVIEW");
 
 watch(
@@ -25,7 +24,7 @@ watch(
 
 async function scrollToBottom() {
   await nextTick();
-  if (thread.value) thread.value.scrollTo({ top: thread.value.scrollHeight, behavior: "smooth" });
+  window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
 }
 
 async function investigate() {
@@ -74,20 +73,12 @@ const eventTone = {
 };
 function evidenceById(id) {  return record.value?.evidence?.find((item) => item.evidence_id === id);
 }
-function completeness(value) {
-  return ({ LOW: 33, MEDIUM: 66, HIGH: 100 })[value] || 0;
-}
 </script>
 
 <template>
-  <section class="mx-auto flex h-full w-full max-w-[1100px] flex-col">
-    <header class="flex items-center gap-4 px-5 py-4">
-      <div class="leading-tight">
-        <h3 class="text-[16px] font-bold text-ink">AI审查</h3>
-      </div>
-      <div class="flex-1"></div>
+  <section class="w-full space-y-4">
+    <div v-if="canInvestigate || running" class="card flex items-center justify-end p-4">
       <button
-        v-if="canInvestigate || running"
         type="button"
         :disabled="running"
         class="inline-flex h-10 items-center gap-2 rounded-lg bg-brand px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-dark disabled:opacity-60"
@@ -96,13 +87,10 @@ function completeness(value) {
         <Sparkles :size="16" :class="running ? 'animate-spin' : ''" />
         {{ record ? "重新审查" : "开始审查" }}
       </button>
-      <Badge v-else tone="neutral">
-        {{ labels.status[props.caseItem?.status] }}
-      </Badge>
-    </header>
+    </div>
 
-    <div ref="thread" class="h-[calc(100vh-460px)] min-h-[360px] overflow-y-auto px-4 pb-10 md:px-6" aria-live="polite">
-      <div class="mx-auto flex max-w-[880px] flex-col gap-1 border-l border-border pl-6">
+    <div class="pb-10" aria-live="polite">
+      <div class="flex flex-col gap-1 border-l border-border pl-6">
         <div v-if="!events.length && !record" class="my-10 flex items-start gap-4">
           <span class="grid h-12 w-12 flex-none place-items-center rounded-xl bg-brand-wash text-brand-deep"><Sparkles :size="22" /></span>
           <h4 class="self-center text-[15px] font-semibold text-ink">准备从证据开始审查</h4>
@@ -145,7 +133,6 @@ function completeness(value) {
               <Badge tone="neutral">证据完整度 {{ record.report.evidence_completeness }}</Badge>
             </div>
             <p class="mt-3 text-sm leading-6 text-muted">{{ record.report.investigation_summary }}</p>
-            <div class="mt-3 h-1.5 rounded-full bg-gray-100"><div class="h-1.5 rounded-full bg-brand" :style="{ width: completeness(record.report.evidence_completeness) + '%' }"></div></div>
           </section>
 
           <section class="card p-5">
