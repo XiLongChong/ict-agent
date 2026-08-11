@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import VueApexCharts from "vue3-apexcharts";
 import { AlertCircle, ChartLine, HandCoins, Wallet } from "lucide-vue-next";
 import { formatMoney, formatPercent, metricMap } from "../lib";
@@ -7,6 +7,12 @@ import { workspace } from "../store";
 import { useResponsiveChart } from "../composables/useResponsiveChart";
 
 const { chartRef: trendChartRef, chartHostRef: trendHostRef } = useResponsiveChart();
+const range = ref("12");
+const rangeOptions = [
+  { label: "近 6 个月", value: "6" },
+  { label: "近 12 个月", value: "12" },
+  { label: "全部", value: "all" },
+];
 
 const cards = computed(() => {
   if (!workspace.business) return [];
@@ -25,8 +31,9 @@ const toneIcon = {
   warning: "bg-warning-wash text-warning-deep",
   danger: "bg-danger-wash text-danger",
 };
-const trend = computed(() => (workspace.business?.ar_trend?.rows || []).slice(-8).reverse());
-const trendCategories = computed(() => trend.value.map((r) => r[0]));
+const allTrend = computed(() => workspace.business?.ar_trend?.rows || []);
+const trend = computed(() => (range.value === "all" ? allTrend.value : allTrend.value.slice(-Number(range.value))));
+const trendCategories = computed(() => trend.value.map((r) => String(r[0]).slice(0, 7)));
 const trendSeries = computed(() => [
   { name: "应收余额", data: trend.value.map((r) => Number(r[1])) },
   { name: "超期应收", data: trend.value.map((r) => Number(r[2])) },
@@ -50,7 +57,12 @@ const trendOptions = computed(() => ({
   stroke: { curve: "smooth", width: 2 },
   fill: { type: "gradient", gradient: { opacityFrom: 0.15, opacityTo: 0 } },
   dataLabels: { enabled: false },
-  xaxis: { categories: trendCategories.value, axisBorder: { show: false }, axisTicks: { show: false }, labels: { style: { colors: "#98a2b3", fontSize: "12px" } } },
+  xaxis: {
+    categories: trendCategories.value,
+    axisBorder: { show: false },
+    axisTicks: { show: false },
+    labels: { rotate: 0, hideOverlappingLabels: true, style: { colors: "#98a2b3", fontSize: "12px" } },
+  },
   yaxis: { labels: { formatter: axisMoney, style: { colors: "#98a2b3", fontSize: "12px" } } },
   grid: { borderColor: "#e4e7ec", strokeDashArray: 3 },
   legend: { position: "top", horizontalAlign: "right", fontSize: "12px", labels: { colors: "#667085" }, markers: { size: 4 } },
@@ -60,8 +72,6 @@ const trendOptions = computed(() => ({
 
 <template>
   <div class="space-y-5">
-    <h2 class="text-[27px] font-bold text-ink">经营分析</h2>
-
     <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
       <section v-for="card in cards" :key="card.label" class="card min-h-[132px] p-5">
         <span class="mb-3 grid h-10 w-10 place-items-center rounded-lg" :class="toneIcon[card.tone]"><component :is="card.icon" :size="20" /></span>
@@ -72,25 +82,23 @@ const trendOptions = computed(() => ({
 
     <section class="card">
       <div class="panel-head">
-        <h3>最近应收趋势</h3>
+        <h3>应收趋势</h3>
+        <div class="inline-flex rounded-lg border border-border bg-canvas p-1" aria-label="选择趋势展示范围">
+          <button
+            v-for="option in rangeOptions"
+            :key="option.value"
+            type="button"
+            :aria-pressed="range === option.value"
+            class="h-8 rounded-md px-3 text-sm font-semibold transition-colors"
+            :class="range === option.value ? 'bg-white text-brand shadow-sm' : 'text-muted hover:text-ink'"
+            @click="range = option.value"
+          >
+            {{ option.label }}
+          </button>
+        </div>
       </div>
-      <div ref="trendHostRef" class="px-5 pt-4">
-        <VueApexCharts ref="trendChartRef" type="area" height="260" :options="trendOptions" :series="trendSeries" />
-      </div>
-      <div class="overflow-x-auto border-t border-border">
-        <table class="table-base">
-          <thead><tr><th>期间</th><th>应收余额</th><th>超期应收</th><th>超期率</th></tr></thead>
-          <tbody>
-            <tr v-for="row in trend" :key="row[0]">
-              <td><span class="font-mono text-sm text-muted">{{ row[0] }}</span></td>
-              <td class="money-cell">{{ formatMoney(row[1]) }}</td>
-              <td class="money-cell">{{ formatMoney(row[2]) }}</td>
-              <td>
-                <span class="inline-flex rounded-md px-2 py-0.5 text-sm font-semibold" :class="Number(row[3]) > 0.3 ? 'bg-danger-wash text-danger' : 'bg-success-wash text-success-deep'">{{ formatPercent(row[3]) }}</span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+      <div ref="trendHostRef" class="px-5 pb-3 pt-4">
+        <VueApexCharts ref="trendChartRef" type="area" height="320" :options="trendOptions" :series="trendSeries" />
       </div>
     </section>
   </div>

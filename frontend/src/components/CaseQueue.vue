@@ -71,8 +71,6 @@ function jumpToPage() {
 
 <template>
   <div class="space-y-5">
-    <h2 class="text-[27px] font-bold text-ink">风险案件队列</h2>
-
     <section class="card overflow-hidden">
       <div class="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
         <SelectInput v-model="type" :options="typeOptions" class="w-[180px]" />
