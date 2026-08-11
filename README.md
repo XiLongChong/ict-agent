@@ -1,56 +1,45 @@
-# 佳华智审——ICT 渠道风险调查 Agent
+# 佳华智审
 
-这是一个可直接演示的 ICT 分销风险案件调查系统。7 张比赛 CSV 被原子导入本地 DuckDB；版本化规则
-只负责筛出应收与库存候选案件，DeepSeek `deepseek-v4-flash` 调查 Agent 再以准确率优先的思考模式，
-先发现当前案件可用的数据能力，再自主组合受控只读查询并随证据调整调查方向，最后
-校验证据引用、输出可复核报告并交由人工审核。
+佳华智审是一个面向 ICT 分销业务的风险案件处理系统。系统把销售、回款、合同、应收、库存、展期和授信数据导入 DuckDB，通过确定性规则发现候选案件，再由 AI 在受控数据范围内完成证据审查，最后交由人工复核。
 
-系统明确区分四类内容：风险信号判断、工具直接证明的事实、证据支持的合理推测、当前数据无法判断的
-根因或最终结果。模型中途失败时，已经取得的证据仍会保存为部分报告；系统不会为了“给出结论”而
-补写缺少依据的原因，也不会因为根因未知就抹掉已经成立的风险信号。
+项目已经形成完整的可运行链路：
 
-当前能力：
-
-- `2026.08-v2` 规则集：2 条经营中客户应收规则、3 条库存规则；黑名单应收不进入主动发现队列。
-- 统一证据网关：应收与库存都只注册 `discover_evidence_capabilities`、
-  `search_business_records`、`query_business_evidence` 三个工具；9 个数据集/粒度组合由单一类型化
-  语义注册表约束，所有查询自动锁定案件主体且不接受 SQL。
-- 应收调查覆盖月度/订单应收、销售回款、合同、授信和展期；库存通过同一查询契约覆盖季度历史、
-  最新库龄结构、销售速度、退货和毛利。
-- 数据发现、查询开始/完成、证据摘要和报告校验通过 NDJSON 实时推送到页面，
-  并可在报告中回放。
-- 结构化早期预警/恶化判断、事实、支持/削弱/无法判断假设、真实 `evidence_id`、监测项和人工复核闭环。
-- 确定性经营看板：销售、成本、含税粗算毛利、回款、最新应收、月度趋势和库存健康。
-- 6 个脱离规则引擎的冻结案件输入、100 分分项评分、硬门槛、重复稳定性、前后对比和人工语义复核。
-- 每次七表导入生成来源文件 SHA-256、模式指纹和稳定快照 ID；只读查询连接关闭外部访问、扩展自动
-  加载和临时落盘，并锁定运行配置。
-
-通用数据问答及其 Agent 工具已经删除，避免无关能力影响案件调查。经营看板仍由确定性工具直接计算，
-不消耗模型额度。
-
-## 运行
-
-要求 Python 3.12：
-
-```powershell
-py -3.12 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev]"
-Copy-Item .env.example .env
+```text
+七张业务 CSV → DuckDB → 规则扫描 → 风险案件 → AI 审查 → 人工复核
 ```
 
-在 `.env` 中填写：
+规则命中只代表案件需要调查，不会自动停供、调额、催收或结案。
 
-```dotenv
-DEEPSEEK_API_KEY=你的密钥
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-v4-flash
-ICT_DATA_DIR=D:/path/to/AFFT模拟数据集
-ICT_DATABASE_PATH=data/processed/ict_agent.duckdb
-ICT_CASE_DATABASE_PATH=data/processed/ict_agent_cases.duckdb
+## 主要功能
+
+- **风险总览**：展示待调查、待复核、处理中案件和风险敞口。
+- **案件队列**：支持按案件类型、处理状态筛选和分页查看。
+- **案件处理**：集中查看案件概况、规则信号、AI 审查报告和人工复核记录。
+- **AI 审查**：根据案件类型查询应收、销售回款、合同、授信、展期或库存证据，并生成可追溯的结论和处理建议。
+- **人工复核**：支持确认风险、要求补充证据和确认无风险三类结论。
+- **经营分析**：提供销售、回款、应收、库存等确定性经营指标和趋势。
+
+案件状态统一为：
+
+```text
+待调查 → 待复核 → 处理中 / 已关闭
+            ↓
+        重新调查
 ```
 
-`ICT_DATA_DIR` 必须直接包含以下 7 个正式文件名：
+## 技术组成
+
+- 后端：FastAPI、Pydantic、Pydantic AI
+- 数据：DuckDB
+- AI 模型：DeepSeek API
+- 前端：Vue 3、Tailwind CSS、ApexCharts
+- 部署：Docker Compose
+
+AI 只能调用系统注册的只读证据工具，不能执行任意 SQL、Python、Shell、文件访问或联网搜索。页面展示查询过程、证据和经过校验的报告，不展示模型的私有思维链。
+
+## 数据准备
+
+项目需要以下七张 CSV，文件名必须完全一致：
 
 - `销售流水.csv`
 - `业务回款明细.csv`
@@ -60,75 +49,96 @@ ICT_CASE_DATABASE_PATH=data/processed/ict_agent_cases.duckdb
 - `展期记录.csv`
 - `客户授信.csv`
 
-导入会严格检查文件名、必需字段和类型；失败不会覆盖上一次可用数据库。金额单位完全遵循赛事官方
-数据字典和字段说明，当前统一按“元”处理，不在 Agent 中自行猜测或换口径。
+CSV、生成的 DuckDB、`.env`、日志和调查产物都不会提交到 Git。
+
+## 本地运行
+
+环境要求：Python 3.12、Node.js 22。
+
+### 1. 安装后端
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
+Copy-Item .env.example .env
+```
+
+编辑 `.env`：
+
+```dotenv
+DEEPSEEK_API_KEY=你的密钥
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-flash
+ICT_DATA_DIR=D:/path/to/数据集目录
+ICT_DATABASE_PATH=data/processed/ict_agent.duckdb
+ICT_CASE_DATABASE_PATH=data/processed/ict_agent_cases.duckdb
+```
+
+`ICT_DATA_DIR` 应直接指向包含七张 CSV 的目录。
+
+### 2. 导入数据
 
 ```powershell
 python backend/scripts/import_data.py
+```
+
+导入程序会校验文件名、字段和数据类型，并在校验通过后原子替换业务数据库。导入失败不会破坏上一次可用数据。
+
+### 3. 构建前端并启动服务
+
+```powershell
 cd frontend
-npm install
+npm ci
 npm run build
 cd ..
 uvicorn ict_agent.api:app --app-dir backend/src --reload
 ```
 
-常用入口：
+启动后访问：
 
-- 页面：`http://127.0.0.1:8000/`
-- Swagger：`http://127.0.0.1:8000/docs`
-- 健康检查：`GET /api/v1/health`
-- 数据快照：`GET /api/v1/data-snapshot`
-- 确定性经营看板：`GET /api/v1/overview`
-- 规则扫描：`POST /api/v1/rule-runs`
-- 风险总览：`GET /api/v1/risk/overview`
-- 案件队列：`GET /api/v1/cases`
-- 调查事件流：`POST /api/v1/cases/{case_id}/investigations`
-- 人工审核：`POST /api/v1/cases/{case_id}/reviews`
-
-调查接口返回 `application/x-ndjson`，每行是一个 `InvestigationStreamEvent`。事件顺序为载入案件、
-数据发现、工具开始/完成、报告校验和最终保存；最终事件携带完整
-`InvestigationRecord`。
-
-操作员可以通过只读 CLI 使用与 Agent 完全相同的服务；CLI 没有任意 SQL、文件读取或写操作参数：
-
-```powershell
-python backend/scripts/evidence_cli.py --help
-python backend/scripts/evidence_cli.py snapshot
-python backend/scripts/evidence_cli.py capabilities --case-type ACCOUNTS_RECEIVABLE `
-  --customer-id C015 --observation-date 2026-07-31
-python backend/scripts/evidence_cli.py query --case-type INVENTORY `
-  --material-code ZAG60265CN --inventory-org 仓库W012 `
-  --dataset sales --grain month --metric sales_amount --metric net_quantity `
-  --time-window last_6_months
-```
+- 系统页面：`http://127.0.0.1:8000/`
+- API 文档：`http://127.0.0.1:8000/docs`
+- 健康检查：`http://127.0.0.1:8000/api/v1/health`
 
 ## Docker 服务器部署
 
-服务器安装 Docker 与 Docker Compose 后，可以按下面的方式部署：
+服务器建议使用 4 核 CPU、8 GB 内存和 50 GB SSD，不需要 GPU。服务器需要能够访问 DeepSeek API。
+
+### 1. 拉取项目并配置环境
 
 ```bash
-git clone <仓库地址> ict-agent
+git clone https://github.com/XiLongChong/ict-agent.git
 cd ict-agent
 cp .env.example .env
-# 编辑 .env，至少填写 DEEPSEEK_API_KEY
 ```
 
-将比赛提供的 7 张 CSV 上传到服务器的 `data/raw/`。文件名必须与“运行”章节列出的名称完全一致。数据集包含业务数据，不进入 Git；推荐使用 `scp`、SFTP 或服务器私有对象存储传输，例如：
+编辑 `.env`，至少填写 `DEEPSEEK_API_KEY`。如果需要，可以调整：
+
+```dotenv
+ICT_PORT=8000
+ICT_SERVER_DATA_DIR=./data/raw
+ICT_SERVER_PROCESSED_DIR=./data/processed
+```
+
+### 2. 上传数据集
+
+不要把数据集提交到 Git。可以使用 `scp` 或 SFTP 上传到服务器：
 
 ```bash
 scp 本地数据目录/*.csv user@server:/path/to/ict-agent/data/raw/
 ```
 
-然后一条命令构建并启动：
+### 3. 构建并启动
 
 ```bash
 docker compose up -d --build
 docker compose logs -f ict-agent
 ```
 
-首次启动时，容器会检查 `data/processed/`：数据库不存在时自动从 7 张 CSV 原子导入并生成案件库；后续重启会复用数据库。默认访问地址为 `http://服务器IP:8000`。端口、原始数据目录和数据库目录可在 `.env` 中分别通过 `ICT_PORT`、`ICT_SERVER_DATA_DIR`、`ICT_SERVER_PROCESSED_DIR` 调整。
+首次启动会自动从七张 CSV 生成业务数据库和案件库；后续重启会复用 `data/processed/` 中的数据库。
 
-数据集更新后，建议先停止服务，再显式重新导入，避免服务与导入程序同时访问 DuckDB：
+更新数据集时，建议先停止服务再重新导入：
 
 ```bash
 docker compose stop ict-agent
@@ -136,11 +146,24 @@ docker compose run --rm ict-agent python backend/scripts/import_data.py
 docker compose up -d ict-agent
 ```
 
-`data/processed/` 是服务器持久化数据目录，升级代码前应备份；`.env`、CSV、DuckDB、日志和密钥都已从 Git 与 Docker 构建上下文中排除，不应手工强制提交。
+服务器上需要定期备份 `data/processed/`。
 
-## 工程验收与 Agent 评测
+## 项目结构
 
-日常工程验收不调用真实模型：
+```text
+backend/src/ict_agent/   后端、规则、AI、数据和 API
+backend/scripts/         数据导入和只读证据命令
+backend/tests/           单元与集成测试
+backend/evals/           AI 审查评测
+frontend/                Vue 前端
+docs/                    指标、架构和规则说明
+data/raw/                本地原始 CSV，不提交
+data/processed/          本地 DuckDB，不提交
+```
+
+## 工程检查
+
+日常检查不会调用真实模型：
 
 ```powershell
 ruff check .
@@ -149,31 +172,11 @@ mypy backend/src
 pytest -q
 ```
 
-真实 Agent 评测是单独流程，会消耗 DeepSeek 额度，说明见
-[backend/evals/README.md](backend/evals/README.md)。改造前基线已真实运行：6 案中 4 案通过自动硬门槛，
-1 案因累计输出 Token 超限成为部分报告；该结果只评价案件进入后的 Agent 调查，不评价规则引擎。
-最终候选已完成 6 案 × 2 轮真实 DeepSeek 调查：12/12 完整、12/12 自动通过、12/12 人工语义复核
-通过、12/12 达到最终发布门槛，跨轮阶段一致。与改造前同重复序号 6 案相比，平均分从 93.83 提升到
-100，自动通过率从 66.67% 提升到 100%，耗时下降 34.41%；双方 Token 都完整的 5 案下降 42.65%。
+真实 AI 评测会调用 DeepSeek 并产生费用，使用方式见 [backend/evals/README.md](backend/evals/README.md)。
 
-正式数据导入的历史基线为销售 937,476 行、回款 1,097,055 行、应收快照 379,462 行。当前规则在
-模拟数据上形成 29 个案件、30 条规则命中；其中应收 10 件、库存 19 件，黑名单应收已从主动队列排除。
-规则阈值与限制见
-[docs/risk-rule-baseline.md](docs/risk-rule-baseline.md)。这些数值只验证数据和规则链路，不代表 Agent
-调查准确率。
+## 当前边界
 
-## 安全与产品边界
-
-- 原始 CSV、DuckDB、`.env`、日志、调查记录和 `artifacts/` 不提交 Git。
-- 模型不能执行 SQL、Python、Shell、联网、文件访问或业务写操作。统一证据查询只能从语义注册表选择
-  数据集、粒度、指标、时间窗口、排序和返回行数；业务记录搜索也只能在当前案件关联标识内执行。
-- 深度超期应收固定覆盖月度应收、订单应收、销售回款、展期和授信；敞口积累固定覆盖前三项、合同和
-  授信。库存固定覆盖季度历史、最新库龄分桶和销售月度数据。
-- 规则命中只是候选案件；Agent 建议不能自动调额、停供、催收或结案。
-- 页面案件状态统一为“待调查、待复核、处理中、已关闭”；Agent 运行标记只用于后端阻止重复启动，
-  不作为业务状态展示。人工确认风险后标记为“处理中”，证据不足则退回重新调查，确认无风险或误报
-  则关闭。系统不追踪具体处置或工单流程。
-- 页面只展示工具事件、证据和经过校验的判断，不展示模型私有思维链。
-- 当前不包含登录、多租户、自由 SQL、RAG、多 Agent、模型 fallback 或自动业务处置。
-- 指标事实基线见 [docs/metric-contract.md](docs/metric-contract.md)，架构见
-  [docs/technical-solution.md](docs/technical-solution.md)。
+- 当前没有登录、多租户和权限管理。
+- 当前不提供自由 SQL、代码执行、联网搜索、RAG 或多 Agent。
+- AI 结论不能替代人工复核，也不会自动执行后续业务动作。
+- 指标口径以 [docs/metric-contract.md](docs/metric-contract.md) 为准，系统架构见 [docs/technical-solution.md](docs/technical-solution.md)。
