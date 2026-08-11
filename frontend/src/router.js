@@ -17,7 +17,7 @@ const router = createRouter({
     { path: "/", redirect: "/risk" },
     { path: "/risk", name: "risk", component: RiskOverview, meta: { title: "风险总览" } },
     { path: "/cases", name: "cases", component: CaseQueue, meta: { title: "案件队列" } },
-    { path: "/cases/:caseId", name: "case", component: CaseWorkspace, meta: { title: "案件工作台", full: true } },
+    { path: "/cases/:caseId", name: "case", component: CaseWorkspace, meta: { title: "案件工作台" } },
     { path: "/business", name: "business", component: BusinessView, meta: { title: "经营分析" } },
     { path: "/:pathMatch(.*)*", redirect: "/risk" },
   ],

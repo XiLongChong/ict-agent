@@ -102,8 +102,9 @@ function reviewLabel(decision) {
 </script>
 
 <template>
-  <div class="min-h-[calc(100vh-72px)]">
-    <header class="flex items-center gap-3 border-b border-border bg-surface px-4 py-3 md:px-5">
+  <div class="space-y-4">
+    <section class="card overflow-hidden">
+    <header class="flex flex-wrap items-center gap-3 px-4 py-4 md:px-5">
       <button
         type="button"
         class="grid h-10 w-10 flex-none place-items-center rounded-lg border border-border text-muted transition-colors hover:bg-canvas"
@@ -123,12 +124,12 @@ function reviewLabel(decision) {
       </template>
     </header>
 
-    <div v-if="loading" class="grid min-h-[50vh] place-content-center justify-items-center gap-3 text-muted">
+    <div v-if="loading" class="grid min-h-[360px] place-content-center justify-items-center gap-3 border-t border-border text-muted">
       <LoaderCircle :size="28" class="animate-spin text-brand" />
       <span class="text-sm">正在装载案件、证据和审核记录</span>
     </div>
 
-    <div v-else-if="error" class="grid min-h-[50vh] place-content-center justify-items-center gap-3 text-center">
+    <div v-else-if="error" class="grid min-h-[360px] place-content-center justify-items-center gap-3 border-t border-border text-center">
       <AlertCircle :size="42" class="text-danger" />
       <h3 class="text-lg font-bold text-ink">案件加载失败</h3>
       <p class="text-sm text-muted">{{ error }}</p>
@@ -136,16 +137,20 @@ function reviewLabel(decision) {
     </div>
 
     <template v-else-if="caseItem">
-      <div class="grid grid-cols-2 gap-px border-b border-border bg-border md:grid-cols-4">
-        <div v-for="f in facts" :key="f.label" class="flex items-center gap-3 bg-surface px-5 py-4">
+      <div class="grid grid-cols-2 gap-3 border-t border-border bg-canvas p-4 md:grid-cols-4">
+        <div v-for="f in facts" :key="f.label" class="flex min-w-0 items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3">
           <span class="grid h-9 w-9 flex-none place-items-center rounded-lg" :class="f.tone"><component :is="f.icon" :size="16" /></span>
-          <div>
+          <div class="min-w-0">
             <span class="block text-sm text-muted">{{ f.label }}</span>
-            <strong class="block text-base text-ink">{{ f.value }}</strong>
+            <strong class="block truncate text-base text-ink">{{ f.value }}</strong>
           </div>
         </div>
       </div>
+    </template>
+    </section>
 
+    <template v-if="!loading && !error && caseItem">
+      <section class="card overflow-hidden">
       <Tabs v-model="tab" :tabs="tabs" />
 
       <div v-if="tab === 'investigation'" class="bg-surface">
@@ -153,7 +158,6 @@ function reviewLabel(decision) {
       </div>
 
       <div v-else-if="tab === 'signals'" class="mx-auto w-full max-w-[1200px] px-5 py-6">
-        <h2 class="mb-5 text-[27px] font-bold text-ink">规则触发</h2>
         <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
           <section v-for="hit in caseItem.rule_hits" :key="hit.rule_hit_id" class="card p-4">
             <div class="flex items-center justify-between">
@@ -169,7 +173,7 @@ function reviewLabel(decision) {
 
       <div v-else class="mx-auto grid w-full max-w-[1100px] grid-cols-1 gap-6 px-5 py-6 md:grid-cols-[380px_1fr]">
         <section class="card h-fit p-5">
-          <h2 class="text-xl font-bold text-ink">提交审核决定</h2>
+          <h2 class="text-lg font-bold text-ink">提交审核决定</h2>
           <div class="mt-4 space-y-4">
             <SelectInput v-model="form.decision" :options="decisionOptions" />
             <TextInput v-model="form.reviewer" maxlength="100" placeholder="审核人" />
@@ -184,7 +188,7 @@ function reviewLabel(decision) {
         </section>
 
         <section>
-          <h2 class="mb-4 text-[27px] font-bold text-ink">审核历史</h2>
+          <h2 class="mb-4 text-lg font-bold text-ink">审核历史</h2>
           <div class="space-y-3">
             <article v-for="review in caseItem.reviews" :key="review.review_id" class="card p-4">
               <div class="flex items-center gap-2">
@@ -199,6 +203,7 @@ function reviewLabel(decision) {
           </div>
         </section>
       </div>
+      </section>
     </template>
   </div>
 </template>

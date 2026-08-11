@@ -96,7 +96,7 @@ function completeness(value) {
       </button>
     </header>
 
-    <div ref="thread" class="h-[calc(100vh-280px)] min-h-[360px] overflow-y-auto px-4 pb-10 md:px-6" aria-live="polite">
+    <div ref="thread" class="h-[calc(100vh-460px)] min-h-[360px] overflow-y-auto px-4 pb-10 md:px-6" aria-live="polite">
       <div class="mx-auto flex max-w-[880px] flex-col gap-1 border-l border-border pl-6">
         <div v-if="!events.length && !record" class="my-10 flex items-start gap-4">
           <span class="grid h-12 w-12 flex-none place-items-center rounded-xl bg-brand-wash text-brand-deep"><Sparkles :size="22" /></span>

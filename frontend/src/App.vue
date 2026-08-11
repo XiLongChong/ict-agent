@@ -144,11 +144,9 @@ onMounted(loadAll);
         </button>
       </header>
 
-      <main :class="route.meta.full ? '' : 'mx-auto w-full max-w-[1536px] px-4 py-7 md:px-8'">
+      <main class="mx-auto w-full max-w-[1536px] px-4 py-7 md:px-8">
         <router-view v-slot="{ Component, route: currentRoute }">
-          <transition name="page" mode="out-in">
-            <component :is="Component" :key="currentRoute.fullPath" />
-          </transition>
+          <component :is="Component" :key="currentRoute.fullPath" />
         </router-view>
       </main>
     </div>
@@ -162,9 +160,3 @@ onMounted(loadAll);
     </div>
   </div>
 </template>
-
-<style>
-.page-enter-active, .page-leave-active { transition: opacity 0.12s ease-out, transform 0.12s ease-out; }
-.page-enter-from { opacity: 0; transform: translateY(4px); }
-.page-leave-to { opacity: 0; }
-</style>
