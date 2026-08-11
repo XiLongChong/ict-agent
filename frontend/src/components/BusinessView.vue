@@ -97,7 +97,7 @@ const trendOptions = computed(() => ({
           </button>
         </div>
       </div>
-      <div ref="trendHostRef" class="px-5 pb-3 pt-4">
+      <div ref="trendHostRef" class="min-h-[348px] px-5 pb-3 pt-4">
         <VueApexCharts :key="range" ref="trendChartRef" type="area" height="320" :options="trendOptions" :series="trendSeries" />
       </div>
     </section>
