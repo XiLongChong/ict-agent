@@ -118,7 +118,9 @@ Pydantic AI 输出校验器拒绝以下报告并要求模型修正：
 - `ERROR`
 
 最终 `REPORT_COMPLETED` 携带完整 `InvestigationRecord`。页面使用 Fetch Streams 增量解析；报告中的
-trace 保存工具完成和报告校验轨迹，供刷新后回放。页面不展示模型私有思维链。
+trace 保存工具完成和报告校验轨迹，供刷新后回放。页面以顺序消息流展示可验证的审查进度；完成后
+默认只展示结构化结论与处理建议，完整分析依据、工具证据和执行路径保持折叠可查。页面不展示模型
+私有思维链。
 
 公开案件状态只有 `PENDING_AGENT_REVIEW`、`PENDING_HUMAN_REVIEW`、`ACTION_IN_PROGRESS` 和
 `CLOSED`，页面对应待调查、待复核、处理中和已关闭。Agent 执行时数据库短暂使用

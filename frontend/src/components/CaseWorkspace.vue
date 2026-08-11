@@ -73,7 +73,7 @@ const facts = computed(() =>
         {
           icon: CalendarDays,
           tone: "text-muted bg-gray-100",
-          label: "观察日期",
+          label: "数据截至",
           value: caseItem.value.observation_date,
         },
         {
