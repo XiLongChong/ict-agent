@@ -86,17 +86,17 @@ const facts = computed(() =>
     : []
 );
 
-async function loadCase(id) {
-  loading.value = true;
+async function loadCase(id, { background = false } = {}) {
+  if (!background) loading.value = true;
   error.value = "";
   try {
     caseItem.value = await api(`/api/v1/cases/${encodeURIComponent(id)}`);
     document.title = `${caseItem.value.entity_label} · 案件处理`;
   } catch (exception) {
     error.value = exception.message;
-    caseItem.value = null;
+    if (!background) caseItem.value = null;
   } finally {
-    loading.value = false;
+    if (!background) loading.value = false;
   }
 }
 
@@ -112,7 +112,20 @@ watch(
 
 async function refresh() {
   if (!route.params.caseId) return;
-  await Promise.all([loadCase(route.params.caseId), loadRiskData()]);
+  await Promise.all([loadCase(route.params.caseId, { background: true }), loadRiskData()]);
+}
+
+function investigationCompleted(record) {
+  if (caseItem.value && record) {
+    caseItem.value = {
+      ...caseItem.value,
+      status: "PENDING_HUMAN_REVIEW",
+      latest_investigation: record,
+    };
+  }
+  void refresh().catch((error) => {
+    workspace.status = { text: error.message, error: true };
+  });
 }
 
 async function submitReview() {
@@ -347,7 +360,7 @@ function returnToSource() {
         </div>
 
         <section v-else-if="section === 'investigation'">
-          <InvestigationThread :case-item="caseItem" @completed="refresh" />
+          <InvestigationThread :case-item="caseItem" @completed="investigationCompleted" />
         </section>
 
         <section v-else class="card overflow-hidden">

@@ -1,10 +1,10 @@
 <script setup>
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { AlertCircle, Menu, PanelLeftClose, PanelLeftOpen, Radar } from "lucide-vue-next";
 import BrandMark from "./components/BrandMark.vue";
 import { navItems } from "./router";
-import { loadAll, runScan, workspace } from "./store";
+import { loadAll, loadRiskData, runScan, workspace } from "./store";
 
 const route = useRoute();
 const router = useRouter();
@@ -22,6 +22,14 @@ const isStandalone = computed(() => Boolean(route.meta.standalone));
 const expandedState = computed(() => !isMobile.value && expanded.value);
 const labelsVisible = computed(() => isMobile.value || expanded.value);
 const toastVisible = ref(false);
+
+async function refreshRiskDataOnFocus() {
+  try {
+    await loadRiskData();
+  } catch (error) {
+    workspace.status = { text: error.message, error: true };
+  }
+}
 
 function isActive(path) {
   if (path === "/cases") return route.path.startsWith("/cases");
@@ -50,7 +58,11 @@ watch(
     }
   }
 );
-onMounted(loadAll);
+onMounted(() => {
+  void loadAll();
+  window.addEventListener("focus", refreshRiskDataOnFocus);
+});
+onUnmounted(() => window.removeEventListener("focus", refreshRiskDataOnFocus));
 </script>
 
 <template>

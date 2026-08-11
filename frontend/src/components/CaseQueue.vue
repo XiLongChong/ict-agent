@@ -84,7 +84,15 @@ function jumpToPage() {
       </div>
 
       <div class="overflow-x-auto">
-        <table class="table-base min-w-[980px]">
+        <table class="table-base table-fixed min-w-[1120px]">
+          <colgroup>
+            <col class="w-[28%]" />
+            <col class="w-[10%]" />
+            <col class="w-[27%]" />
+            <col class="w-[10%]" />
+            <col class="w-[14%]" />
+            <col class="w-[11%]" />
+          </colgroup>
           <thead>
             <tr><th>案件主体</th><th>案件类型</th><th>风险概况</th><th>风险等级</th><th>风险敞口</th><th>处理状态</th></tr>
           </thead>
@@ -97,10 +105,10 @@ function jumpToPage() {
               @keydown.enter="openCase(item.case_id)"
             >
               <td>
-                <strong class="block text-[13px] text-ink">{{ item.entity_label }}</strong>
+                <strong class="block truncate text-[13px] text-ink" :title="item.entity_label">{{ item.entity_label }}</strong>
               </td>
               <td><span class="text-sm text-muted">{{ labels.caseType[item.case_type] }}</span></td>
-              <td><span class="text-sm font-medium text-ink">{{ item.risk_overview }}</span></td>
+              <td><span class="block truncate text-sm font-medium text-ink" :title="item.risk_overview">{{ item.risk_overview }}</span></td>
               <td><Badge :tone="priorityColor(item.priority)">{{ labels.priority[item.priority] }}</Badge></td>
               <td class="money-cell">{{ formatMoney(item.exposure_amount) }}</td>
               <td><Badge :tone="statusColor(item.status)">{{ labels.status[item.status] }}</Badge></td>
