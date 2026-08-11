@@ -284,7 +284,7 @@ function returnToSource() {
               <div class="leading-tight">
                 <h2 class="text-xl font-bold text-ink">{{ caseItem.entity_label }}</h2>
                 <span class="block text-sm text-muted">
-                  {{ labels.caseType[caseItem.case_type] }} · {{ caseItem.case_id }}
+                  {{ labels.caseType[caseItem.case_type] }}风险案件
                 </span>
               </div>
               <div class="flex-1"></div>
@@ -332,11 +332,11 @@ function returnToSource() {
                         <Badge :tone="priorityColor(hit.severity)">
                           {{ labels.priority[hit.severity] }}
                         </Badge>
-                        <span class="ml-auto font-mono text-sm text-muted">{{ hit.rule_id }}</span>
                       </div>
                       <p class="mt-1 text-[13px] leading-6 text-muted">{{ hit.reason }}</p>
                       <span class="mt-1 block text-sm text-muted">
-                        {{ hit.sources.join(" / ") }} · {{ hit.period }}
+                        数据来源：{{ hit.sources.map((source) => labels.source[source] || "业务数据").join("、") }}
+                        · 观察期：{{ hit.period }}
                       </span>
                     </article>
                   </div>

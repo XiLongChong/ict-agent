@@ -7,6 +7,15 @@ export const labels = {
   },
   priority: { LOW: "低", MEDIUM: "一般", HIGH: "高" },
   caseType: { ACCOUNTS_RECEIVABLE: "应收", INVENTORY: "库存" },
+  source: {
+    ar_snapshots: "应收快照",
+    customer_credit: "客户授信",
+    sales: "销售明细",
+    payments: "回款明细",
+    inventory_snapshots: "库存快照",
+    extensions: "展期记录",
+    contracts: "合同记录",
+  },
   hypothesis: { SUPPORTED: "证据支持", WEAKENED: "证据削弱", UNRESOLVED: "无法判断" },
   riskStage: { EARLY_WARNING: "早期预警", DETERIORATING: "风险恶化", LIMITED: "信息有限" },
   tool: {
