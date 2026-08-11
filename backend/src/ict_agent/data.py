@@ -868,8 +868,11 @@ class CaseStore:
         ]
         parameters: list[object] = []
         if status is not None:
-            clauses.append("status = ?")
-            parameters.append(status)
+            if status == "PENDING_AGENT_REVIEW":
+                clauses.append("status IN ('PENDING_AGENT_REVIEW', 'AGENT_REVIEWING')")
+            else:
+                clauses.append("status = ?")
+                parameters.append(status)
         if case_type is not None:
             clauses.append("case_type = ?")
             parameters.append(case_type)
@@ -879,7 +882,15 @@ class CaseStore:
             f"""
             SELECT case_id, case_type, entity_type, entity_id, entity_label,
                    observation_date, status, priority, exposure_amount, summary,
-                   rule_hit_count, rule_set_version, updated_at
+                   rule_hit_count, rule_set_version, updated_at,
+                   COALESCE((
+                       SELECT rule_name
+                       FROM rule_hits
+                       WHERE case_id = risk_cases.case_id
+                       ORDER BY CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2
+                                              WHEN 'MEDIUM' THEN 3 ELSE 4 END, rule_id
+                       LIMIT 1
+                   ), summary) AS risk_overview
             FROM risk_cases
             {where}
             ORDER BY
@@ -899,7 +910,15 @@ class CaseStore:
             SELECT case_id, case_type, entity_type, entity_id, entity_label,
                    entity_context_json, observation_date, status, priority,
                    exposure_amount, summary, rule_hit_count, rule_set_version,
-                   updated_at
+                   updated_at,
+                   COALESCE((
+                       SELECT rule_name
+                       FROM rule_hits
+                       WHERE case_id = risk_cases.case_id
+                       ORDER BY CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2
+                                              WHEN 'MEDIUM' THEN 3 ELSE 4 END, rule_id
+                       LIMIT 1
+                   ), summary) AS risk_overview
             FROM risk_cases WHERE case_id = ?
             """,
             [case_id],
@@ -949,14 +968,17 @@ class CaseStore:
             """
             SELECT
                 COUNT(*) AS total_cases,
-                COUNT(*) FILTER (WHERE status = 'PENDING_AGENT_REVIEW') AS pending_agent_cases,
-                COUNT(*) FILTER (WHERE status = 'AGENT_REVIEWING') AS agent_reviewing_cases,
+                COUNT(*) FILTER (
+                    WHERE status IN ('PENDING_AGENT_REVIEW', 'AGENT_REVIEWING')
+                ) AS pending_agent_cases,
                 COUNT(*) FILTER (
                     WHERE status = 'PENDING_HUMAN_REVIEW'
                 ) AS pending_human_review_cases,
                 COUNT(*) FILTER (WHERE status = 'ACTION_IN_PROGRESS') AS action_in_progress_cases,
                 COUNT(*) FILTER (WHERE status = 'CLOSED') AS closed_cases,
-                COUNT(*) FILTER (WHERE priority = 'CRITICAL') AS critical_cases,
+                COUNT(*) FILTER (
+                    WHERE priority IN ('HIGH', 'CRITICAL')
+                ) AS high_priority_cases,
                 COALESCE(SUM(exposure_amount) FILTER (
                     WHERE status != 'CLOSED'
                 ), 0) AS exposure_amount,

@@ -17,8 +17,8 @@ const currentPage = ref(1);
 const pageJump = ref("1");
 const typeOptions = [
   { title: "全部类型", value: "" },
-  { title: "客户应收", value: "ACCOUNTS_RECEIVABLE" },
-  { title: "库存积压", value: "INVENTORY" },
+  { title: "应收", value: "ACCOUNTS_RECEIVABLE" },
+  { title: "库存", value: "INVENTORY" },
 ];
 const statusOptions = [{ title: "全部状态", value: "" }, ...Object.entries(labels.status).map(([value, title]) => ({ title, value }))];
 const pageSizeOptions = [10, 20, 50].map((value) => ({ title: `${value} 行/页`, value: String(value) }));
@@ -27,7 +27,7 @@ const filtered = computed(() => {
   return workspace.cases.filter((item) => {
     const matchesFilters = (!type.value || item.case_type === type.value) && (!status.value || item.status === status.value);
     if (!matchesFilters || !keyword) return matchesFilters;
-    const searchable = [item.case_id, item.entity_label, item.summary, labels.caseType[item.case_type], labels.status[item.status]]
+    const searchable = [item.case_id, item.entity_label, item.risk_overview, labels.caseType[item.case_type], labels.status[item.status]]
       .filter(Boolean)
       .join(" ")
       .toLocaleLowerCase();
@@ -58,10 +58,6 @@ function openCase(caseId) {
   router.push(`/cases/${encodeURIComponent(caseId)}`);
 }
 
-function riskLabel(caseType) {
-  return caseType === "INVENTORY" ? "库存积压预警" : "应收超期预警";
-}
-
 function goToPage(page) {
   const normalized = Math.min(totalPages.value, Math.max(1, Math.trunc(Number(page) || 1)));
   currentPage.value = normalized;
@@ -84,9 +80,9 @@ function jumpToPage() {
       </div>
 
       <div class="overflow-x-auto">
-        <table class="table-base min-w-[760px]">
+        <table class="table-base min-w-[980px]">
           <thead>
-            <tr><th>案件主体</th><th>风险概况</th><th>风险敞口</th><th>处理状态</th></tr>
+            <tr><th>案件主体</th><th>案件类型</th><th>风险概况</th><th>风险等级</th><th>风险敞口</th><th>处理状态</th></tr>
           </thead>
           <tbody>
             <tr
@@ -98,18 +94,14 @@ function jumpToPage() {
             >
               <td>
                 <strong class="block text-[13px] text-ink">{{ item.entity_label }}</strong>
-                <span class="block text-sm text-muted">{{ labels.caseType[item.case_type] }}</span>
               </td>
-              <td>
-                <span class="inline-flex items-center gap-2">
-                  <Badge :tone="priorityColor(item.priority)">{{ labels.priority[item.priority] }}</Badge>
-                  <span class="text-sm font-medium text-ink">{{ riskLabel(item.case_type) }}</span>
-                </span>
-              </td>
+              <td><span class="text-sm text-muted">{{ labels.caseType[item.case_type] }}</span></td>
+              <td><span class="text-sm font-medium text-ink">{{ item.risk_overview }}</span></td>
+              <td><Badge :tone="priorityColor(item.priority)">{{ labels.priority[item.priority] }}</Badge></td>
               <td class="money-cell">{{ formatMoney(item.exposure_amount) }}</td>
               <td><Badge :tone="statusColor(item.status)">{{ labels.status[item.status] }}</Badge></td>
             </tr>
-            <tr v-if="!workspace.loading && !filtered.length"><td colspan="4" class="empty-state">当前筛选条件下没有案件</td></tr>
+            <tr v-if="!workspace.loading && !filtered.length"><td colspan="6" class="empty-state">当前筛选条件下没有案件</td></tr>
           </tbody>
         </table>
       </div>

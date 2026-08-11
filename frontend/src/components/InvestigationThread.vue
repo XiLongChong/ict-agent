@@ -96,7 +96,7 @@ function completeness(value) {
         <Sparkles :size="16" :class="running ? 'animate-spin' : ''" />
         {{ record ? "重新调查" : "开始调查" }}
       </button>
-      <Badge v-else :tone="props.caseItem?.status === 'AGENT_REVIEWING' ? 'info' : 'neutral'">
+      <Badge v-else tone="neutral">
         {{ labels.status[props.caseItem?.status] }}
       </Badge>
     </header>

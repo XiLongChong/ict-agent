@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { AlertCircle, Menu, PanelLeftClose, PanelLeftOpen, Radar } from "lucide-vue-next";
+import BrandMark from "./components/BrandMark.vue";
 import { navItems } from "./router";
 import { loadAll, runScan, workspace } from "./store";
 
@@ -57,17 +58,11 @@ onMounted(loadAll);
 
     <aside
       class="fixed inset-y-0 left-0 z-50 flex flex-col overflow-hidden border-r border-border bg-surface transition-[width,transform] duration-200 ease-out motion-reduce:transition-none md:translate-x-0"
-      :class="[labelsVisible ? 'w-[224px]' : 'w-[72px]', mobileNav ? 'translate-x-0' : '-translate-x-full']"
+      :class="[labelsVisible ? 'w-[200px]' : 'w-16', mobileNav ? 'translate-x-0' : '-translate-x-full']"
     >
-      <div class="flex h-[72px] items-center px-4">
-        <span class="grid h-9 w-10 flex-none place-items-center" aria-hidden="true">
-          <span class="grid h-9 w-9 place-items-center rounded-lg bg-brand">
-            <span class="flex items-end gap-[3px]">
-              <i class="block w-1 rounded-sm bg-white" style="height: 10px"></i>
-              <i class="block w-1 rounded-sm bg-white" style="height: 16px"></i>
-              <i class="block w-1 rounded-sm bg-white" style="height: 13px"></i>
-            </span>
-          </span>
+      <div class="flex h-[72px] items-center px-3">
+        <span class="grid h-9 w-10 flex-none place-items-center">
+          <BrandMark />
         </span>
         <div
           class="ml-2 flex-none whitespace-nowrap leading-tight transition-opacity duration-100"
@@ -77,7 +72,7 @@ onMounted(loadAll);
         </div>
       </div>
 
-      <nav class="flex-1 space-y-1 overflow-x-hidden overflow-y-auto px-4 py-4">
+      <nav class="flex-1 space-y-1 overflow-x-hidden overflow-y-auto px-3 py-4">
         <button
           v-for="item in navItems"
           :key="item.path"
@@ -98,7 +93,7 @@ onMounted(loadAll);
 
       <button
         type="button"
-        class="mx-4 mb-4 hidden h-10 items-center rounded-lg border border-border text-sm font-semibold text-muted transition-colors hover:bg-brand-wash hover:text-brand md:flex"
+        class="mx-3 mb-4 hidden h-10 items-center rounded-lg border border-border text-sm font-semibold text-muted transition-colors hover:bg-brand-wash hover:text-brand md:flex"
         :aria-label="labelsVisible ? '收起侧边栏' : '展开侧边栏'"
         :title="labelsVisible ? '收起侧边栏' : '展开侧边栏'"
         @click="toggleNavigation"
@@ -116,7 +111,7 @@ onMounted(loadAll);
 
     <div
       class="flex min-h-screen min-w-0 flex-col overflow-x-clip transition-[padding-left] duration-200 ease-out motion-reduce:transition-none md:will-change-[padding-left]"
-      :class="expandedState ? 'md:pl-[224px]' : 'md:pl-[72px]'"
+      :class="expandedState ? 'md:pl-[200px]' : 'md:pl-16'"
     >
       <header class="sticky top-0 z-30 flex h-[72px] items-center gap-4 border-b border-border bg-surface/95 px-4 backdrop-blur md:px-6">
         <button

@@ -21,8 +21,8 @@ const invShare = computed(() => (total.value ? Math.round((inventory.value / tot
 
 const metrics = computed(() => [
   { label: "案件总数", value: workspace.overview?.total_cases ?? "—", tone: "brand", icon: ShieldAlert },
-  { label: "待 Agent 调查", value: workspace.overview?.pending_agent_cases ?? "—", tone: "warning", icon: Search },
-  { label: "待人工复核", value: workspace.overview?.pending_human_review_cases ?? "—", tone: "success", icon: ClipboardCheck },
+  { label: "待调查", value: workspace.overview?.pending_agent_cases ?? "—", tone: "warning", icon: Search },
+  { label: "待复核", value: workspace.overview?.pending_human_review_cases ?? "—", tone: "success", icon: ClipboardCheck },
   { label: "风险敞口", value: workspace.overview ? formatMoney(workspace.overview.exposure_amount) : "—", tone: "danger", icon: CircleDollarSign, compact: true },
 ]);
 const toneIcon = {
@@ -56,7 +56,6 @@ const donutOptions = computed(() => ({
 const donutSeries = computed(() => [ar.value, inventory.value]);
 
 const barTone = {
-  CRITICAL: "bg-danger",
   HIGH: "bg-warning",
   MEDIUM: "bg-brand",
   LOW: "bg-gray-200",

@@ -1,13 +1,12 @@
 export const labels = {
   status: {
-    PENDING_AGENT_REVIEW: "待 Agent 调查",
-    AGENT_REVIEWING: "Agent 调查中",
-    PENDING_HUMAN_REVIEW: "待人工复核",
+    PENDING_AGENT_REVIEW: "待调查",
+    PENDING_HUMAN_REVIEW: "待复核",
     ACTION_IN_PROGRESS: "处理中",
     CLOSED: "已关闭",
   },
-  priority: { LOW: "低", MEDIUM: "一般", HIGH: "高", CRITICAL: "关键" },
-  caseType: { ACCOUNTS_RECEIVABLE: "客户应收", INVENTORY: "库存积压" },
+  priority: { LOW: "低", MEDIUM: "一般", HIGH: "高" },
+  caseType: { ACCOUNTS_RECEIVABLE: "应收", INVENTORY: "库存" },
   hypothesis: { SUPPORTED: "证据支持", WEAKENED: "证据削弱", UNRESOLVED: "无法判断" },
   riskStage: { EARLY_WARNING: "早期预警", DETERIORATING: "风险恶化", LIMITED: "信息有限" },
   tool: {
@@ -25,8 +24,8 @@ export const labels = {
   },
 };
 
-export const priorityColor = (value) => ({ CRITICAL: "danger", HIGH: "warning", MEDIUM: "brand", LOW: "neutral" }[value] || "neutral");
-export const statusColor = (value) => ({ PENDING_AGENT_REVIEW: "brand", AGENT_REVIEWING: "info", PENDING_HUMAN_REVIEW: "warning", ACTION_IN_PROGRESS: "danger", CLOSED: "success" }[value] || "brand");
+export const priorityColor = (value) => ({ HIGH: "warning", MEDIUM: "brand", LOW: "neutral" }[value] || "neutral");
+export const statusColor = (value) => ({ PENDING_AGENT_REVIEW: "brand", PENDING_HUMAN_REVIEW: "warning", ACTION_IN_PROGRESS: "danger", CLOSED: "success" }[value] || "brand");
 export const stageColor = (value) => ({ DETERIORATING: "danger", EARLY_WARNING: "warning", LIMITED: "neutral" }[value] || "neutral");
 export const hypothesisColor = (value) => ({ SUPPORTED: "success", WEAKENED: "neutral", UNRESOLVED: "warning" }[value] || "neutral");
 

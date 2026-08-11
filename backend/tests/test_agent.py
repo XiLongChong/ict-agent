@@ -77,6 +77,7 @@ def _case() -> RiskCaseDetail:
         priority="HIGH",
         exposure_amount=1000,
         summary="测试应收案件",
+        risk_overview="应收超期预警",
         rule_hit_count=1,
         rule_set_version="test",
         updated_at="2026-08-08T00:00:00",

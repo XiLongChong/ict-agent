@@ -38,7 +38,8 @@
 案件只表达调查流程，不承担工单或实际处置管理：
 
 1. 规则生成案件后为 `PENDING_AGENT_REVIEW`（待 Agent 调查）。
-2. Agent 启动后为 `AGENT_REVIEWING`；同一案件不能重复启动调查。
+2. Agent 启动后在存储层短暂标记为 `AGENT_REVIEWING`，用于阻止重复启动；API 和页面仍归入“待调查”，
+   不增加第五种业务状态。
 3. 完整或部分报告保存后为 `PENDING_HUMAN_REVIEW`（待人工复核）。
 4. 人工确认风险成立后为 `ACTION_IN_PROGRESS`（处理中）。该状态表示调查完成并已交给业务处理，
    系统不再要求填写工单、复查日期或具体处置步骤。

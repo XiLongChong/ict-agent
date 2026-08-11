@@ -10,12 +10,11 @@ type JsonScalar = str | int | float | bool | None
 CaseType = Literal["ACCOUNTS_RECEIVABLE", "INVENTORY"]
 CaseStatus = Literal[
     "PENDING_AGENT_REVIEW",
-    "AGENT_REVIEWING",
     "PENDING_HUMAN_REVIEW",
     "ACTION_IN_PROGRESS",
     "CLOSED",
 ]
-RiskPriority = Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+RiskPriority = Literal["LOW", "MEDIUM", "HIGH"]
 HypothesisStatus = Literal["SUPPORTED", "WEAKENED", "UNRESOLVED"]
 RiskSignalStage = Literal["EARLY_WARNING", "DETERIORATING", "LIMITED"]
 EvidenceCompleteness = Literal["LOW", "MEDIUM", "HIGH"]
@@ -293,6 +292,7 @@ class RiskCaseSummary(BaseModel):
     priority: RiskPriority
     exposure_amount: float
     summary: str
+    risk_overview: str
     rule_hit_count: int
     rule_set_version: str
     updated_at: str
@@ -422,10 +422,9 @@ class RiskOverviewResponse(BaseModel):
     latest_run: RuleRunResponse | None
     total_cases: int
     pending_agent_cases: int
-    agent_reviewing_cases: int
     pending_human_review_cases: int
     action_in_progress_cases: int
     closed_cases: int
-    critical_cases: int
+    high_priority_cases: int
     exposure_amount: float
     cases_by_type: dict[str, int]

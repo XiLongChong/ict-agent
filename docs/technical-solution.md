@@ -120,10 +120,15 @@ Pydantic AI 输出校验器拒绝以下报告并要求模型修正：
 最终 `REPORT_COMPLETED` 携带完整 `InvestigationRecord`。页面使用 Fetch Streams 增量解析；报告中的
 trace 保存工具完成和报告校验轨迹，供刷新后回放。页面不展示模型私有思维链。
 
-案件初始状态为 `PENDING_AGENT_REVIEW`。启动调查时原子推进为 `AGENT_REVIEWING`，完整或部分报告
-保存后进入 `PENDING_HUMAN_REVIEW`；未形成报告的失败运行恢复为待 Agent 调查。人工复核只有三个
-结论：风险成立进入 `ACTION_IN_PROGRESS`，证据不足返回待 Agent 调查，确认无风险或误报进入
-`CLOSED`。处理中表示调查系统已经完成交接，不在本系统建设或跟踪工单和具体处置流程。
+公开案件状态只有 `PENDING_AGENT_REVIEW`、`PENDING_HUMAN_REVIEW`、`ACTION_IN_PROGRESS` 和
+`CLOSED`，页面对应待调查、待复核、处理中和已关闭。Agent 执行时数据库短暂使用
+`AGENT_REVIEWING` 防止同一案件重复启动，但 API 将其归入待调查，不作为业务状态或筛选项。
+完整或部分报告保存后进入待复核；未形成报告的失败运行恢复为待调查。人工确认风险后进入处理中，
+证据不足返回待调查，确认无风险或误报则关闭。处理中表示调查系统已经完成交接，不在本系统建设或
+跟踪工单和具体处置流程。
+
+案件队列的 `risk_overview` 来自该案件最高严重度规则命中的 `rule_name`，不由前端根据案件类型硬编码。
+公开风险等级只显示低、一般、高；规则引擎内部的 `CRITICAL` 在 API 输出时统一归并为高。
 
 ## 6. HTTP 接口
 

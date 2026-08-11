@@ -115,6 +115,20 @@ def _as_float(value: DatabaseScalar) -> float:
     return float(value)
 
 
+def _case_status(value: DatabaseScalar) -> CaseStatus:
+    raw = str(value)
+    if raw == "AGENT_REVIEWING":
+        return "PENDING_AGENT_REVIEW"
+    return cast(CaseStatus, raw)
+
+
+def _risk_priority(value: DatabaseScalar) -> RiskPriority:
+    raw = str(value)
+    if raw == "CRITICAL":
+        return "HIGH"
+    return cast(RiskPriority, raw)
+
+
 def _case_summary(row: tuple[DatabaseScalar, ...]) -> RiskCaseSummary:
     return RiskCaseSummary(
         case_id=str(row[0]),
@@ -123,10 +137,11 @@ def _case_summary(row: tuple[DatabaseScalar, ...]) -> RiskCaseSummary:
         entity_id=str(row[3]),
         entity_label=str(row[4]),
         observation_date=str(row[5]).split("T", maxsplit=1)[0],
-        status=cast(CaseStatus, str(row[6])),
-        priority=cast(RiskPriority, str(row[7])),
+        status=_case_status(row[6]),
+        priority=_risk_priority(row[7]),
         exposure_amount=_as_float(row[8]),
         summary=str(row[9]),
+        risk_overview=str(row[13]),
         rule_hit_count=_as_int(row[10]),
         rule_set_version=str(row[11]),
         updated_at=str(row[12]),
@@ -208,15 +223,14 @@ def get_risk_overview(*, settings: Settings | None = None) -> RiskOverviewRespon
             latest_run=_rule_run(tuple(latest_rows[0])) if latest_rows else None,
             total_cases=_as_int(overview_row[0]),
             pending_agent_cases=_as_int(overview_row[1]),
-            agent_reviewing_cases=_as_int(overview_row[2]),
-            pending_human_review_cases=_as_int(overview_row[3]),
-            action_in_progress_cases=_as_int(overview_row[4]),
-            closed_cases=_as_int(overview_row[5]),
-            critical_cases=_as_int(overview_row[6]),
-            exposure_amount=_as_float(overview_row[7]),
+            pending_human_review_cases=_as_int(overview_row[2]),
+            action_in_progress_cases=_as_int(overview_row[3]),
+            closed_cases=_as_int(overview_row[4]),
+            high_priority_cases=_as_int(overview_row[5]),
+            exposure_amount=_as_float(overview_row[6]),
             cases_by_type={
-                "ACCOUNTS_RECEIVABLE": _as_int(overview_row[8]),
-                "INVENTORY": _as_int(overview_row[9]),
+                "ACCOUNTS_RECEIVABLE": _as_int(overview_row[7]),
+                "INVENTORY": _as_int(overview_row[8]),
             },
         )
     except (ConfigurationError, DataAccessError) as exc:
@@ -253,6 +267,7 @@ def get_case_detail(
                 row[11],
                 row[12],
                 row[13],
+                row[14],
             )
         )
         hits = [
@@ -261,7 +276,7 @@ def get_case_detail(
                 rule_id=str(hit[1]),
                 rule_name=str(hit[2]),
                 rule_version=str(hit[3]),
-                severity=cast(RiskPriority, str(hit[4])),
+                severity=_risk_priority(hit[4]),
                 exposure_amount=_as_float(hit[5]),
                 reason=str(hit[6]),
                 metrics=json.loads(str(hit[7])),
@@ -385,7 +400,7 @@ async def stream_prepared_investigation(
         yield InvestigationStreamEvent(
             sequence=sequence,
             event_type="RUN_STARTED",
-            message="案件已进入 Agent 调查中，正在发现数据并核对证据。",
+            message="本轮调查已启动，正在发现数据并核对证据。",
         )
         async for event in stream_investigation_agent(
             prepared.settings, prepared.investigation_input, model=prepared.model
