@@ -26,7 +26,7 @@ flowchart LR
 
 | 层 | 实现 | 职责 |
 |---|---|---|
-| 页面 | Vue 3 + Vite + Tailwind CSS 4 | TailAdmin 风格的风险总览、案件队列、独立案件处理页、顺序流式调查、报告回放、审核和经营看板 |
+| 页面 | Vue 3 + Vite + Tailwind CSS 4 | TailAdmin 风格的风险总览、案件队列、独立案件处理页、顺序流式 AI 审查、报告回放、人工复核和经营看板 |
 | HTTP | FastAPI + Pydantic | `/api/v1` 校验、错误映射、NDJSON 流和 OpenAPI |
 | 应用服务 | `service.py` | 经营、扫描、案件状态流转、调查保存和人工复核用例 |
 | Agent | Pydantic AI | DeepSeek 高强度思考、工具事件、结构化输出和输出校验 |

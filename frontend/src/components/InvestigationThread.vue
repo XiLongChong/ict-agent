@@ -83,7 +83,7 @@ function completeness(value) {
   <section class="mx-auto flex h-full w-full max-w-[1100px] flex-col">
     <header class="flex items-center gap-4 px-5 py-4">
       <div class="leading-tight">
-        <h3 class="text-[16px] font-bold text-ink">调查对话</h3>
+        <h3 class="text-[16px] font-bold text-ink">AI审查</h3>
       </div>
       <div class="flex-1"></div>
       <button
@@ -94,7 +94,7 @@ function completeness(value) {
         @click="investigate"
       >
         <Sparkles :size="16" :class="running ? 'animate-spin' : ''" />
-        {{ record ? "重新调查" : "开始调查" }}
+        {{ record ? "重新审查" : "开始审查" }}
       </button>
       <Badge v-else tone="neutral">
         {{ labels.status[props.caseItem?.status] }}
@@ -105,7 +105,7 @@ function completeness(value) {
       <div class="mx-auto flex max-w-[880px] flex-col gap-1 border-l border-border pl-6">
         <div v-if="!events.length && !record" class="my-10 flex items-start gap-4">
           <span class="grid h-12 w-12 flex-none place-items-center rounded-xl bg-brand-wash text-brand-deep"><Sparkles :size="22" /></span>
-          <h4 class="self-center text-[15px] font-semibold text-ink">准备从证据开始调查</h4>
+          <h4 class="self-center text-[15px] font-semibold text-ink">准备从证据开始审查</h4>
         </div>
 
         <div v-for="event in events" :key="event.sequence" class="relative -ml-[31px] grid grid-cols-[28px_minmax(0,1fr)] gap-3 py-2">
@@ -130,13 +130,13 @@ function completeness(value) {
 
         <div v-if="running" class="relative -ml-[31px] my-3 flex items-center gap-2 text-muted">
           <span class="flex items-end gap-1"><i class="h-2 w-1 animate-bounce rounded bg-faint"></i><i class="h-3 w-1 animate-bounce rounded bg-faint" style="animation-delay: 0.12s"></i><i class="h-2 w-1 animate-bounce rounded bg-faint" style="animation-delay: 0.24s"></i></span>
-          <span class="text-sm">Agent 正在继续调查</span>
+          <span class="text-sm">AI正在继续审查</span>
         </div>
 
         <div v-if="record" class="relative -ml-[31px] mt-4 space-y-4">
           <div class="flex items-center gap-3">
             <span class="grid h-10 w-10 place-items-center rounded-xl bg-success-wash text-success"><CheckCircle2 :size="20" /></span>
-            <h3 class="text-lg font-bold text-ink">调查报告</h3>
+            <h3 class="text-lg font-bold text-ink">审查报告</h3>
           </div>
 
           <section class="card p-5">
@@ -215,7 +215,7 @@ function completeness(value) {
 
         <div v-if="error" class="my-4 flex items-start gap-3 rounded-lg border border-danger/30 bg-danger-wash p-4">
           <AlertCircle :size="18" class="mt-0.5 flex-none text-danger" />
-          <div><strong class="block text-sm text-danger">本次调查未生成报告</strong><p class="mt-1 text-[13px] text-danger-deep">{{ error }}</p></div>
+          <div><strong class="block text-sm text-danger">本次审查未生成报告</strong><p class="mt-1 text-[13px] text-danger-deep">{{ error }}</p></div>
         </div>
       </div>
     </div>
