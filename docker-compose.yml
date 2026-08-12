@@ -3,6 +3,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        BASE_REGISTRY: ${ICT_BASE_REGISTRY:-}
+        NPM_REGISTRY: ${ICT_NPM_REGISTRY:-}
     env_file:
       - .env
     environment:

@@ -121,6 +121,13 @@ ICT_SERVER_DATA_DIR=./data/raw
 ICT_SERVER_PROCESSED_DIR=./data/processed
 ```
 
+服务器无法直连 Docker Hub 或 npm（如国内网络）时，填写镜像加速前缀后再构建：
+
+```dotenv
+ICT_BASE_REGISTRY=docker.m.daocloud.io/library/
+ICT_NPM_REGISTRY=https://registry.npmmirror.com
+```
+
 ### 2. 上传数据集
 
 不要把数据集提交到 Git。可以使用 `scp` 或 SFTP 上传到服务器：
