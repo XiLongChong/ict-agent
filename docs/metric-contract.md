@@ -60,16 +60,37 @@
 
 ## 5. 当前风险案件规则
 
-启用规则集为 `2026.08-v2`，完整制定过程和回溯数量见
-`docs/risk-rule-baseline.md`。规则命中只创建候选调查案件，不授权自动停供、调额、催收或结案。
+启用规则集为 `2026.08-v2`，当前共 **23 条确定性规则**（应收/合同/销售回款/授信域 16 条 + 库存域 7 条）。
+逐条执行条件、阈值、命中分布与严重度见 `docs/risk-rules.md`（权威完整清单）；规则制定过程与回溯
+说明见 `docs/risk-rule-baseline.md`。规则命中只创建候选调查案件，不授权自动停供、调额、催收或结案。
 
-| 规则 | 执行条件 | 优先级 | 风险金额 |
-|---|---|---|---|
-| `AR_OPERATING_DEEP_OVERDUE` | 非黑名单、近三个月有销售或回款，60 天以上超期 ≥ 100 万元，最大超期 ≥ 90 天 | HIGH | 60 天以上超期金额 |
-| `AR_OPERATING_EXPOSURE_BUILDUP` | 非黑名单、最新超期及三个月增量均 ≥ 100 万元、近三个月销售 > 0 且销售 > 回款 | HIGH | 最新超期金额 |
-| `INV_MATERIAL_BUILDUP` | 库存增加 ≥ 1,000 万元，且上季为 0 或增长比例 ≥ 50% | MEDIUM | 最新库存金额 |
-| `INV_STALE_NO_SALES` | 180 天以上库存 ≥ 50 万元、占比 ≥ 30%，且近三个月销售 ≤ 0 | HIGH | 180 天以上库存金额 |
-| `INV_BUILDUP_SALES_SLOWDOWN` | 库存增加 ≥ 300 万元、增长比例 ≥ 50%，且销售较前三个月下降超过 50% | HIGH | 最新库存金额 |
+按业务域汇总当前启用规则：
+
+| 域 | 规则 ID | 优先级 |
+|---|---|---|
+| 应收 | `AR_OPERATING_DEEP_OVERDUE` | HIGH |
+| 应收 | `AR_OPERATING_EXPOSURE_BUILDUP` | HIGH |
+| 应收 | `AR_BLACKLIST_EXPOSURE` | CRITICAL |
+| 应收 | `AR_OVERDUE_RATE_HIGH` | HIGH |
+| 应收 | `AR_UNPAID_AGING` | HIGH |
+| 应收 | `AR_OVER_CREDIT_LIMIT` | HIGH |
+| 应收 | `AR_NO_CREDIT_WITH_EXPOSURE` | MEDIUM |
+| 应收 | `AR_EXTENSION_ABUSE` | MEDIUM |
+| 应收 | `AR_PENALTY_INTEREST_HIGH` | MEDIUM |
+| 应收 | `CREDIT_EXPOSURE_DECLINE` | HIGH |
+| 销售/回款 | `SLS_RETURN_ABNORMAL` | MEDIUM |
+| 销售/回款 | `PAY_OFFSET_ABNORMAL` | MEDIUM |
+| 销售/回款 | `PAY_AGING_OVER_365` | MEDIUM |
+| 合同 | `CON_NEGATIVE_MARGIN` | HIGH |
+| 合同 | `CON_MARGIN_OPTIMISTIC` | MEDIUM |
+| 合同 | `CON_TERM_OVERAGE` | MEDIUM |
+| 库存 | `INV_MATERIAL_BUILDUP` | MEDIUM |
+| 库存 | `INV_STALE_NO_SALES` | HIGH |
+| 库存 | `INV_BUILDUP_SALES_SLOWDOWN` | HIGH |
+| 库存 | `INV_ZERO_SALES_STOCK` | HIGH |
+| 库存 | `INV_STALE_RATIO_HIGH` | MEDIUM |
+| 库存 | `INV_VERY_OLD_STOCK` | HIGH |
+| 库存 | `INV_OVERDUE_STOCK` | MEDIUM |
 
 补充规则：
 

@@ -324,4 +324,5 @@ def settings(raw_data_dir: Path, database_path: Path) -> Settings:
         data_dir=raw_data_dir,
         database_path=database_path,
         case_database_path=database_path.parent / "cases.duckdb",
+        simulated_data_dir=database_path.parent.parent / "simulated",
     )

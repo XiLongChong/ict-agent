@@ -12,10 +12,10 @@
 - Pydantic AI 使用 DeepSeek `deepseek-v4-flash` 高强度思考模式；案件调查按应收或库存类型自动
   执行完整的最小只读工具集，并对最终证据引用和结论状态进行校验。
 - 已支持经营概览、最新应收、应收趋势、客户画像、库存健康和合同闭环。
-- 已落地 5 条确定性风险规则、独立案件库、风险信号判断、完整与部分调查报告、证据引用和人工审核闭环。
+- 已落地 23 条版本化确定性风险规则、独立案件库、风险信号判断、完整与部分调查报告、证据引用和人工审核闭环。
 - `frontend/` 是由 FastAPI 同源提供的响应式风险调查工作台，实时展示工具和证据，同时保留
   确定性经营分析；通用数据问答已经删除。
-- 当前自动验收基线为 Ruff、mypy 和 28 个 pytest 测试。
+- 当前自动验收基线为 Ruff、mypy 和 94 个 pytest 测试。
 
 不得把已经完成的系统描述成“待搭建”，不得根据旧计划重复创建骨架，也不得为了未来功能
 破坏已经跑通的真实数据 → DuckDB → 工具 → Agent → API → 页面链路。
@@ -38,10 +38,17 @@ ict-agent/
 │  │  ├─ rules.py                    # 确定性风险规则和案件草稿
 │  │  ├─ models.py                   # API、工具和证据模型
 │  │  ├─ prompts.py                  # Agent 固定指令
-│  │  └─ config.py                   # `.env` 和路径配置
+│  │  ├─ config.py                   # `.env` 和路径配置
+│  │  ├─ health.py                   # 健康度引擎（阶段 A 风险预警）
+│  │  ├─ listmgmt.py                 # 名单建议/审批/审计（阶段 A）
+│  │  ├─ sentiment.py                # 模拟舆情核验（阶段 A）
+│  │  ├─ project.py                  # 项目类视图与事前评估（阶段 A）
+│  │  ├─ simdata.py                  # 模拟数据加载（阶段 A，data/simulated/）
+│  │  └─ evaluation.py               # 调查评测运行器
 │  ├─ tests/                         # 七表微型夹具及单元/集成测试
 │  └─ evals/                         # 真实 DeepSeek 调查评测集与独立运行器
 ├─ frontend/                         # 无构建依赖的 HTML/CSS/JavaScript 页面
+│  └─ src/components/                # 含风险预警/健康度/名单/舆情/项目评估页面
 ├─ docs/
 │  ├─ technical-solution.md          # 当前已落地架构与安全边界
 │  ├─ metric-contract.md             # 当前代码执行的指标口径

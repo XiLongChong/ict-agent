@@ -7,7 +7,7 @@
 > - 单规则版本：`1.0.0`
 > - 数据观察期：应收截至 `2026-07-31`，库存截至 `2026-06-30`
 > - 金额单位：人民币元
-> - 当前实现：**22 条规则生效**（3 条原始应收/库存 + 19 条扩展），真实数据扫描得 **88 件案件 / 210 条命中**（应收 51 + 库存 37）
+> - 当前实现：**23 条规则生效**（3 条原始应收/库存 + 20 条扩展），真实数据扫描得 **88 件案件 / 201 条命中**（应收 51 + 库存 37）
 > - 口径：案件按「同一实体合并为一案」去重（应收按客户、库存按物料×仓库），同实体多条命中合并为一个案件并取最高严重度。
 > - 代码位置：`backend/src/ict_agent/rules.py`（规则判断）、`backend/src/ict_agent/tools.py`（特征 SQL）
 
@@ -41,28 +41,33 @@
 
 ## 二、应收域规则（12 条）
 
-### AR_DEEP_OVERDUE_MATERIAL — 大额深度超期应收（原始）
-- **严重度**：HIGH ｜ **命中 17**
-- **数据来源**：`ar_snapshots`
+### AR_OPERATING_DEEP_OVERDUE — 经营中客户大额深度超期（原始）
+- **严重度**：HIGH ｜ **命中 8**
+- **数据来源**：`customer_credit + ar_snapshots + sales + payments`
 - **触发条件**：
   ```text
-  60天以上超期金额 >= 1,000,000
+  黑白名单状态 != 2（非黑名单）
+  且 最近三个月存在销售或回款活动
+  且 60天以上超期金额 >= 1,000,000
   且 最大超期天数 >= 90
   ```
 - **暴露金额**：60 天以上超期金额
 - **Agent 调查**：老账是否持续、近期是否回款、是否有当前订单、是否仍新增销售。
 
-### AR_EXPOSURE_BUILDUP — 应收敞口组合积累（原始）
+### AR_OPERATING_EXPOSURE_BUILDUP — 经营中客户应收敞口加速积累（原始）
 - **严重度**：HIGH ｜ **命中 2**
-- **数据来源**：`ar_snapshots + sales + payments`
+- **数据来源**：`customer_credit + ar_snapshots + sales + payments`
 - **触发条件**：
   ```text
-  最新超期金额 >= 1,000,000
+  黑白名单状态 != 2（非黑名单）
+  且 最新超期金额 >= 1,000,000
   且 (最新超期金额 - 三个月前超期金额) >= 1,000,000
+  且 近3个月销售额 > 0
   且 近3个月销售额 > 近3个月回款额
   ```
 - **暴露金额**：最新超期金额
 - **Agent 调查**：超期增长原因、敞口是否持续累积。
+- **注意**：销售与回款差额不等同应收余额，只是方向一致的组合证据。
 
 ### AR_BLACKLIST_EXPOSURE — 黑名单客户仍有应收敞口（原始）
 - **严重度**：CRITICAL ｜ **命中 8**
@@ -322,8 +327,8 @@
 
 | 规则 ID | 名称 | 域 | 严重度 | 命中 | 数据来源 |
 |---|---|---|---|---|---|
-| AR_DEEP_OVERDUE_MATERIAL | 大额深度超期应收 | 应收 | HIGH | 17 | ar |
-| AR_EXPOSURE_BUILDUP | 应收敞口组合积累 | 应收 | HIGH | 2 | ar+sales+payments |
+| AR_OPERATING_DEEP_OVERDUE | 经营中客户大额深度超期 | 应收 | HIGH | 8 | credit+ar+sales+payments |
+| AR_OPERATING_EXPOSURE_BUILDUP | 经营中客户应收敞口加速积累 | 应收 | HIGH | 2 | credit+ar+sales+payments |
 | AR_BLACKLIST_EXPOSURE | 黑名单客户有敞口 | 应收 | CRITICAL | 8 | credit+ar |
 | AR_OVERDUE_RATE_HIGH | 高超期率客户 | 应收 | HIGH | 15 | ar |
 | AR_UNPAID_AGING | 长期销售未回款 | 应收 | HIGH | 12 | sales+payments |
@@ -346,9 +351,9 @@
 | CON_TERM_OVERAGE | 账期远超约定 | 合同 | MEDIUM | 2 | contracts |
 | CREDIT_EXPOSURE_DECLINE | 授信敞口失衡 | 授信 | HIGH | 8 | credit+ar+sales |
 
-**合计：22 条规则 / 210 条命中 / 88 件案件（应收51 + 库存37）**
+**合计：23 条规则 / 201 条命中 / 88 件案件（应收51 + 库存37）**
 
-> 按域分：应收域 12 条（AR 9 + SLS 1 + PAY 2）、库存域 7 条、合同域 3 条，共 22 条。案件按「同一实体合并」去重：应收按客户、库存按物料×仓库；同实体多条命中合并为一个案件取最高严重度。
+> 按域分：应收域 12 条（AR 9 + SLS 1 + PAY 2）、库存域 7 条、合同域 3 条、授信域 1 条，共 23 条。案件按「同一实体合并」去重：应收按客户、库存按物料×仓库；同实体多条命中合并为一个案件取最高严重度。
 
 ---
 
