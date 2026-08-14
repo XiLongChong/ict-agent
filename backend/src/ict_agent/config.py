@@ -29,9 +29,9 @@ class Settings(BaseModel):
     data_dir: Path
     database_path: Path
     case_database_path: Path
-    simulated_data_dir: Path
     feishu_app_id: str | None
     feishu_app_secret: SecretStr | None
+    public_base_url: str | None
 
 
 def _resolve_path(raw_path: str) -> Path:
@@ -74,9 +74,9 @@ def load_settings(
     case_database_path = _resolve_path(
         values.get("ICT_CASE_DATABASE_PATH", "data/processed/ict_agent_cases.duckdb")
     )
-    simulated_data_dir = _resolve_path(values.get("ICT_SIMULATED_DATA_DIR", "data/simulated"))
     feishu_app_id = values.get("FEISHU_APP_ID", "").strip()
     feishu_app_secret = values.get("FEISHU_APP_SECRET", "").strip()
+    public_base_url = values.get("ICT_PUBLIC_BASE_URL", "").strip().rstrip("/")
 
     if bool(feishu_app_id) != bool(feishu_app_secret):
         raise ConfigurationError("FEISHU_APP_ID 和 FEISHU_APP_SECRET 必须同时配置。")
@@ -99,7 +99,7 @@ def load_settings(
         data_dir=data_dir,
         database_path=database_path,
         case_database_path=case_database_path,
-        simulated_data_dir=simulated_data_dir,
         feishu_app_id=feishu_app_id or None,
         feishu_app_secret=SecretStr(feishu_app_secret) if feishu_app_secret else None,
+        public_base_url=public_base_url or None,
     )

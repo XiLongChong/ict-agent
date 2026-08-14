@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 
 from fastapi.testclient import TestClient
 from ict_agent import api
-from ict_agent.models import InvestigationStreamEvent
+from ict_agent.models import InvestigationStreamEvent, PreTransactionSimulationResponse
 from pytest import MonkeyPatch
 
 client = TestClient(api.app)
@@ -55,7 +55,13 @@ def test_chat_api_is_removed() -> None:
 
 
 def test_frontend_routes_serve_index() -> None:
-    for path in ("/risk", "/cases", "/cases/demo-case-1", "/business"):
+    for path in (
+        "/risk",
+        "/cases",
+        "/cases/demo-case-1",
+        "/pre-transaction",
+        "/business",
+    ):
         response = client.get(path)
 
         assert response.status_code == 200
@@ -89,3 +95,47 @@ def test_investigation_contract_streams_ndjson(monkeypatch: MonkeyPatch) -> None
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/x-ndjson")
     assert response.json()["event_type"] == "RUN_STARTED"
+
+
+def test_pre_transaction_contract(monkeypatch: MonkeyPatch) -> None:
+    async def fake_create(_request: object) -> PreTransactionSimulationResponse:
+        return PreTransactionSimulationResponse(
+            simulation_id="sim-1",
+            case_id="pre-case-1",
+            customer_id="C015",
+            customer_name="测试客户",
+            business_type="DISTRIBUTION",
+            amount_yuan=120,
+            proposed_term_days=40,
+            expected_margin_rate=0.2,
+            scenario="NORMAL",
+            seed=1,
+            historical_order_count=6,
+            distribution_summary={
+                "p25_yuan": 80,
+                "median_yuan": 100,
+                "p75_yuan": 110,
+                "p90_yuan": 120,
+            },
+            source_snapshot_id="snapshot",
+            data_quality_status="PASS",
+            generated_at="2026-08-14T00:00:00+00:00",
+        )
+
+    monkeypatch.setattr(api, "create_pre_transaction_simulation", fake_create)
+    response = client.post(
+        "/api/v1/pre-transaction/simulations",
+        json={"scenario": "NORMAL", "seed": 1},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["case_id"] == "pre-case-1"
+
+
+def test_removed_parallel_risk_apis_are_not_in_openapi() -> None:
+    paths = client.get("/openapi.json").json()["paths"]
+
+    assert "/api/v1/health-scores" not in paths
+    assert "/api/v1/lists" not in paths
+    assert "/api/v1/projects" not in paths
+    assert "/api/v1/alerts" not in paths

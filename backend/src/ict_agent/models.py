@@ -7,7 +7,8 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, model_validator
 
 type JsonScalar = str | int | float | bool | None
-CaseType = Literal["ACCOUNTS_RECEIVABLE", "INVENTORY"]
+BusinessType = Literal["DISTRIBUTION", "PROJECT", "SERVICE_CLOUD"]
+CaseType = Literal["ACCOUNTS_RECEIVABLE", "INVENTORY", "PRE_TRANSACTION"]
 CaseStatus = Literal[
     "PENDING_AGENT_REVIEW",
     "PENDING_HUMAN_REVIEW",
@@ -24,9 +25,13 @@ InvestigationToolName = Literal[
     "search_business_records",
     "query_business_evidence",
 ]
-DiscoverySource = Literal["RULE", "ANOMALY", "MANUAL"]
+DiscoverySource = Literal["RULE", "EXTERNAL_ALERT", "PRE_TRANSACTION", "MANUAL"]
 DataQualityStatus = Literal["PASS", "WARNING", "FAIL", "UNKNOWN"]
+SimulationScenario = Literal["RANDOM", "NORMAL", "BORDERLINE", "ANOMALY"]
+GeneratedSimulationScenario = Literal["NORMAL", "BORDERLINE", "ANOMALY"]
 EvidenceDataset = Literal[
+    "proposal",
+    "customer_profile",
     "receivables",
     "sales_payments",
     "extensions",
@@ -36,6 +41,7 @@ EvidenceDataset = Literal[
     "sales",
 ]
 EvidenceGrain = Literal[
+    "business_type",
     "customer",
     "month",
     "contract",
@@ -46,6 +52,14 @@ EvidenceGrain = Literal[
 EvidenceTimeWindow = Literal["latest", "last_3_months", "last_6_months", "last_12_months", "all"]
 EvidenceSortDirection = Literal["asc", "desc"]
 EvidenceMetric = Literal[
+    "proposed_amount",
+    "proposed_term_days",
+    "expected_margin_rate",
+    "historical_order_count",
+    "median_order_amount",
+    "p90_order_amount",
+    "median_payment_days",
+    "median_margin_rate",
     "ar_amount",
     "overdue_amount",
     "overdue_30_amount",
@@ -220,22 +234,6 @@ class DataSnapshotResponse(BaseModel):
     sources: list[DataSourceSnapshot]
 
 
-class RuleHit(BaseModel):
-    """一条可审计的规则命中。"""
-
-    rule_hit_id: str
-    rule_id: str
-    rule_name: str
-    rule_version: str
-    severity: RiskPriority
-    exposure_amount: float
-    reason: str
-    metrics: dict[str, JsonScalar]
-    threshold_source: str
-    sources: list[str]
-    period: str
-
-
 class InvestigationSignalInput(BaseModel):
     """规则、异常雷达或人工入口交给调查内核的一条信号。"""
 
@@ -248,6 +246,7 @@ class InvestigationSignalInput(BaseModel):
     metrics: dict[str, JsonScalar]
     source_version: str
     threshold_source: str
+    threshold_version: str
     sources: list[str]
     period: str
 
@@ -262,19 +261,21 @@ class InvestigationDataQuality(BaseModel):
 class InvestigationCaseInput(BaseModel):
     """规则引擎与 V2 调查内核之间冻结的输入契约。"""
 
-    schema_version: Literal["2.0"] = "2.0"
+    schema_version: Literal["3.0"] = "3.0"
     case_id: str
     discovery_source: DiscoverySource
     case_type: CaseType
     entity_type: str
     entity_id: str
     entity_label: str
+    business_type: BusinessType | None = None
     entity_context: dict[str, JsonScalar]
     observation_date: str
     priority: RiskPriority
     exposure_amount: float
     summary: str
     source_set_version: str
+    source_snapshot_id: str
     signals: Annotated[list[InvestigationSignalInput], Field(min_length=1)]
     data_quality: InvestigationDataQuality
 
@@ -283,18 +284,22 @@ class RiskCaseSummary(BaseModel):
     """案件队列中的单行摘要。"""
 
     case_id: str
+    discovery_source: DiscoverySource
     case_type: CaseType
     entity_type: str
     entity_id: str
     entity_label: str
+    business_type: BusinessType | None = None
     observation_date: str
     status: CaseStatus
     priority: RiskPriority
     exposure_amount: float
     summary: str
-    risk_overview: str
-    rule_hit_count: int
-    rule_set_version: str
+    signal_overview: str
+    signal_count: int
+    source_set_version: str
+    source_snapshot_id: str
+    data_quality: InvestigationDataQuality
     updated_at: str
 
 
@@ -397,7 +402,7 @@ class RiskCaseDetail(RiskCaseSummary):
     """案件详情、最新调查和审核历史。"""
 
     entity_context: dict[str, JsonScalar]
-    rule_hits: list[RuleHit]
+    signals: list[InvestigationSignalInput]
     latest_investigation: InvestigationRecord | None = None
     reviews: list[ReviewRecord] = []
 
@@ -430,140 +435,35 @@ class RiskOverviewResponse(BaseModel):
     cases_by_type: dict[str, int]
 
 
-# ---------------------------------------------------------------------------
-# 阶段 A：风险预警系统（健康度 / 名单建议 / 预警 / 项目）
-# ---------------------------------------------------------------------------
+class PreTransactionSimulationRequest(BaseModel):
+    """生成一个可复现的模拟新交易并进入统一案件流程。"""
+
+    customer_id: Annotated[str | None, Field(max_length=100)] = None
+    business_type: BusinessType | None = None
+    scenario: SimulationScenario = "RANDOM"
+    seed: Annotated[int | None, Field(ge=0, le=2_147_483_647)] = None
 
 
-class HealthDimension(BaseModel):
-    """健康度的一个维度分数。"""
+class PreTransactionSimulationResponse(BaseModel):
+    """基于客户同业务历史分布生成的模拟交易。"""
 
-    key: str
-    name: str
-    score: float
-    weight: float
-    missing: bool = False
-
-
-class HealthTrendPoint(BaseModel):
-    """健康度趋势中的一个时点。"""
-
-    period: str
-    score: float
-
-
-class HealthScoreResponse(BaseModel):
-    """一条健康度评分。"""
-
-    id: str
-    subject_id: str
-    subject_label: str
-    score: float
-    grade: str
-    dimensions: list[HealthDimension] = []
-    drivers: dict[str, list[str]] = {}
-    trend: list[HealthTrendPoint] = []
-    computed_at: str
-    data_snapshot_id: str = ""
-    business_type: str = "DISTRIBUTION"
-
-
-class ListRecommendationResponse(BaseModel):
-    """一条名单调整建议。"""
-
-    recommendation_id: str
-    subject_type: str
-    subject_id: str
-    subject_label: str
-    current_list: str
-    target_list: str
-    reason: str
-    trigger_rule: str
-    evidence: list[dict[str, str]] = []
-    health_change: str
-    risk_amount: float
-    review_due_date: str
-    status: str
-    reviewer: str = ""
-    review_reason: str = ""
-    review_at: str = ""
-    created_at: str
-
-
-class ListRecommendationReviewRequest(BaseModel):
-    """名单建议审批请求。"""
-
-    decision: Literal["APPROVED", "REJECTED"]
-    reviewer: str = Field(min_length=1, max_length=100)
-    reason: str = Field(min_length=2, max_length=1000)
-
-
-class AlertResponse(BaseModel):
-    """一条预警。"""
-
-    alert_id: str
-    alert_type: str
-    subject_type: str
-    subject_id: str
-    subject_label: str
-    severity: str
-    message: str
-    risk_amount: float
-    status: str
-    created_at: str
-    related_id: str = ""
-
-
-class ProjectViewResponse(BaseModel):
-    """项目类视图（合同 + 模拟阶段/担保人 + 真实风险指标）。"""
-
-    project_id: str
-    name: str
-    customer: str
-    amount_wan: float
-    amount_tier: str
-    stage: str = ""
-    planned_payment_date: str = ""
-    milestone_progress: int = 0
-    guarantor: str = ""
-    paid_amount_wan: float = 0.0
-    payment_rate: float | None = None
-    overdue_rate: float | None = None
-    margin_rate: float | None = None
-    term_gap_days: int | None = None
-    risk_level: str = "LOW"
-    risk_note: str = ""
-    credit_amount_wan: float | None = None
-    simulated: bool = False
-
-
-class PreAssessmentResponse(BaseModel):
-    """事前评估结论。"""
-
-    project_id: str
-    name: str
-    customer: str
-    amount_wan: float
-    amount_tier: str
-    conclusion: str
-    reasons: list[str]
-    force_review: bool
-    evaluated_at: str
-    simulated: bool = True
-
-
-class WarningOverviewResponse(BaseModel):
-    """预警总览聚合（阶段 A 前端顶栏）。"""
-
-    pre_assessment_pending: int
-    in_process_alerts: int
-    health_drop_count: int
-    pending_list_recommendations: int
-    high_risk_count: int
-    risk_exposure: float
-    grade_distribution: dict[str, int]
-    pending_recommendations: list[ListRecommendationResponse] = []
-    open_alerts: list[AlertResponse] = []
+    simulation_id: str
+    case_id: str
+    customer_id: str
+    customer_name: str
+    business_type: BusinessType
+    amount_yuan: float
+    proposed_term_days: int
+    expected_margin_rate: float | None
+    scenario: GeneratedSimulationScenario
+    seed: int
+    historical_order_count: int
+    distribution_summary: dict[str, float]
+    source_snapshot_id: str
+    data_quality_status: DataQualityStatus
+    data_quality_warnings: list[str] = []
+    generated_at: str
+    simulated: Literal[True] = True
 
 
 class FeishuStatusResponse(BaseModel):

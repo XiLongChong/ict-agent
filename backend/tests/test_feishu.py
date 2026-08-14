@@ -6,9 +6,71 @@ from pathlib import Path
 from ict_agent.data import CaseStore
 from ict_agent.feishu import (
     NOTIFICATION_CHAT_KEY,
+    CaseNotification,
+    build_case_notification_card,
     build_connection_card,
     build_test_card,
 )
+
+
+def _notification(
+    event_type: str, *, url: str | None = "https://example.test/app"
+) -> CaseNotification:
+    return CaseNotification(
+        event_type=event_type,  # type: ignore[arg-type]
+        case_id="case/001?x=1",
+        case_type="ACCOUNTS_RECEIVABLE",
+        entity_label="示例客户",
+        priority="HIGH",
+        status="PENDING_HUMAN_REVIEW",
+        summary="应收风险需要人工复核",
+        business_type="分销",
+        observation_date="2026-08-14",
+        exposure_amount=1234.5,
+        detail="请打开案件详情查看可追溯证据。",
+        public_base_url=url,
+    )
+
+
+def test_case_notification_cards_cover_all_events_and_stable_priority() -> None:
+    expected = {
+        "CASE_CREATED": ("新风险案件", "blue"),
+        "INVESTIGATION_COMPLETED": ("案件调查完成", "green"),
+        "PARTIAL_REPORT": ("案件调查中断", "orange"),
+        "REVIEW_COMPLETED": ("人工复核完成", "purple"),
+    }
+    for event_type, (title, color) in expected.items():
+        card = build_case_notification_card(_notification(event_type))
+        assert card["header"] == {
+            "template": color,
+            "title": {"tag": "plain_text", "content": title},
+        }
+        rendered = repr(card)
+        assert "HIGH" in rendered
+        assert "示例客户" in rendered
+        assert "分销" in rendered
+        assert "PENDING_HUMAN_REVIEW" in rendered
+
+
+def test_case_notification_card_encodes_case_link() -> None:
+    card = build_case_notification_card(_notification("CASE_CREATED"))
+    action = card["elements"][-1]
+    assert action["actions"][0]["url"] == "https://example.test/app/cases/case%2F001%3Fx%3D1"
+
+
+def test_case_notification_card_without_link_has_no_action() -> None:
+    card = build_case_notification_card(_notification("PARTIAL_REPORT", url=None))
+    assert all(element["tag"] != "action" for element in card["elements"])
+
+
+def test_case_notification_card_contains_no_sensitive_execution_fields() -> None:
+    card = build_case_notification_card(_notification("REVIEW_COMPLETED"))
+    rendered = repr(card).lower()
+    assert "select " not in rendered
+    assert "sql" not in rendered
+    assert "secret" not in rendered
+    assert "api_key" not in rendered
+    assert "思维链" not in rendered
 
 
 def test_feishu_cards_do_not_contain_credentials() -> None:

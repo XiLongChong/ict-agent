@@ -77,7 +77,7 @@ class QueryResult:
 
 @dataclass(frozen=True)
 class CaseWrite:
-    """规则扫描写入案件库的案件记录。"""
+    """统一信号入口写入调查案件库的案件记录。"""
 
     case_id: str
     case_type: str
@@ -92,11 +92,16 @@ class CaseWrite:
     rule_hit_count: int
     rule_set_version: str
     created_at: str
+    discovery_source: str = "RULE"
+    business_type: str | None = None
+    source_snapshot_id: str = ""
+    data_quality_status: str = "UNKNOWN"
+    data_quality_warnings: Sequence[str] = ()
 
 
 @dataclass(frozen=True)
 class RuleHitWrite:
-    """规则扫描写入案件库的命中记录。"""
+    """统一入口写入案件库的一条风险信号。"""
 
     rule_hit_id: str
     case_id: str
@@ -110,6 +115,7 @@ class RuleHitWrite:
     threshold_source: str
     sources: Sequence[str]
     period: str
+    threshold_version: str = ""
 
 
 @dataclass(frozen=True)
@@ -124,6 +130,29 @@ class RuleRunWrite:
     receivable_cases: int
     inventory_cases: int
     created_at: str
+    source_snapshot_id: str = ""
+
+
+@dataclass(frozen=True)
+class PreTransactionWrite:
+    """一笔与业务事实库隔离的模拟新交易。"""
+
+    simulation_id: str
+    case_id: str
+    customer_id: str
+    customer_name: str
+    business_type: str
+    amount_yuan: float
+    proposed_term_days: int
+    expected_margin_rate: float | None
+    scenario: str
+    seed: int
+    historical_order_count: int
+    distribution_json: str
+    source_snapshot_id: str
+    data_quality_status: str
+    data_quality_warnings_json: str
+    generated_at: str
 
 
 @dataclass(frozen=True)
@@ -146,92 +175,6 @@ class ReviewWrite:
     decision: str
     reviewer: str
     reason: str
-    created_at: str
-
-
-@dataclass(frozen=True)
-class HealthScoreWrite:
-    """一条健康度评分的持久化记录。"""
-
-    id: str
-    subject_id: str
-    subject_label: str
-    score: float
-    grade: str
-    dimension_json: str
-    drivers_json: str
-    trend_json: str
-    computed_at: str
-    data_snapshot_id: str
-    business_type: str = "DISTRIBUTION"
-
-
-@dataclass(frozen=True)
-class ListRecommendationWrite:
-    """一条名单调整建议的持久化记录。"""
-
-    recommendation_id: str
-    subject_type: str
-    subject_id: str
-    subject_label: str
-    current_list: str
-    target_list: str
-    reason: str
-    trigger_rule: str
-    evidence_json: str
-    health_change: str
-    risk_amount: float
-    review_due_date: str
-    status: str
-    created_at: str
-    reviewer: str = ""
-    review_reason: str = ""
-    review_at: str = ""
-
-
-@dataclass(frozen=True)
-class ListChangeWrite:
-    """一条名单变更审计记录。"""
-
-    change_id: str
-    subject_id: str
-    subject_label: str
-    from_list: str
-    to_list: str
-    approver: str
-    reason: str
-    recommendation_id: str
-    changed_at: str
-
-
-@dataclass(frozen=True)
-class AlertWrite:
-    """一条预警记录的持久化记录。"""
-
-    alert_id: str
-    alert_type: str
-    subject_type: str
-    subject_id: str
-    subject_label: str
-    severity: str
-    message: str
-    risk_amount: float
-    status: str
-    created_at: str
-    related_id: str
-
-
-@dataclass(frozen=True)
-class NotificationWrite:
-    """一条通知留痕记录（本期仅站内）。"""
-
-    notification_id: str
-    notify_type: str
-    subject_id: str
-    subject_label: str
-    message: str
-    channel: str
-    status: str
     created_at: str
 
 
@@ -749,35 +692,43 @@ class CaseStore:
     def _create_schema(connection: duckdb.DuckDBPyConnection) -> None:
         connection.execute(
             """
-            CREATE TABLE IF NOT EXISTS rule_runs (
+            CREATE TABLE IF NOT EXISTS detection_runs (
                 run_id VARCHAR PRIMARY KEY,
-                rule_set_version VARCHAR NOT NULL,
+                discovery_source VARCHAR NOT NULL,
+                source_set_version VARCHAR NOT NULL,
+                source_snapshot_id VARCHAR NOT NULL,
                 observation_date DATE NOT NULL,
                 cases_detected INTEGER NOT NULL,
                 cases_created INTEGER NOT NULL,
-                rule_hits INTEGER NOT NULL,
+                signal_count INTEGER NOT NULL,
                 receivable_cases INTEGER NOT NULL,
                 inventory_cases INTEGER NOT NULL,
+                pre_transaction_cases INTEGER NOT NULL,
                 created_at TIMESTAMP NOT NULL
             )
             """
         )
         connection.execute(
             """
-            CREATE TABLE IF NOT EXISTS risk_cases (
+            CREATE TABLE IF NOT EXISTS investigation_cases (
                 case_id VARCHAR PRIMARY KEY,
+                discovery_source VARCHAR NOT NULL,
                 case_type VARCHAR NOT NULL,
                 entity_type VARCHAR NOT NULL,
                 entity_id VARCHAR NOT NULL,
                 entity_label VARCHAR NOT NULL,
+                business_type VARCHAR,
                 entity_context_json VARCHAR NOT NULL,
                 observation_date DATE NOT NULL,
                 status VARCHAR NOT NULL,
                 priority VARCHAR NOT NULL,
                 exposure_amount DOUBLE NOT NULL,
                 summary VARCHAR NOT NULL,
-                rule_hit_count INTEGER NOT NULL,
-                rule_set_version VARCHAR NOT NULL,
+                signal_count INTEGER NOT NULL,
+                source_set_version VARCHAR NOT NULL,
+                source_snapshot_id VARCHAR NOT NULL,
+                data_quality_status VARCHAR NOT NULL,
+                data_quality_warnings_json VARCHAR NOT NULL,
                 created_at TIMESTAMP NOT NULL,
                 updated_at TIMESTAMP NOT NULL
             )
@@ -785,17 +736,18 @@ class CaseStore:
         )
         connection.execute(
             """
-            CREATE TABLE IF NOT EXISTS rule_hits (
-                rule_hit_id VARCHAR PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS risk_signals (
+                signal_id VARCHAR PRIMARY KEY,
                 case_id VARCHAR NOT NULL,
-                rule_id VARCHAR NOT NULL,
-                rule_name VARCHAR NOT NULL,
-                rule_version VARCHAR NOT NULL,
+                signal_code VARCHAR NOT NULL,
+                signal_name VARCHAR NOT NULL,
+                source_version VARCHAR NOT NULL,
                 severity VARCHAR NOT NULL,
                 exposure_amount DOUBLE NOT NULL,
                 reason VARCHAR NOT NULL,
                 metrics_json VARCHAR NOT NULL,
                 threshold_source VARCHAR NOT NULL,
+                threshold_version VARCHAR NOT NULL,
                 sources_json VARCHAR NOT NULL,
                 period VARCHAR NOT NULL
             )
@@ -803,7 +755,7 @@ class CaseStore:
         )
         connection.execute(
             """
-            CREATE TABLE IF NOT EXISTS investigations (
+            CREATE TABLE IF NOT EXISTS case_investigations (
                 investigation_id VARCHAR PRIMARY KEY,
                 case_id VARCHAR NOT NULL,
                 report_json VARCHAR NOT NULL,
@@ -814,7 +766,7 @@ class CaseStore:
         )
         connection.execute(
             """
-            CREATE TABLE IF NOT EXISTS reviews (
+            CREATE TABLE IF NOT EXISTS case_reviews (
                 review_id VARCHAR PRIMARY KEY,
                 case_id VARCHAR NOT NULL,
                 decision VARCHAR NOT NULL,
@@ -826,92 +778,35 @@ class CaseStore:
         )
         connection.execute(
             """
-            CREATE TABLE IF NOT EXISTS health_scores (
-                id VARCHAR PRIMARY KEY,
-                subject_id VARCHAR NOT NULL,
-                subject_label VARCHAR NOT NULL,
-                score DOUBLE NOT NULL,
-                grade VARCHAR NOT NULL,
-                dimension_json VARCHAR NOT NULL,
-                drivers_json VARCHAR NOT NULL,
-                trend_json VARCHAR NOT NULL,
-                computed_at TIMESTAMP NOT NULL,
-                data_snapshot_id VARCHAR NOT NULL,
-                business_type VARCHAR
-            )
-            """
-        )
-        # 老库已存在 health_scores 时补充业务类型列（幂等，不重复添加）。
-        # DuckDB 的 ADD COLUMN 不支持约束，列允许 NULL；写入总提供值，读取时对 NULL 兜底。
-        connection.execute(
-            "ALTER TABLE health_scores ADD COLUMN IF NOT EXISTS business_type VARCHAR"
-        )
-        connection.execute("ALTER TABLE health_scores DROP COLUMN IF EXISTS subject_type")
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS list_recommendations (
-                recommendation_id VARCHAR PRIMARY KEY,
-                subject_type VARCHAR NOT NULL,
-                subject_id VARCHAR NOT NULL,
-                subject_label VARCHAR NOT NULL,
-                current_list VARCHAR NOT NULL,
-                target_list VARCHAR NOT NULL,
-                reason VARCHAR NOT NULL,
-                trigger_rule VARCHAR NOT NULL,
-                evidence_json VARCHAR NOT NULL,
-                health_change VARCHAR NOT NULL,
-                risk_amount DOUBLE NOT NULL,
-                review_due_date VARCHAR NOT NULL,
-                status VARCHAR NOT NULL,
-                reviewer VARCHAR NOT NULL DEFAULT '',
-                review_reason VARCHAR NOT NULL DEFAULT '',
-                review_at VARCHAR NOT NULL DEFAULT '',
-                created_at TIMESTAMP NOT NULL
+            CREATE TABLE IF NOT EXISTS pre_transaction_simulations (
+                simulation_id VARCHAR PRIMARY KEY,
+                case_id VARCHAR NOT NULL,
+                customer_id VARCHAR NOT NULL,
+                customer_name VARCHAR NOT NULL,
+                business_type VARCHAR NOT NULL,
+                amount_yuan DOUBLE NOT NULL,
+                proposed_term_days INTEGER NOT NULL,
+                expected_margin_rate DOUBLE,
+                scenario VARCHAR NOT NULL,
+                seed BIGINT NOT NULL,
+                historical_order_count INTEGER NOT NULL,
+                distribution_json VARCHAR NOT NULL,
+                source_snapshot_id VARCHAR NOT NULL,
+                data_quality_status VARCHAR NOT NULL,
+                data_quality_warnings_json VARCHAR NOT NULL,
+                generated_at TIMESTAMP NOT NULL
             )
             """
         )
         connection.execute(
             """
-            CREATE TABLE IF NOT EXISTS list_changes (
-                change_id VARCHAR PRIMARY KEY,
-                subject_id VARCHAR NOT NULL,
-                subject_label VARCHAR NOT NULL,
-                from_list VARCHAR NOT NULL,
-                to_list VARCHAR NOT NULL,
-                approver VARCHAR NOT NULL,
-                reason VARCHAR NOT NULL,
-                recommendation_id VARCHAR NOT NULL DEFAULT '',
-                changed_at TIMESTAMP NOT NULL
-            )
-            """
-        )
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS alerts (
-                alert_id VARCHAR PRIMARY KEY,
-                alert_type VARCHAR NOT NULL,
-                subject_type VARCHAR NOT NULL,
-                subject_id VARCHAR NOT NULL,
-                subject_label VARCHAR NOT NULL,
-                severity VARCHAR NOT NULL,
-                message VARCHAR NOT NULL,
-                risk_amount DOUBLE NOT NULL,
-                status VARCHAR NOT NULL,
-                created_at TIMESTAMP NOT NULL,
-                related_id VARCHAR NOT NULL DEFAULT ''
-            )
-            """
-        )
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS notifications (
+            CREATE TABLE IF NOT EXISTS feishu_notifications (
                 notification_id VARCHAR PRIMARY KEY,
-                notify_type VARCHAR NOT NULL,
-                subject_id VARCHAR NOT NULL,
-                subject_label VARCHAR NOT NULL,
-                message VARCHAR NOT NULL,
-                channel VARCHAR NOT NULL DEFAULT 'IN_APP',
-                status VARCHAR NOT NULL DEFAULT 'SENT',
+                event_type VARCHAR NOT NULL,
+                case_id VARCHAR NOT NULL,
+                status VARCHAR NOT NULL,
+                message_id VARCHAR NOT NULL,
+                error_message VARCHAR NOT NULL,
                 created_at TIMESTAMP NOT NULL
             )
             """
@@ -941,30 +836,44 @@ class CaseStore:
         run: RuleRunWrite,
         cases: Sequence[CaseWrite],
         hits: Sequence[RuleHitWrite],
-    ) -> int:
-        """幂等保存一次规则扫描，保留已有案件状态和人工流程。"""
+    ) -> list[str]:
+        """把确定性规则作为一个可替换信号源写入统一案件库。"""
 
         self.ensure_ready()
         try:
             with duckdb.connect(str(self.database_path)) as connection:
                 self._create_schema(connection)
                 connection.begin()
-                existing = 0
+                created_case_ids: list[str] = []
                 for case in cases:
                     row = connection.execute(
-                        "SELECT COUNT(*) FROM risk_cases WHERE case_id = ?", [case.case_id]
+                        "SELECT COUNT(*) FROM investigation_cases WHERE case_id = ?",
+                        [case.case_id],
                     ).fetchone()
-                    existing += int(row[0]) if row is not None else 0
+                    if row is None or int(row[0]) == 0:
+                        created_case_ids.append(case.case_id)
                     connection.execute(
                         """
-                        INSERT INTO risk_cases VALUES (
-                            ?, ?, ?, ?, ?, ?, ?, 'PENDING_AGENT_REVIEW', ?, ?, ?, ?, ?, ?, ?
+                        INSERT INTO investigation_cases (
+                            case_id, discovery_source, case_type, entity_type, entity_id,
+                            entity_label, business_type, entity_context_json, observation_date,
+                            status, priority, exposure_amount, summary, signal_count,
+                            source_set_version, source_snapshot_id, data_quality_status,
+                            data_quality_warnings_json, created_at, updated_at
+                        ) VALUES (
+                            ?, 'RULE', ?, ?, ?, ?, ?, ?, ?, 'PENDING_AGENT_REVIEW',
+                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                         )
                         ON CONFLICT (case_id) DO UPDATE SET
                             priority = excluded.priority,
                             exposure_amount = excluded.exposure_amount,
                             summary = excluded.summary,
-                            rule_hit_count = excluded.rule_hit_count,
+                            signal_count = excluded.signal_count,
+                            business_type = excluded.business_type,
+                            entity_context_json = excluded.entity_context_json,
+                            source_snapshot_id = excluded.source_snapshot_id,
+                            data_quality_status = excluded.data_quality_status,
+                            data_quality_warnings_json = excluded.data_quality_warnings_json,
                             updated_at = excluded.updated_at
                         """,
                         [
@@ -973,6 +882,7 @@ class CaseStore:
                             case.entity_type,
                             case.entity_id,
                             case.entity_label,
+                            case.business_type,
                             json.dumps(case.entity_context, ensure_ascii=False),
                             case.observation_date,
                             case.priority,
@@ -980,16 +890,19 @@ class CaseStore:
                             case.summary,
                             case.rule_hit_count,
                             case.rule_set_version,
+                            case.source_snapshot_id or run.source_snapshot_id,
+                            case.data_quality_status,
+                            json.dumps(list(case.data_quality_warnings), ensure_ascii=False),
                             case.created_at,
                             case.created_at,
                         ],
                     )
-                    connection.execute("DELETE FROM rule_hits WHERE case_id = ?", [case.case_id])
+                    connection.execute("DELETE FROM risk_signals WHERE case_id = ?", [case.case_id])
 
                 for hit in hits:
                     connection.execute(
                         """
-                        INSERT INTO rule_hits VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO risk_signals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         [
                             hit.rule_hit_id,
@@ -1002,22 +915,25 @@ class CaseStore:
                             hit.reason,
                             json.dumps(hit.metrics, ensure_ascii=False),
                             hit.threshold_source,
+                            hit.threshold_version or hit.rule_version,
                             json.dumps(list(hit.sources), ensure_ascii=False),
                             hit.period,
                         ],
                     )
 
-                created = len(cases) - existing
                 connection.execute(
                     """
-                    INSERT INTO rule_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO detection_runs VALUES (
+                        ?, 'RULE', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?
+                    )
                     """,
                     [
                         run.run_id,
                         run.rule_set_version,
+                        run.source_snapshot_id,
                         run.observation_date,
                         run.cases_detected,
-                        created,
+                        len(created_case_ids),
                         run.rule_hits,
                         run.receivable_cases,
                         run.inventory_cases,
@@ -1025,7 +941,7 @@ class CaseStore:
                     ],
                 )
                 connection.commit()
-                return created
+                return created_case_ids
         except duckdb.Error as exc:
             raise DataAccessError("规则扫描结果无法写入案件数据库。") from exc
 
@@ -1034,10 +950,192 @@ class CaseStore:
 
         return self._fetch(
             """
-            SELECT run_id, rule_set_version, observation_date, cases_detected, cases_created,
-                   rule_hits, receivable_cases, inventory_cases, created_at
-            FROM rule_runs ORDER BY created_at DESC LIMIT 1
+            SELECT run_id, source_set_version, observation_date, cases_detected, cases_created,
+                   signal_count, receivable_cases, inventory_cases, created_at
+            FROM detection_runs
+            WHERE discovery_source = 'RULE'
+            ORDER BY created_at DESC LIMIT 1
             """
+        )
+
+    def save_pre_transaction_case(
+        self,
+        case: CaseWrite,
+        signal: RuleHitWrite,
+        simulation: PreTransactionWrite,
+    ) -> bool:
+        """原子保存模拟交易、统一风险信号和待调查案件。"""
+
+        self.ensure_ready()
+        try:
+            with duckdb.connect(str(self.database_path)) as connection:
+                self._create_schema(connection)
+                connection.begin()
+                exists = connection.execute(
+                    "SELECT COUNT(*) FROM investigation_cases WHERE case_id = ?",
+                    [case.case_id],
+                ).fetchone()
+                created = exists is None or int(exists[0]) == 0
+                connection.execute(
+                    """
+                    INSERT INTO investigation_cases (
+                        case_id, discovery_source, case_type, entity_type, entity_id,
+                        entity_label, business_type, entity_context_json, observation_date,
+                        status, priority, exposure_amount, summary, signal_count,
+                        source_set_version, source_snapshot_id, data_quality_status,
+                        data_quality_warnings_json, created_at, updated_at
+                    ) VALUES (
+                        ?, 'PRE_TRANSACTION', 'PRE_TRANSACTION', ?, ?, ?, ?, ?, ?,
+                        'PENDING_AGENT_REVIEW', ?, ?, ?, 1, ?, ?, ?, ?, ?, ?
+                    )
+                    ON CONFLICT (case_id) DO NOTHING
+                    """,
+                    [
+                        case.case_id,
+                        case.entity_type,
+                        case.entity_id,
+                        case.entity_label,
+                        case.business_type,
+                        json.dumps(case.entity_context, ensure_ascii=False),
+                        case.observation_date,
+                        case.priority,
+                        case.exposure_amount,
+                        case.summary,
+                        case.rule_set_version,
+                        case.source_snapshot_id,
+                        case.data_quality_status,
+                        json.dumps(list(case.data_quality_warnings), ensure_ascii=False),
+                        case.created_at,
+                        case.created_at,
+                    ],
+                )
+                connection.execute(
+                    """
+                    INSERT INTO risk_signals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (signal_id) DO NOTHING
+                    """,
+                    [
+                        signal.rule_hit_id,
+                        signal.case_id,
+                        signal.rule_id,
+                        signal.rule_name,
+                        signal.rule_version,
+                        signal.severity,
+                        signal.exposure_amount,
+                        signal.reason,
+                        json.dumps(signal.metrics, ensure_ascii=False),
+                        signal.threshold_source,
+                        signal.threshold_version or signal.rule_version,
+                        json.dumps(list(signal.sources), ensure_ascii=False),
+                        signal.period,
+                    ],
+                )
+                connection.execute(
+                    """
+                    INSERT INTO pre_transaction_simulations VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ) ON CONFLICT (simulation_id) DO NOTHING
+                    """,
+                    [
+                        simulation.simulation_id,
+                        simulation.case_id,
+                        simulation.customer_id,
+                        simulation.customer_name,
+                        simulation.business_type,
+                        simulation.amount_yuan,
+                        simulation.proposed_term_days,
+                        simulation.expected_margin_rate,
+                        simulation.scenario,
+                        simulation.seed,
+                        simulation.historical_order_count,
+                        simulation.distribution_json,
+                        simulation.source_snapshot_id,
+                        simulation.data_quality_status,
+                        simulation.data_quality_warnings_json,
+                        simulation.generated_at,
+                    ],
+                )
+                connection.execute(
+                    """
+                    INSERT INTO detection_runs VALUES (
+                        ?, 'PRE_TRANSACTION', ?, ?, ?, 1, ?, 1, 0, 0, 1, ?
+                    ) ON CONFLICT (run_id) DO NOTHING
+                    """,
+                    [
+                        simulation.simulation_id,
+                        case.rule_set_version,
+                        simulation.source_snapshot_id,
+                        case.observation_date,
+                        1 if created else 0,
+                        simulation.generated_at,
+                    ],
+                )
+                connection.commit()
+                return created
+        except duckdb.Error as exc:
+            raise DataAccessError("模拟交易案件无法写入案件数据库。") from exc
+
+    def fetch_pre_transaction_simulations(self, *, limit: int = 50) -> QueryResult:
+        """返回最近生成的模拟交易，不读取或改写真实销售表。"""
+
+        return self._fetch(
+            """
+            SELECT simulation_id, case_id, customer_id, customer_name, business_type,
+                   amount_yuan, proposed_term_days, expected_margin_rate, scenario, seed,
+                   historical_order_count, distribution_json, source_snapshot_id,
+                   data_quality_status, data_quality_warnings_json, generated_at
+            FROM pre_transaction_simulations
+            ORDER BY generated_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        )
+
+    def save_feishu_notification(
+        self,
+        *,
+        notification_id: str,
+        event_type: str,
+        case_id: str,
+        status: str,
+        message_id: str,
+        error_message: str,
+        created_at: str,
+    ) -> bool:
+        """幂等保存一次飞书案件通知结果。"""
+
+        self.ensure_ready()
+        try:
+            with duckdb.connect(str(self.database_path)) as connection:
+                row = connection.execute(
+                    """
+                    INSERT INTO feishu_notifications VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (notification_id) DO NOTHING
+                    RETURNING notification_id
+                    """,
+                    [
+                        notification_id,
+                        event_type,
+                        case_id,
+                        status,
+                        message_id,
+                        error_message,
+                        created_at,
+                    ],
+                ).fetchone()
+                return row is not None
+        except duckdb.Error as exc:
+            raise DataAccessError("飞书通知结果无法写入案件数据库。") from exc
+
+    def fetch_feishu_notifications(self, case_id: str) -> QueryResult:
+        """返回案件的飞书通知审计记录。"""
+
+        return self._fetch(
+            """
+            SELECT notification_id, event_type, status, message_id, error_message, created_at
+            FROM feishu_notifications WHERE case_id = ? ORDER BY created_at DESC
+            """,
+            [case_id],
         )
 
     def fetch_cases(
@@ -1050,8 +1148,9 @@ class CaseStore:
         """返回案件队列。"""
 
         clauses = [
-            "rule_set_version = (SELECT rule_set_version FROM rule_runs "
-            "ORDER BY created_at DESC LIMIT 1)"
+            "(discovery_source <> 'RULE' OR source_set_version = ("
+            "SELECT source_set_version FROM detection_runs "
+            "WHERE discovery_source = 'RULE' ORDER BY created_at DESC LIMIT 1))"
         ]
         parameters: list[object] = []
         if status is not None:
@@ -1067,18 +1166,19 @@ class CaseStore:
         parameters.append(limit)
         return self._fetch(
             f"""
-            SELECT case_id, case_type, entity_type, entity_id, entity_label,
-                   observation_date, status, priority, exposure_amount, summary,
-                   rule_hit_count, rule_set_version, updated_at,
+            SELECT case_id, discovery_source, case_type, entity_type, entity_id, entity_label,
+                   business_type, observation_date, status, priority, exposure_amount, summary,
+                   signal_count, source_set_version, source_snapshot_id, data_quality_status,
+                   data_quality_warnings_json, updated_at,
                    COALESCE((
-                       SELECT rule_name
-                       FROM rule_hits
-                       WHERE case_id = risk_cases.case_id
+                       SELECT signal_name
+                       FROM risk_signals
+                       WHERE case_id = investigation_cases.case_id
                        ORDER BY CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2
-                                              WHEN 'MEDIUM' THEN 3 ELSE 4 END, rule_id
+                                              WHEN 'MEDIUM' THEN 3 ELSE 4 END, signal_code
                        LIMIT 1
-                   ), summary) AS risk_overview
-            FROM risk_cases
+                   ), summary) AS signal_overview
+            FROM investigation_cases
             {where}
             ORDER BY
                 CASE priority WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2
@@ -1094,34 +1194,34 @@ class CaseStore:
 
         return self._fetch(
             """
-            SELECT case_id, case_type, entity_type, entity_id, entity_label,
-                   entity_context_json, observation_date, status, priority,
-                   exposure_amount, summary, rule_hit_count, rule_set_version,
-                   updated_at,
+            SELECT case_id, discovery_source, case_type, entity_type, entity_id, entity_label,
+                   business_type, entity_context_json, observation_date, status, priority,
+                   exposure_amount, summary, signal_count, source_set_version, source_snapshot_id,
+                   data_quality_status, data_quality_warnings_json, updated_at,
                    COALESCE((
-                       SELECT rule_name
-                       FROM rule_hits
-                       WHERE case_id = risk_cases.case_id
+                       SELECT signal_name
+                       FROM risk_signals
+                       WHERE case_id = investigation_cases.case_id
                        ORDER BY CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2
-                                              WHEN 'MEDIUM' THEN 3 ELSE 4 END, rule_id
+                                              WHEN 'MEDIUM' THEN 3 ELSE 4 END, signal_code
                        LIMIT 1
-                   ), summary) AS risk_overview
-            FROM risk_cases WHERE case_id = ?
+                   ), summary) AS signal_overview
+            FROM investigation_cases WHERE case_id = ?
             """,
             [case_id],
         )
 
-    def fetch_rule_hits(self, case_id: str) -> QueryResult:
-        """返回案件的全部规则命中。"""
+    def fetch_signals(self, case_id: str) -> QueryResult:
+        """返回案件的全部风险信号。"""
 
         return self._fetch(
             """
-            SELECT rule_hit_id, rule_id, rule_name, rule_version, severity,
-                   exposure_amount, reason, metrics_json, threshold_source,
+            SELECT signal_id, signal_code, signal_name, source_version, severity,
+                   exposure_amount, reason, metrics_json, threshold_source, threshold_version,
                    sources_json, period
-            FROM rule_hits WHERE case_id = ?
+            FROM risk_signals WHERE case_id = ?
             ORDER BY CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2
-                                   WHEN 'MEDIUM' THEN 3 ELSE 4 END, rule_id
+                                   WHEN 'MEDIUM' THEN 3 ELSE 4 END, signal_code
             """,
             [case_id],
         )
@@ -1132,7 +1232,7 @@ class CaseStore:
         return self._fetch(
             """
             SELECT investigation_id, case_id, report_json, evidence_json, created_at
-            FROM investigations WHERE case_id = ? ORDER BY created_at DESC LIMIT 1
+            FROM case_investigations WHERE case_id = ? ORDER BY created_at DESC LIMIT 1
             """,
             [case_id],
         )
@@ -1143,7 +1243,7 @@ class CaseStore:
         return self._fetch(
             """
             SELECT review_id, case_id, decision, reviewer, reason, created_at
-            FROM reviews WHERE case_id = ? ORDER BY created_at DESC
+            FROM case_reviews WHERE case_id = ? ORDER BY created_at DESC
             """,
             [case_id],
         )
@@ -1170,394 +1270,17 @@ class CaseStore:
                     WHERE status != 'CLOSED'
                 ), 0) AS exposure_amount,
                 COUNT(*) FILTER (WHERE case_type = 'ACCOUNTS_RECEIVABLE') AS ar_cases,
-                COUNT(*) FILTER (WHERE case_type = 'INVENTORY') AS inventory_cases
-            FROM risk_cases
-            WHERE rule_set_version = (
-                SELECT rule_set_version FROM rule_runs ORDER BY created_at DESC LIMIT 1
+                COUNT(*) FILTER (WHERE case_type = 'INVENTORY') AS inventory_cases,
+                COUNT(*) FILTER (WHERE case_type = 'PRE_TRANSACTION') AS pre_transaction_cases
+            FROM investigation_cases
+            WHERE discovery_source <> 'RULE' OR source_set_version = (
+                SELECT source_set_version FROM detection_runs
+                WHERE discovery_source = 'RULE' ORDER BY created_at DESC LIMIT 1
             )
             """
         )
 
     # ------------------------------------------------------------------
-    # 阶段 A：健康度 / 名单建议 / 预警 / 通知（独立于业务库）
-    # ------------------------------------------------------------------
-
-    def upsert_health_score(self, record: HealthScoreWrite) -> None:
-        """写入或覆盖一条健康度评分（按 id）。"""
-
-        self.ensure_ready()
-        try:
-            with duckdb.connect(str(self.database_path)) as connection:
-                connection.execute(
-                    """
-                    INSERT INTO health_scores (
-                        id, subject_id, subject_label, score, grade, dimension_json,
-                        drivers_json, trend_json, computed_at, data_snapshot_id, business_type
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT (id) DO UPDATE SET
-                        subject_id = excluded.subject_id,
-                        subject_label = excluded.subject_label,
-                        score = excluded.score,
-                        grade = excluded.grade,
-                        dimension_json = excluded.dimension_json,
-                        drivers_json = excluded.drivers_json,
-                        trend_json = excluded.trend_json,
-                        computed_at = excluded.computed_at,
-                        data_snapshot_id = excluded.data_snapshot_id,
-                        business_type = excluded.business_type
-                    """,
-                    [
-                        record.id,
-                        record.subject_id,
-                        record.subject_label,
-                        record.score,
-                        record.grade,
-                        record.dimension_json,
-                        record.drivers_json,
-                        record.trend_json,
-                        record.computed_at,
-                        record.data_snapshot_id,
-                        record.business_type,
-                    ],
-                )
-        except duckdb.Error as exc:
-            raise DataAccessError("健康度无法写入案件数据库。") from exc
-
-    def save_health_scores(self, records: Sequence[HealthScoreWrite]) -> int:
-        """批量保存健康度；同 subject 已有记录时先删除再写入，保证每主体一条最新。"""
-
-        if not records:
-            return 0
-        self.ensure_ready()
-        try:
-            with duckdb.connect(str(self.database_path)) as connection:
-                connection.begin()
-                connection.execute("DELETE FROM health_scores")
-                for record in records:
-                    connection.execute(
-                        """
-                        INSERT INTO health_scores (
-                            id, subject_id, subject_label, score, grade, dimension_json,
-                            drivers_json, trend_json, computed_at, data_snapshot_id, business_type
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        [
-                            record.id,
-                            record.subject_id,
-                            record.subject_label,
-                            record.score,
-                            record.grade,
-                            record.dimension_json,
-                            record.drivers_json,
-                            record.trend_json,
-                            record.computed_at,
-                            record.data_snapshot_id,
-                            record.business_type,
-                        ],
-                    )
-                connection.commit()
-                return len(records)
-        except duckdb.Error as exc:
-            raise DataAccessError("健康度无法写入案件数据库。") from exc
-
-    def fetch_health_scores(
-        self,
-        *,
-        business_type: str | None = None,
-        grade: str | None = None,
-        limit: int | None = None,
-    ) -> QueryResult:
-        """返回健康度列表；limit 为空时返回全部。"""
-
-        clauses: list[str] = []
-        parameters: list[object] = []
-        if business_type is not None:
-            clauses.append("business_type = ?")
-            parameters.append(business_type)
-        if grade is not None:
-            clauses.append("grade = ?")
-            parameters.append(grade)
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        limit_clause = ""
-        if limit is not None:
-            limit_clause = "LIMIT ?"
-            parameters.append(limit)
-        return self._fetch(
-            f"""
-            SELECT id, subject_id, subject_label, score, grade,
-                   dimension_json, drivers_json, trend_json, computed_at, data_snapshot_id,
-                   business_type
-            FROM health_scores
-            {where}
-            ORDER BY score ASC, subject_label ASC
-            {limit_clause}
-            """,
-            parameters,
-        )
-
-    def fetch_health_score(self, score_id: str) -> QueryResult:
-        """返回一条健康度详情。"""
-
-        return self._fetch(
-            """
-            SELECT id, subject_id, subject_label, score, grade,
-                   dimension_json, drivers_json, trend_json, computed_at, data_snapshot_id,
-                   business_type
-            FROM health_scores WHERE id = ?
-            """,
-            [score_id],
-        )
-
-    def save_list_recommendation(self, record: ListRecommendationWrite) -> None:
-        """写入一条名单建议（幂等：同 subject 已存在 PENDING 时不重复）。"""
-
-        self.ensure_ready()
-        try:
-            with duckdb.connect(str(self.database_path)) as connection:
-                existing = connection.execute(
-                    "SELECT COUNT(*) FROM list_recommendations "
-                    "WHERE subject_id = ? AND status = 'PENDING'",
-                    [record.subject_id],
-                ).fetchone()
-                if existing is not None and int(existing[0]) > 0:
-                    return
-                connection.execute(
-                    "INSERT INTO list_recommendations VALUES "
-                    "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    [
-                        record.recommendation_id,
-                        record.subject_type,
-                        record.subject_id,
-                        record.subject_label,
-                        record.current_list,
-                        record.target_list,
-                        record.reason,
-                        record.trigger_rule,
-                        record.evidence_json,
-                        record.health_change,
-                        record.risk_amount,
-                        record.review_due_date,
-                        record.status,
-                        record.reviewer,
-                        record.review_reason,
-                        record.review_at,
-                        record.created_at,
-                    ],
-                )
-        except duckdb.Error as exc:
-            raise DataAccessError("名单建议无法写入案件数据库。") from exc
-
-    def fetch_list_recommendations(
-        self,
-        *,
-        status: str | None = None,
-        limit: int = 200,
-    ) -> QueryResult:
-        """返回名单建议列表。"""
-
-        clauses: list[str] = []
-        parameters: list[object] = []
-        if status is not None:
-            clauses.append("status = ?")
-            parameters.append(status)
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        parameters.append(limit)
-        return self._fetch(
-            f"""
-            SELECT recommendation_id, subject_type, subject_id, subject_label,
-                   current_list, target_list, reason, trigger_rule, evidence_json,
-                   health_change, risk_amount, review_due_date, status,
-                   reviewer, review_reason, review_at, created_at
-            FROM list_recommendations
-            {where}
-            ORDER BY status ASC, risk_amount DESC, created_at DESC
-            LIMIT ?
-            """,
-            parameters,
-        )
-
-    def review_list_recommendation(
-        self,
-        recommendation_id: str,
-        *,
-        decision: str,
-        reviewer: str,
-        reason: str,
-        now: str,
-    ) -> str | None:
-        """审批名单建议；返回 subject_id（未找到或已处理返回 None）。"""
-
-        self.ensure_ready()
-        try:
-            with duckdb.connect(str(self.database_path)) as connection:
-                row = connection.execute(
-                    """
-                    UPDATE list_recommendations
-                    SET status = ?, reviewer = ?, review_reason = ?, review_at = ?
-                    WHERE recommendation_id = ? AND status = 'PENDING'
-                    RETURNING subject_id
-                    """,
-                    [decision, reviewer, reason, now, recommendation_id],
-                ).fetchone()
-                return str(row[0]) if row is not None else None
-        except duckdb.Error as exc:
-            raise DataAccessError("名单建议无法审批。") from exc
-
-    def insert_list_change(self, record: ListChangeWrite) -> None:
-        """写入一条名单变更审计。"""
-
-        self.ensure_ready()
-        try:
-            with duckdb.connect(str(self.database_path)) as connection:
-                connection.execute(
-                    "INSERT INTO list_changes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    [
-                        record.change_id,
-                        record.subject_id,
-                        record.subject_label,
-                        record.from_list,
-                        record.to_list,
-                        record.approver,
-                        record.reason,
-                        record.recommendation_id,
-                        record.changed_at,
-                    ],
-                )
-        except duckdb.Error as exc:
-            raise DataAccessError("名单变更无法写入案件数据库。") from exc
-
-    def save_alert(self, record: AlertWrite) -> None:
-        """写入一条预警（幂等：同 alert_id 已存在时不重复写入）。"""
-
-        self.ensure_ready()
-        try:
-            with duckdb.connect(str(self.database_path)) as connection:
-                connection.execute(
-                    "INSERT INTO alerts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                    "ON CONFLICT (alert_id) DO NOTHING",
-                    [
-                        record.alert_id,
-                        record.alert_type,
-                        record.subject_type,
-                        record.subject_id,
-                        record.subject_label,
-                        record.severity,
-                        record.message,
-                        record.risk_amount,
-                        record.status,
-                        record.created_at,
-                        record.related_id,
-                    ],
-                )
-        except duckdb.Error as exc:
-            raise DataAccessError("预警无法写入案件数据库。") from exc
-
-    def save_alerts(self, records: Sequence[AlertWrite]) -> int:
-        """批量保存预警。"""
-
-        if not records:
-            return 0
-        self.ensure_ready()
-        try:
-            with duckdb.connect(str(self.database_path)) as connection:
-                connection.begin()
-                for record in records:
-                    connection.execute(
-                        "INSERT INTO alerts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        [
-                            record.alert_id,
-                            record.alert_type,
-                            record.subject_type,
-                            record.subject_id,
-                            record.subject_label,
-                            record.severity,
-                            record.message,
-                            record.risk_amount,
-                            record.status,
-                            record.created_at,
-                            record.related_id,
-                        ],
-                    )
-                connection.commit()
-                return len(records)
-        except duckdb.Error as exc:
-            raise DataAccessError("预警无法写入案件数据库。") from exc
-
-    def fetch_alerts(
-        self,
-        *,
-        status: str | None = None,
-        severity: str | None = None,
-        limit: int = 200,
-    ) -> QueryResult:
-        """返回预警列表。"""
-
-        clauses: list[str] = []
-        parameters: list[object] = []
-        if status is not None:
-            clauses.append("status = ?")
-            parameters.append(status)
-        if severity is not None:
-            clauses.append("severity = ?")
-            parameters.append(severity)
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        parameters.append(limit)
-        return self._fetch(
-            f"""
-            SELECT alert_id, alert_type, subject_type, subject_id, subject_label,
-                   severity, message, risk_amount, status, created_at, related_id
-            FROM alerts
-            {where}
-            ORDER BY
-                CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2
-                              WHEN 'MEDIUM' THEN 3 ELSE 4 END,
-                created_at DESC
-            LIMIT ?
-            """,
-            parameters,
-        )
-
-    def acknowledge_alert(self, alert_id: str, now: str) -> bool:
-        """确认一条 OPEN 预警。"""
-
-        self.ensure_ready()
-        try:
-            with duckdb.connect(str(self.database_path)) as connection:
-                row = connection.execute(
-                    """
-                    UPDATE alerts SET status = 'ACKNOWLEDGED'
-                    WHERE alert_id = ? AND status = 'OPEN'
-                    RETURNING alert_id
-                    """,
-                    [alert_id],
-                ).fetchone()
-                return row is not None
-        except duckdb.Error as exc:
-            raise DataAccessError("预警状态无法更新。") from exc
-
-    def save_notification(self, record: NotificationWrite) -> None:
-        """写入一条通知留痕（幂等：同 notification_id 已存在时不重复写入）。"""
-
-        self.ensure_ready()
-        try:
-            with duckdb.connect(str(self.database_path)) as connection:
-                connection.execute(
-                    "INSERT INTO notifications VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
-                    "ON CONFLICT (notification_id) DO NOTHING",
-                    [
-                        record.notification_id,
-                        record.notify_type,
-                        record.subject_id,
-                        record.subject_label,
-                        record.message,
-                        record.channel,
-                        record.status,
-                        record.created_at,
-                    ],
-                )
-        except duckdb.Error as exc:
-            raise DataAccessError("通知无法写入案件数据库。") from exc
-
     def get_integration_setting(self, setting_key: str) -> str | None:
         """读取单个外部集成配置。"""
 
@@ -1593,7 +1316,7 @@ class CaseStore:
             with duckdb.connect(str(self.database_path)) as connection:
                 connection.begin()
                 connection.execute(
-                    "INSERT INTO investigations VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO case_investigations VALUES (?, ?, ?, ?, ?)",
                     [
                         record.investigation_id,
                         record.case_id,
@@ -1604,7 +1327,7 @@ class CaseStore:
                 )
                 updated = connection.execute(
                     """
-                    UPDATE risk_cases
+                    UPDATE investigation_cases
                     SET status = 'PENDING_HUMAN_REVIEW', updated_at = ?
                     WHERE case_id = ? AND status = 'AGENT_REVIEWING'
                     RETURNING case_id
@@ -1626,7 +1349,7 @@ class CaseStore:
             with duckdb.connect(str(self.database_path)) as connection:
                 connection.begin()
                 connection.execute(
-                    "INSERT INTO reviews VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO case_reviews VALUES (?, ?, ?, ?, ?, ?)",
                     [
                         record.review_id,
                         record.case_id,
@@ -1638,7 +1361,7 @@ class CaseStore:
                 )
                 updated = connection.execute(
                     """
-                    UPDATE risk_cases
+                    UPDATE investigation_cases
                     SET status = ?, updated_at = ?
                     WHERE case_id = ? AND status = 'PENDING_HUMAN_REVIEW'
                     RETURNING case_id
@@ -1661,7 +1384,7 @@ class CaseStore:
             with duckdb.connect(str(self.database_path)) as connection:
                 row = connection.execute(
                     """
-                    UPDATE risk_cases
+                    UPDATE investigation_cases
                     SET status = ?, updated_at = ?
                     WHERE case_id = ? AND status = ?
                     RETURNING case_id
@@ -1681,7 +1404,7 @@ class CaseStore:
             with duckdb.connect(str(self.database_path)) as connection:
                 rows = connection.execute(
                     """
-                    UPDATE risk_cases
+                    UPDATE investigation_cases
                     SET status = 'PENDING_AGENT_REVIEW', updated_at = ?
                     WHERE status = 'AGENT_REVIEWING'
                     RETURNING case_id

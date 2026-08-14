@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import re
+from statistics import median
+from typing import cast
 
+from ict_agent.business_type import business_type_condition
 from ict_agent.data import DatabaseScalar, DuckDBStore, QueryResult
 from ict_agent.models import (
     BusinessDataCatalog,
     BusinessRecordSearchQuery,
+    BusinessType,
     CaseType,
     DatasetCapability,
     EvidenceQuery,
     JsonScalar,
     ToolResult,
 )
+from ict_agent.pretransaction import HistoricalOrderProfile, summarize_order_amounts
 from ict_agent.semantic import SemanticCapability, capabilities_for, get_capability
 
 
@@ -51,6 +56,209 @@ def _format_money(value: float) -> str:
 
 def _format_ratio(value: float | None) -> str:
     return "无法计算" if value is None else f"{value:.2%}"
+
+
+def list_customer_business_segments(
+    store: DuckDBStore,
+    *,
+    customer_id: str | None = None,
+    business_type: BusinessType | None = None,
+) -> list[tuple[str, str, BusinessType, int]]:
+    """列出有正向历史订单的客户×业务类型，供事前模拟入口选择。"""
+
+    segments: list[tuple[str, str, BusinessType, int]] = []
+    business_types: tuple[BusinessType, ...] = (
+        (business_type,)
+        if business_type is not None
+        else ("DISTRIBUTION", "PROJECT", "SERVICE_CLOUD")
+    )
+    for current_type in business_types:
+        condition = business_type_condition("s", current_type)
+        customer_clause = 'AND s."客户编号" = ?' if customer_id else ""
+        parameters: list[object] = [customer_id.strip().upper()] if customer_id else []
+        result = store.fetch(
+            f"""
+            WITH order_totals AS (
+                SELECT s."客户编号", MAX(s."客户名称") AS customer_name,
+                       s."销售订单号",
+                       SUM(s."销售金额_折扣后_含税") AS order_amount
+                FROM sales s
+                WHERE {condition} {customer_clause}
+                GROUP BY s."客户编号", s."销售订单号"
+            )
+            SELECT "客户编号", MAX(customer_name) AS customer_name,
+                   COUNT(*) AS positive_order_count
+            FROM order_totals
+            WHERE order_amount > 0
+            GROUP BY "客户编号"
+            ORDER BY "客户编号"
+            """,
+            parameters,
+        )
+        segments.extend(
+            (str(row[0]), str(row[1]), current_type, int(row[2] or 0)) for row in result.rows
+        )
+    return segments
+
+
+def get_historical_order_profile(
+    store: DuckDBStore,
+    customer_id: str,
+    business_type: BusinessType,
+) -> HistoricalOrderProfile:
+    """构造客户同业务类型的订单金额、毛利率与回款账龄历史画像。"""
+
+    normalized_id = customer_id.strip().upper()
+    if not re.fullmatch(r"C\d{3}", normalized_id):
+        raise AnalysisInputError("客户编号必须采用 C015 这样的 C 加三位数字格式。")
+    condition = business_type_condition("s", business_type)
+    orders = store.fetch(
+        f"""
+        SELECT s."销售订单号", MAX(s."客户名称") AS customer_name,
+               SUM(s."销售金额_折扣后_含税") AS order_amount,
+               CASE WHEN SUM(s."销售金额_折扣后_含税") = 0 THEN NULL
+                    ELSE SUM(s."销售金额_折扣后_含税" - s."出库成本金额")
+                         / SUM(s."销售金额_折扣后_含税") END AS gross_margin_rate
+        FROM sales s
+        WHERE s."客户编号" = ? AND {condition}
+        GROUP BY s."销售订单号"
+        ORDER BY s."销售订单号"
+        """,
+        [normalized_id],
+    )
+    positive_rows = [row for row in orders.rows if _number(row[2]) > 0]
+    if not positive_rows:
+        raise AnalysisInputError(f"客户 {normalized_id} 在 {business_type} 下没有正向历史订单。")
+    payments = store.fetch(
+        f"""
+        SELECT p."回款账龄"
+        FROM payments p
+        WHERE p."客户编号" = ?
+          AND p."回款账龄" IS NOT NULL
+          AND p."回款账龄" >= 0
+          AND EXISTS (
+              SELECT 1 FROM sales s
+              WHERE s."客户编号" = p."客户编号"
+                AND s."销售订单号" = p."销售订单号"
+                AND {condition}
+          )
+        """,
+        [normalized_id],
+    )
+    return HistoricalOrderProfile(
+        customer_id=normalized_id,
+        customer_name=str(positive_rows[0][1]),
+        business_type=business_type,
+        positive_order_amounts=tuple(_number(row[2]) for row in positive_rows),
+        gross_margin_rates=tuple(_number(row[3]) for row in positive_rows if row[3] is not None),
+        payment_days=tuple(_number(row[0]) for row in payments.rows),
+        source_snapshot_id=store.get_snapshot().snapshot_id,
+    )
+
+
+def get_customer_business_profile_evidence(
+    store: DuckDBStore,
+    customer_id: str,
+    business_type: BusinessType,
+) -> ToolResult:
+    """返回事前案件可引用的客户×业务类型历史基线。"""
+
+    profile = get_historical_order_profile(store, customer_id, business_type)
+    distribution = summarize_order_amounts(profile.positive_order_amounts)
+    median_payment_days = median(profile.payment_days) if profile.payment_days else None
+    median_margin_rate = median(profile.gross_margin_rates) if profile.gross_margin_rates else None
+    warnings: list[str] = []
+    if len(profile.positive_order_amounts) < 5:
+        warnings.append("历史正订单少于 5 笔，分布稳定性有限。")
+    if median_payment_days is None:
+        warnings.append("当前业务类型未匹配到有效回款账龄。")
+    if median_margin_rate is None:
+        warnings.append("当前业务类型未形成可计算的历史毛利率。")
+    return ToolResult(
+        summary=(
+            f"{profile.customer_id} 的 {business_type} 历史共有 "
+            f"{len(profile.positive_order_amounts)} 笔正向订单，"
+            f"订单金额中位数 {_format_money(distribution['median_yuan'])}，"
+            f"P90 {_format_money(distribution['p90_yuan'])}。"
+        ),
+        columns=[
+            "客户编号",
+            "业务类型",
+            "历史订单数",
+            "订单金额中位数_元",
+            "订单金额P90_元",
+            "回款账龄中位数_天",
+            "历史毛利率中位数",
+        ],
+        rows=[
+            [
+                profile.customer_id,
+                business_type,
+                len(profile.positive_order_amounts),
+                distribution["median_yuan"],
+                distribution["p90_yuan"],
+                median_payment_days,
+                median_margin_rate,
+            ]
+        ],
+        sources=["sales", "payments"],
+        period="历史全量至当前数据快照",
+        metric_definitions=[
+            "订单金额按客户、业务类型和销售订单号聚合，保留退货后净额，只使用正向订单形成分布。",
+            "P90 和中位数是历史比较基线，不是授信审批或违约阈值。",
+        ],
+        warnings=warnings,
+    )
+
+
+def get_pre_transaction_proposal_evidence(
+    entity_context: dict[str, JsonScalar],
+) -> ToolResult:
+    """把案件库中的模拟交易输入转换为可引用证据。"""
+
+    required = (
+        "simulation_id",
+        "customer_id",
+        "business_type",
+        "amount_yuan",
+        "proposed_term_days",
+        "scenario",
+    )
+    if any(entity_context.get(key) in (None, "") for key in required):
+        raise AnalysisInputError("事前案件缺少完整的模拟交易输入。")
+    proposed_amount = entity_context["amount_yuan"]
+    if not isinstance(proposed_amount, int | float) or isinstance(proposed_amount, bool):
+        raise AnalysisInputError("事前案件的拟交易金额不是有效数字。")
+    return ToolResult(
+        summary=(
+            f"模拟交易 {entity_context['simulation_id']} 拟向客户 "
+            f"{entity_context['customer_id']} 开展 {entity_context['business_type']} 业务，"
+            f"金额 {_format_money(float(proposed_amount))}。"
+        ),
+        columns=[
+            "模拟交易编号",
+            "客户编号",
+            "业务类型",
+            "场景",
+            "拟交易金额_元",
+            "拟账期天数",
+            "预期毛利率",
+        ],
+        rows=[
+            [
+                entity_context["simulation_id"],
+                entity_context["customer_id"],
+                entity_context["business_type"],
+                entity_context["scenario"],
+                entity_context["amount_yuan"],
+                entity_context["proposed_term_days"],
+                entity_context.get("expected_margin_rate"),
+            ]
+        ],
+        sources=["pre_transaction_simulations"],
+        period=str(entity_context.get("generated_at", "")),
+        metric_definitions=["模拟交易只用于事前调查演示，不写入真实销售、合同、应收或授信数据。"],
+    )
 
 
 def get_receivable_rule_features(store: DuckDBStore) -> QueryResult:
@@ -896,15 +1104,31 @@ def get_customer_ar_history(
 
 
 def get_customer_flow_history(
-    store: DuckDBStore, customer_id: str, *, months: int = 6
+    store: DuckDBStore,
+    customer_id: str,
+    *,
+    months: int = 6,
+    business_type: BusinessType | None = None,
 ) -> ToolResult:
     """返回指定客户最近若干个月销售、回款和超期利息。"""
 
     normalized_id = customer_id.strip().upper()
     if not re.fullmatch(r"C\d{3}", normalized_id):
         raise AnalysisInputError("客户编号必须采用 C015 这样的 C 加三位数字格式。")
+    sales_condition = (
+        business_type_condition("s", business_type) if business_type is not None else "TRUE"
+    )
+    payment_condition = "TRUE"
+    if business_type is not None:
+        linked_condition = business_type_condition("s", business_type)
+        payment_condition = f"""EXISTS (
+            SELECT 1 FROM sales s
+            WHERE s."客户编号" = p."客户编号"
+              AND s."销售订单号" = p."销售订单号"
+              AND {linked_condition}
+        )"""
     result = store.fetch(
-        """
+        f"""
         WITH latest AS (
             SELECT MAX("快照时间") AS latest_date FROM ar_snapshots
         ), months AS (
@@ -916,8 +1140,8 @@ def get_customer_flow_history(
                 date_trunc('month', "出库日期") AS month,
                 SUM("销售金额_折扣后_含税") AS sales_amount,
                 SUM("销售金额_折扣后_含税" - "出库成本金额") AS gross_profit
-            FROM sales
-            WHERE "客户编号" = ?
+            FROM sales s
+            WHERE s."客户编号" = ? AND {sales_condition}
             GROUP BY 1
         ), payment_monthly AS (
             SELECT
@@ -925,8 +1149,8 @@ def get_customer_flow_history(
                 SUM("回款金额") AS payment_amount,
                 SUM("超期利息金额") AS overdue_interest,
                 MAX("超期天数") AS max_payment_overdue_days
-            FROM payments
-            WHERE "客户编号" = ?
+            FROM payments p
+            WHERE p."客户编号" = ? AND {payment_condition}
             GROUP BY 1
         )
         SELECT
@@ -1256,7 +1480,7 @@ _WINDOW_QUARTERS = {
 
 def _validate_evidence_query(case_type: CaseType, query: EvidenceQuery) -> SemanticCapability:
     capability = get_capability(query.dataset, query.grain)
-    if capability is None or capability.case_type != case_type:
+    if capability is None or case_type not in capability.case_types:
         raise AnalysisInputError(f"{case_type} 案件不支持数据集 {query.dataset}/{query.grain}。")
     invalid_metrics = sorted(set(query.metrics) - set(capability.metrics))
     if invalid_metrics:
@@ -1321,7 +1545,7 @@ def query_business_evidence(
 
     capability = _validate_evidence_query(case_type, query)
     key = (query.dataset, query.grain)
-    if case_type == "ACCOUNTS_RECEIVABLE":
+    if case_type in ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"):
         normalized_id = str(entity_context.get("customer_id", "")).strip().upper()
         if not re.fullmatch(r"C\d{3}", normalized_id):
             raise AnalysisInputError("案件缺少合法客户编号。")
@@ -1331,7 +1555,19 @@ def query_business_evidence(
         if not material or not org:
             raise AnalysisInputError("库存案件缺少物料编码或库存组织。")
 
-    if key == ("receivables", "month"):
+    business_type_value = entity_context.get("business_type")
+    business_type: BusinessType | None = (
+        cast(BusinessType, business_type_value)
+        if business_type_value in ("DISTRIBUTION", "PROJECT", "SERVICE_CLOUD")
+        else None
+    )
+    if key == ("proposal", "order"):
+        result = get_pre_transaction_proposal_evidence(entity_context)
+    elif key == ("customer_profile", "business_type"):
+        if business_type is None:
+            raise AnalysisInputError("事前案件缺少合法业务类型。")
+        result = get_customer_business_profile_evidence(store, normalized_id, business_type)
+    elif key == ("receivables", "month"):
         result = get_customer_ar_history(
             store, normalized_id, months=_WINDOW_MONTHS[query.time_window]
         )
@@ -1339,7 +1575,10 @@ def query_business_evidence(
         result = get_current_receivable_details(store, normalized_id)
     elif key == ("sales_payments", "month"):
         result = get_customer_flow_history(
-            store, normalized_id, months=_WINDOW_MONTHS[query.time_window]
+            store,
+            normalized_id,
+            months=_WINDOW_MONTHS[query.time_window],
+            business_type=business_type if case_type == "PRE_TRANSACTION" else None,
         )
     elif key == ("extensions", "order"):
         result = get_customer_extension_evidence(store, normalized_id)
@@ -1410,8 +1649,10 @@ def discover_evidence_capabilities(
                 limitations=list(capability.limitations),
             )
         )
-    if case_type == "ACCOUNTS_RECEIVABLE":
+    if case_type in ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"):
         entity_scope = f"客户 {entity_context.get('customer_id', '')}"
+        if case_type == "PRE_TRANSACTION":
+            entity_scope += f" / 业务类型 {entity_context.get('business_type', '')}"
     else:
         entity_scope = (
             f"物料 {entity_context.get('material_code', '')} / "
@@ -1441,7 +1682,7 @@ def search_business_records(
 
     query_text = search.query.strip()
     rows: list[list[JsonScalar]]
-    if case_type == "ACCOUNTS_RECEIVABLE":
+    if case_type in ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"):
         customer_id = str(entity_context.get("customer_id", "")).strip().upper()
         if search.record_type == "customer":
             label = str(entity_context.get("customer_name", customer_id))

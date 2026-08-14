@@ -15,7 +15,6 @@ from fastapi.staticfiles import StaticFiles
 from ict_agent.config import load_frontend_dist_dir, load_settings
 from ict_agent.feishu import start_feishu_bot, stop_feishu_bot
 from ict_agent.models import (
-    AlertResponse,
     CaseStatus,
     CaseType,
     DashboardResponse,
@@ -24,43 +23,31 @@ from ict_agent.models import (
     FeishuStatusResponse,
     FeishuTestResponse,
     HealthResponse,
-    HealthScoreResponse,
-    ListRecommendationResponse,
-    ListRecommendationReviewRequest,
-    PreAssessmentResponse,
-    ProjectViewResponse,
+    PreTransactionSimulationRequest,
+    PreTransactionSimulationResponse,
     ReviewRecord,
     ReviewRequest,
     RiskCaseDetail,
     RiskCaseSummary,
     RiskOverviewResponse,
     RuleRunResponse,
-    WarningOverviewResponse,
 )
 from ict_agent.service import (
     ServiceError,
-    acknowledge_alert,
+    create_pre_transaction_simulation,
     get_case_detail,
     get_dashboard,
     get_data_snapshot,
     get_feishu_status_service,
-    get_health_score,
     get_risk_overview,
-    list_alerts,
     list_cases,
-    list_health_scores,
-    list_projects_service,
-    list_recommendations,
+    list_pre_transaction_simulations,
     prepare_investigation,
-    recalculate_health_scores,
     recover_interrupted_investigations,
     review_case,
-    review_list_recommendation,
-    run_pre_assessment_service,
     run_rule_scan,
     send_feishu_test_service,
     stream_prepared_investigation,
-    warning_overview,
 )
 
 logger = logging.getLogger(__name__)
@@ -84,8 +71,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="佳华智审风险调查 Agent API",
-    version="0.4.0",
-    description="基于可追溯七表快照、统一证据网关的可观察 Agent 调查与人工审核闭环。",
+    version="0.5.0",
+    description="接收规则与事前交易信号、通过统一证据网关完成可观察调查和人工复核。",
     lifespan=lifespan,
 )
 
@@ -168,7 +155,7 @@ async def overview() -> DashboardResponse:
 async def create_rule_run() -> RuleRunResponse:
     """对当前最新快照执行一次幂等风险规则扫描。"""
 
-    return run_rule_scan()
+    return await run_rule_scan()
 
 
 @app.get(
@@ -249,146 +236,39 @@ async def create_case_investigation(case_id: str) -> StreamingResponse:
 async def submit_case_review(case_id: str, request: ReviewRequest) -> ReviewRecord:
     """提交风险成立、需补充调查或确认无风险的人工复核结论。"""
 
-    return review_case(case_id, request)
-
-
-# ---------------------------------------------------------------------------
-# 阶段 A：风险预警系统
-# ---------------------------------------------------------------------------
+    return await review_case(case_id, request)
 
 
 @app.get(
-    "/api/v1/health-scores",
-    response_model=list[HealthScoreResponse],
+    "/api/v1/pre-transaction/simulations",
+    response_model=list[PreTransactionSimulationResponse],
     responses={503: {"model": ErrorResponse}},
-    tags=["risk-warning"],
+    tags=["pre-transaction"],
 )
-async def health_scores(
-    business_type: str | None = None,
-    grade: str | None = None,
-) -> list[HealthScoreResponse]:
-    """返回健康度列表（可按类型/等级筛选）。"""
+async def pre_transaction_simulations(
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[PreTransactionSimulationResponse]:
+    """返回最近基于真实历史分布生成的模拟新交易。"""
 
-    return list_health_scores(business_type=business_type, grade=grade)
-
-
-@app.get(
-    "/api/v1/health-scores/{score_id}",
-    response_model=HealthScoreResponse,
-    responses={404: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
-    tags=["risk-warning"],
-)
-async def health_score_detail(score_id: str) -> HealthScoreResponse:
-    """返回一条健康度详情。"""
-
-    return get_health_score(score_id)
+    return list_pre_transaction_simulations(limit=limit)
 
 
 @app.post(
-    "/api/v1/health-scores/recalculate",
-    response_model=dict[str, int],
-    responses={500: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
-    tags=["risk-warning"],
-)
-async def recalculate_health() -> dict[str, int]:
-    """重算全部健康度并生成名单建议（确定性，不耗模型）。"""
-
-    return recalculate_health_scores()
-
-
-@app.get(
-    "/api/v1/list-recommendations",
-    response_model=list[ListRecommendationResponse],
-    responses={503: {"model": ErrorResponse}},
-    tags=["risk-warning"],
-)
-async def list_recommendations_api(
-    status: str | None = None,
-) -> list[ListRecommendationResponse]:
-    """返回名单建议列表。"""
-
-    return list_recommendations(status=status)
-
-
-@app.post(
-    "/api/v1/list-recommendations/{recommendation_id}/reviews",
-    response_model=dict[str, object],
+    "/api/v1/pre-transaction/simulations",
+    response_model=PreTransactionSimulationResponse,
     responses={
         404: {"model": ErrorResponse},
-        409: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
         503: {"model": ErrorResponse},
     },
-    tags=["risk-warning"],
+    tags=["pre-transaction"],
 )
-async def review_list_recommendation_api(
-    recommendation_id: str, request: ListRecommendationReviewRequest
-) -> dict[str, object]:
-    """审批/驳回名单建议。"""
+async def simulate_pre_transaction(
+    request: PreTransactionSimulationRequest,
+) -> PreTransactionSimulationResponse:
+    """生成模拟交易并创建统一的成交前调查案件。"""
 
-    return review_list_recommendation(recommendation_id, request)
-
-
-@app.get(
-    "/api/v1/alerts",
-    response_model=list[AlertResponse],
-    responses={503: {"model": ErrorResponse}},
-    tags=["risk-warning"],
-)
-async def alerts(
-    status: str | None = None,
-    severity: str | None = None,
-) -> list[AlertResponse]:
-    """返回预警列表。"""
-
-    return list_alerts(status=status, severity=severity)
-
-
-@app.post(
-    "/api/v1/alerts/{alert_id}/acknowledge",
-    response_model=dict[str, object],
-    responses={404: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
-    tags=["risk-warning"],
-)
-async def acknowledge_alert_api(alert_id: str) -> dict[str, object]:
-    """确认一条预警。"""
-
-    return acknowledge_alert(alert_id)
-
-
-@app.get(
-    "/api/v1/projects",
-    response_model=list[ProjectViewResponse],
-    responses={503: {"model": ErrorResponse}},
-    tags=["risk-warning"],
-)
-async def projects() -> list[ProjectViewResponse]:
-    """返回项目类视图（合同 + 模拟阶段/担保人）。"""
-
-    return list_projects_service()
-
-
-@app.post(
-    "/api/v1/projects/{project_id}/pre-assessment/run",
-    response_model=PreAssessmentResponse,
-    responses={404: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
-    tags=["risk-warning"],
-)
-async def run_pre_assessment(project_id: str) -> PreAssessmentResponse:
-    """对模拟新项目执行事前评估。"""
-
-    return run_pre_assessment_service(project_id)
-
-
-@app.get(
-    "/api/v1/warning/overview",
-    response_model=WarningOverviewResponse,
-    responses={503: {"model": ErrorResponse}},
-    tags=["risk-warning"],
-)
-async def warning_overview_api() -> WarningOverviewResponse:
-    """返回预警总览聚合。"""
-
-    return warning_overview()
+    return await create_pre_transaction_simulation(request)
 
 
 @app.get("/", include_in_schema=False)
@@ -399,9 +279,7 @@ async def frontend_index() -> FileResponse:
 
 
 @app.get("/risk", include_in_schema=False)
-@app.get("/health", include_in_schema=False)
-@app.get("/lists", include_in_schema=False)
-@app.get("/projects", include_in_schema=False)
+@app.get("/pre-transaction", include_in_schema=False)
 @app.get("/cases", include_in_schema=False)
 @app.get("/cases/{case_id}", include_in_schema=False)
 @app.get("/business", include_in_schema=False)

@@ -25,7 +25,7 @@
       "eval_id": "AR-C015-BALANCED-EVIDENCE",
       "purpose": "白名单、回款等缓释信息不能覆盖实际逾期；历史展期必须与当前订单精确匹配。",
       "input": {
-        "schema_version": "2.0",
+        "schema_version": "3.0",
         "case_id": "eval-ar-c015",
         "discovery_source": "RULE",
         "case_type": "ACCOUNTS_RECEIVABLE",
@@ -41,6 +41,7 @@
         "exposure_amount": 55892962.207575805,
         "summary": "最新应收 5589.30 万元，超期 2839.78 万元，客户仍在经营且未进入黑名单，命中 1 条早期预警规则。",
         "source_set_version": "2026.08-v2",
+        "source_snapshot_id": "500eae42938123becfd29a52",
         "signals": [
           {
             "signal_id": "eval-signal-ar-c015",
@@ -64,6 +65,7 @@
             },
             "source_version": "2.0.0",
             "threshold_source": "赛事模拟数据24个月/8季度回溯后冻结的经营中客户与库存早期预警阈值",
+            "threshold_version": "2.0.0",
             "sources": ["ar_snapshots"],
             "period": "2026-07-31"
           }
@@ -95,7 +97,7 @@
       "eval_id": "AR-C061-WHITELIST-DETERIORATION",
       "purpose": "白名单经营客户存在大额深度超期时，应形成风险恶化判断，同时保留根因和最终回收结果未知。",
       "input": {
-        "schema_version": "2.0",
+        "schema_version": "3.0",
         "case_id": "eval-ar-c061",
         "discovery_source": "RULE",
         "case_type": "ACCOUNTS_RECEIVABLE",
@@ -111,6 +113,7 @@
         "exposure_amount": 143020055.38486397,
         "summary": "最新应收 1.43 亿元，超期 1.07 亿元，客户仍在经营且未进入黑名单，命中 1 条早期预警规则。",
         "source_set_version": "2026.08-v2",
+        "source_snapshot_id": "500eae42938123becfd29a52",
         "signals": [
           {
             "signal_id": "eval-signal-ar-c061",
@@ -134,6 +137,7 @@
             },
             "source_version": "2.0.0",
             "threshold_source": "赛事模拟数据24个月/8季度回溯后冻结的经营中客户与库存早期预警阈值",
+            "threshold_version": "2.0.0",
             "sources": ["ar_snapshots"],
             "period": "2026-07-31"
           }
@@ -165,7 +169,7 @@
       "eval_id": "AR-C007-EXPOSURE-BUILDUP",
       "purpose": "经营中客户新增销售高于回款且超期扩大时，应识别前瞻性敞口积累风险。",
       "input": {
-        "schema_version": "2.0",
+        "schema_version": "3.0",
         "case_id": "eval-ar-c007",
         "discovery_source": "RULE",
         "case_type": "ACCOUNTS_RECEIVABLE",
@@ -181,6 +185,7 @@
         "exposure_amount": 142666400.64347157,
         "summary": "最新应收 1.43 亿元，超期 878.06 万元，客户仍在经营且未进入黑名单，命中 1 条早期预警规则。",
         "source_set_version": "2026.08-v2",
+        "source_snapshot_id": "500eae42938123becfd29a52",
         "signals": [
           {
             "signal_id": "eval-signal-ar-c007",
@@ -204,6 +209,7 @@
             },
             "source_version": "2.0.0",
             "threshold_source": "赛事模拟数据24个月/8季度回溯后冻结的经营中客户与库存早期预警阈值",
+            "threshold_version": "2.0.0",
             "sources": ["ar_snapshots", "sales", "payments"],
             "period": "2026-07-31"
           }
@@ -235,7 +241,7 @@
       "eval_id": "INV-83NN0001CD-MIXED-SIGNALS",
       "purpose": "库存显著增加且存在多条信号时，必须结合库存历史、库龄和销售速度区分事实与原因。",
       "input": {
-        "schema_version": "2.0",
+        "schema_version": "3.0",
         "case_id": "eval-inv-83nn0001cd-w008",
         "discovery_source": "RULE",
         "case_type": "INVENTORY",
@@ -251,6 +257,7 @@
         "exposure_amount": 44929756.116,
         "summary": "当前库存 4492.98 万元，较上季增加 2890.99 万元，命中 2 条库存风险信号。",
         "source_set_version": "2026.08-v2",
+        "source_snapshot_id": "500eae42938123becfd29a52",
         "signals": [
           {
             "signal_id": "eval-signal-inv-83nn-slowdown",
@@ -272,6 +279,7 @@
             },
             "source_version": "2.0.0",
             "threshold_source": "赛事模拟数据24个月/8季度回溯后冻结的经营中客户与库存早期预警阈值",
+            "threshold_version": "2.0.0",
             "sources": ["inventory_snapshots", "sales"],
             "period": "2026-06-30"
           },
@@ -290,6 +298,7 @@
             },
             "source_version": "2.0.0",
             "threshold_source": "赛事模拟数据24个月/8季度回溯后冻结的经营中客户与库存早期预警阈值",
+            "threshold_version": "2.0.0",
             "sources": ["inventory_snapshots"],
             "period": "2026-06-30"
           }
@@ -319,7 +328,7 @@
       "eval_id": "INV-ZAG60265CN-STALE",
       "purpose": "库存金额稳定不等于没有呆滞风险，重点检查库龄证据和近期销售。",
       "input": {
-        "schema_version": "2.0",
+        "schema_version": "3.0",
         "case_id": "eval-inv-zag60265cn-w012",
         "discovery_source": "RULE",
         "case_type": "INVENTORY",
@@ -335,6 +344,7 @@
         "exposure_amount": 3203953.1999999997,
         "summary": "当前库存 320.40 万元，较上季持平，命中 1 条呆滞风险信号。",
         "source_set_version": "2026.08-v2",
+        "source_snapshot_id": "500eae42938123becfd29a52",
         "signals": [
           {
             "signal_id": "eval-signal-inv-zag-stale",
@@ -356,6 +366,7 @@
             },
             "source_version": "2.0.0",
             "threshold_source": "赛事模拟数据24个月/8季度回溯后冻结的经营中客户与库存早期预警阈值",
+            "threshold_version": "2.0.0",
             "sources": ["inventory_snapshots", "sales"],
             "period": "2026-06-30"
           }
@@ -385,7 +396,7 @@
       "eval_id": "INV-83LV0006CD-BUILDUP-SLOWDOWN",
       "purpose": "库存增长和销售下降方向一致时，应形成滞销早期预警，但不能虚构促销或下游因果。",
       "input": {
-        "schema_version": "2.0",
+        "schema_version": "3.0",
         "case_id": "eval-inv-83lv0006cd-w015",
         "discovery_source": "RULE",
         "case_type": "INVENTORY",
@@ -401,6 +412,7 @@
         "exposure_amount": 4162289.132400002,
         "summary": "当前库存 416.23 万元，较上季增加 303.04 万元，命中 1 条库存风险信号。",
         "source_set_version": "2026.08-v2",
+        "source_snapshot_id": "500eae42938123becfd29a52",
         "signals": [
           {
             "signal_id": "eval-signal-inv-83lv-slowdown",
@@ -422,6 +434,7 @@
             },
             "source_version": "2.0.0",
             "threshold_source": "赛事模拟数据24个月/8季度回溯后冻结的经营中客户与库存早期预警阈值",
+            "threshold_version": "2.0.0",
             "sources": ["inventory_snapshots", "sales"],
             "period": "2026-06-30"
           }

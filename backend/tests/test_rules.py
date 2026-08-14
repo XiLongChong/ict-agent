@@ -652,14 +652,14 @@ def test_case_store_preserves_idempotency_and_review(
         second_draft.run, second_draft.cases, second_draft.hits
     )
 
-    assert first_created == 4
-    assert second_created == 0
+    assert len(first_created) == 4
+    assert second_created == []
     assert len(case_store.fetch_cases().rows) == 4
 
     case_id = str(case_store.fetch_cases().rows[0][0])
     assert case_store.transition_case(case_id, "PENDING_AGENT_REVIEW", "AGENT_REVIEWING")
     assert case_store.recover_interrupted_investigations() == 1
-    assert case_store.fetch_case(case_id).rows[0][7] == "PENDING_AGENT_REVIEW"
+    assert case_store.fetch_case(case_id).rows[0][9] == "PENDING_AGENT_REVIEW"
     assert case_store.transition_case(case_id, "PENDING_AGENT_REVIEW", "PENDING_HUMAN_REVIEW")
     case_store.save_review(
         ReviewWrite(
@@ -673,5 +673,5 @@ def test_case_store_preserves_idempotency_and_review(
         "ACTION_IN_PROGRESS",
     )
 
-    assert case_store.fetch_case(case_id).rows[0][7] == "ACTION_IN_PROGRESS"
+    assert case_store.fetch_case(case_id).rows[0][9] == "ACTION_IN_PROGRESS"
     assert case_store.fetch_reviews(case_id).rows[0][2] == "CONFIRMED_RISK"

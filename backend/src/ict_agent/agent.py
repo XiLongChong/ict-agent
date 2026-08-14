@@ -25,11 +25,9 @@ from ict_agent.models import (
     Evidence,
     EvidenceQuery,
     InvestigationCaseInput,
-    InvestigationDataQuality,
     InvestigationFact,
     InvestigationHypothesis,
     InvestigationReport,
-    InvestigationSignalInput,
     InvestigationStreamEventType,
     InvestigationToolName,
     InvestigationTraceEvent,
@@ -58,6 +56,13 @@ INVENTORY_CORE_EVIDENCE = {
     ("inventory", "quarter"),
     ("inventory", "age_bucket"),
     ("sales", "month"),
+}
+PRE_TRANSACTION_CORE_EVIDENCE = {
+    ("proposal", "order"),
+    ("customer_profile", "business_type"),
+    ("receivables", "month"),
+    ("sales_payments", "month"),
+    ("credit", "customer"),
 }
 
 
@@ -173,6 +178,8 @@ def _evidence_query_keys(dependencies: InvestigationDependencies) -> set[tuple[s
 def _required_evidence(dependencies: InvestigationDependencies) -> set[tuple[str, str]]:
     if dependencies.case.case_type == "INVENTORY":
         return set(INVENTORY_CORE_EVIDENCE)
+    if dependencies.case.case_type == "PRE_TRANSACTION":
+        return set(PRE_TRANSACTION_CORE_EVIDENCE)
     required = set(AR_CORE_EVIDENCE)
     signal_codes = {item.signal_code for item in dependencies.case.signals}
     if "AR_OPERATING_DEEP_OVERDUE" in signal_codes:
@@ -214,41 +221,25 @@ def _query_is_redundant(previous_queries: Sequence[EvidenceQuery], query: Eviden
 
 
 def build_investigation_case_input(case: RiskCaseDetail) -> InvestigationCaseInput:
-    """把当前案件存储模型映射为冻结的 V2 调查输入契约。"""
+    """把统一案件存储模型映射为冻结的 V3 调查输入契约。"""
 
     return InvestigationCaseInput(
         case_id=case.case_id,
-        discovery_source="RULE",
+        discovery_source=case.discovery_source,
         case_type=case.case_type,
         entity_type=case.entity_type,
         entity_id=case.entity_id,
         entity_label=case.entity_label,
+        business_type=case.business_type,
         entity_context=case.entity_context,
         observation_date=case.observation_date,
         priority=case.priority,
         exposure_amount=case.exposure_amount,
         summary=case.summary,
-        source_set_version=case.rule_set_version,
-        signals=[
-            InvestigationSignalInput(
-                signal_id=hit.rule_hit_id,
-                signal_code=hit.rule_id,
-                signal_name=hit.rule_name,
-                reason=hit.reason,
-                severity=hit.severity,
-                exposure_amount=hit.exposure_amount,
-                metrics=hit.metrics,
-                source_version=hit.rule_version,
-                threshold_source=hit.threshold_source,
-                sources=hit.sources,
-                period=hit.period,
-            )
-            for hit in case.rule_hits
-        ],
-        data_quality=InvestigationDataQuality(
-            status="UNKNOWN",
-            warnings=["当前规则案件尚未提供独立数据质量判定，调查工具会保留各自限制。"],
-        ),
+        source_set_version=case.source_set_version,
+        source_snapshot_id=case.source_snapshot_id,
+        signals=case.signals,
+        data_quality=case.data_quality,
     )
 
 
@@ -369,6 +360,8 @@ def _create_investigation_agent(
             raise ModelRetry(f"风险判断引用了不存在的证据编号：{sorted(invalid_risk_ids)}。")
         if not report.facts:
             raise ModelRetry("报告必须至少列出一条由工具直接证明的数据事实。")
+        if ctx.deps.case.data_quality.status in ("WARNING", "UNKNOWN") and not report.limitations:
+            raise ModelRetry("案件数据质量不是 PASS，报告必须在 limitations 中保留数据限制。")
         for fact in report.facts:
             if not fact.evidence_ids:
                 raise ModelRetry(f"事实“{fact.statement}”没有引用 evidence_id。")
@@ -543,11 +536,17 @@ def _fallback_risk_assessment(
     else:
         stage = "EARLY_WARNING"
         statement = "现有证据支持存在需要持续观察的早期风险信号，具体成因仍需补证。"
-    watch_items = (
-        ["后续回款能否覆盖新增销售和到期应收。", "超期金额和账龄是否继续扩大。"]
-        if dependencies.case.case_type == "ACCOUNTS_RECEIVABLE"
-        else ["库存金额和高库龄占比是否继续增加。", "后续销售速度能否消化现有库存。"]
-    )
+    if dependencies.case.case_type == "PRE_TRANSACTION":
+        watch_items = [
+            "拟交易金额和账期是否需要附加预付款、分段交付或增信条件。",
+            "新增交易后客户应收敞口和回款节奏是否仍可接受。",
+        ]
+    else:
+        watch_items = (
+            ["后续回款能否覆盖新增销售和到期应收。", "超期金额和账龄是否继续扩大。"]
+            if dependencies.case.case_type == "ACCOUNTS_RECEIVABLE"
+            else ["库存金额和高库龄占比是否继续增加。", "后续销售速度能否消化现有库存。"]
+        )
     return RiskSignalAssessment(
         stage=stage,
         statement=statement,

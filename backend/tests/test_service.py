@@ -6,9 +6,16 @@ from collections.abc import AsyncIterator
 import pytest
 from ict_agent.config import Settings
 from ict_agent.data import CaseStore, DuckDBStore
-from ict_agent.models import ReviewRequest, ToolResult
+from ict_agent.models import PreTransactionSimulationRequest, ReviewRequest, ToolResult
 from ict_agent.rules import RuleThresholds, build_rule_scan
-from ict_agent.service import get_case_detail, get_dashboard, investigate_case, review_case
+from ict_agent.service import (
+    create_pre_transaction_simulation,
+    get_case_detail,
+    get_dashboard,
+    investigate_case,
+    list_pre_transaction_simulations,
+    review_case,
+)
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 
@@ -166,6 +173,31 @@ def test_dashboard_does_not_require_model(settings: Settings) -> None:
     assert response.inventory.period == "2026-06-30"
 
 
+async def test_pre_transaction_simulation_enters_unified_case_queue(
+    settings: Settings,
+) -> None:
+    simulation = await create_pre_transaction_simulation(
+        PreTransactionSimulationRequest(
+            customer_id="C015",
+            business_type="DISTRIBUTION",
+            scenario="ANOMALY",
+            seed=17,
+        ),
+        settings=settings,
+    )
+    detail = get_case_detail(simulation.case_id, settings=settings)
+
+    assert simulation.simulated is True
+    assert simulation.amount_yuan > simulation.distribution_summary["p90_yuan"]
+    assert detail.discovery_source == "PRE_TRANSACTION"
+    assert detail.case_type == "PRE_TRANSACTION"
+    assert detail.business_type == "DISTRIBUTION"
+    assert detail.entity_context["simulated"] is True
+    assert detail.data_quality.status == simulation.data_quality_status
+    assert detail.signals[0].signal_code == "PRE_TRANSACTION_REVIEW"
+    assert list_pre_transaction_simulations(settings=settings)[0].case_id == detail.case_id
+
+
 async def test_investigation_service_persists_report(settings: Settings) -> None:
     case_id = _create_receivable_case(settings)
     model = FunctionModel(stream_function=_service_stream_model)
@@ -178,7 +210,7 @@ async def test_investigation_service_persists_report(settings: Settings) -> None
     assert detail.status == "PENDING_HUMAN_REVIEW"
     assert detail.latest_investigation is not None
 
-    review_case(
+    await review_case(
         case_id,
         ReviewRequest(
             decision="CONFIRMED_RISK",
@@ -205,7 +237,7 @@ async def test_investigation_service_persists_partial_report(settings: Settings)
     assert detail.status == "PENDING_HUMAN_REVIEW"
     assert detail.latest_investigation is not None
 
-    review_case(
+    await review_case(
         case_id,
         ReviewRequest(
             decision="NEEDS_MORE_EVIDENCE",

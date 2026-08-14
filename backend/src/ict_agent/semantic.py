@@ -40,7 +40,7 @@ class SemanticCapability:
 
     dataset: EvidenceDataset
     grain: EvidenceGrain
-    case_type: CaseType
+    case_types: tuple[CaseType, ...]
     description: str
     metrics: tuple[EvidenceMetric, ...]
     time_windows: tuple[EvidenceTimeWindow, ...]
@@ -57,7 +57,7 @@ class SemanticCapability:
 def _capability(
     dataset: EvidenceDataset,
     grain: EvidenceGrain,
-    case_type: CaseType,
+    case_type: CaseType | tuple[CaseType, ...],
     description: str,
     metrics: tuple[tuple[EvidenceMetric, str, str], ...],
     time_windows: tuple[EvidenceTimeWindow, ...],
@@ -67,7 +67,7 @@ def _capability(
     return SemanticCapability(
         dataset=dataset,
         grain=grain,
-        case_type=case_type,
+        case_types=(case_type,) if isinstance(case_type, str) else case_type,
         description=description,
         metrics=tuple(item[0] for item in metrics),
         time_windows=time_windows,
@@ -80,9 +80,39 @@ def _capability(
 
 SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
     _capability(
+        "proposal",
+        "order",
+        "PRE_TRANSACTION",
+        "查看本案待评估模拟交易的金额、账期与预期毛利。",
+        (
+            ("proposed_amount", "拟交易金额_元", "拟交易金额_元"),
+            ("proposed_term_days", "拟账期天数", "拟账期天数"),
+            ("expected_margin_rate", "预期毛利率", "预期毛利率"),
+        ),
+        ("latest",),
+        ("模拟交易编号", "客户编号", "业务类型", "场景"),
+        ("这是演示用拟交易输入，不是已经发生的销售事实。",),
+    ),
+    _capability(
+        "customer_profile",
+        "business_type",
+        "PRE_TRANSACTION",
+        "查看客户在当前业务类型下的历史订单金额、回款账龄和毛利基线。",
+        (
+            ("historical_order_count", "历史订单数", "历史订单数"),
+            ("median_order_amount", "订单金额中位数_元", "订单金额中位数_元"),
+            ("p90_order_amount", "订单金额P90_元", "订单金额P90_元"),
+            ("median_payment_days", "回款账龄中位数_天", "回款账龄中位数_天"),
+            ("median_margin_rate", "历史毛利率中位数", "历史毛利率中位数"),
+        ),
+        ("all",),
+        ("客户编号", "业务类型"),
+        ("历史分布只用于比较拟交易是否偏离，不等同违约概率或审批结论。",),
+    ),
+    _capability(
         "receivables",
         "month",
-        "ACCOUNTS_RECEIVABLE",
+        ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"),
         "按月观察应收余额、超期结构和最大账龄。",
         (
             ("ar_amount", "应收余额_元", "应收金额_元"),
@@ -99,7 +129,7 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
     _capability(
         "receivables",
         "order",
-        "ACCOUNTS_RECEIVABLE",
+        ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"),
         "查看最新快照中合同、订单、物料和承诺日级别的应收明细。",
         (
             ("ar_amount", "应收金额_元", "应收金额_元"),
@@ -115,7 +145,7 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
     _capability(
         "sales_payments",
         "month",
-        "ACCOUNTS_RECEIVABLE",
+        ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"),
         "按自然月对齐销售、回款、粗算毛利和超期利息。",
         (
             ("sales_amount", "销售额_元", "销售额_元"),
@@ -135,7 +165,7 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
     _capability(
         "extensions",
         "order",
-        "ACCOUNTS_RECEIVABLE",
+        ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"),
         "将当前应收与历史展期动作按客户、合同、订单和物料精确匹配。",
         (
             ("ar_amount", "当前应收_元", "应收金额_元"),
@@ -149,7 +179,7 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
     _capability(
         "credit",
         "customer",
-        "ACCOUNTS_RECEIVABLE",
+        ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"),
         "查看客户当前授信、名单、财务概况和信用保险主数据。",
         (
             ("credit_limit", "授信额度", "授信额度"),
@@ -166,7 +196,7 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
     _capability(
         "contracts",
         "contract",
-        "ACCOUNTS_RECEIVABLE",
+        ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"),
         "查看当前未结应收所关联项目合同的签约、开票、出库和回款闭环。",
         (
             ("contract_amount", "签约金额_元", "签约金额_元"),
@@ -234,7 +264,7 @@ _CAPABILITY_BY_KEY = {item.key: item for item in SEMANTIC_CAPABILITIES}
 def capabilities_for(case_type: CaseType) -> tuple[SemanticCapability, ...]:
     """返回当前案件类型的全部受控语义能力。"""
 
-    return tuple(item for item in SEMANTIC_CAPABILITIES if item.case_type == case_type)
+    return tuple(item for item in SEMANTIC_CAPABILITIES if case_type in item.case_types)
 
 
 def get_capability(dataset: EvidenceDataset, grain: EvidenceGrain) -> SemanticCapability | None:

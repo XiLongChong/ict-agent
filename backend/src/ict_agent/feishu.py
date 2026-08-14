@@ -6,6 +6,8 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Literal
+from urllib.parse import quote
 
 from lark_oapi import LogLevel  # type: ignore[import-untyped]
 from lark_oapi.channel import Events, FeishuChannel  # type: ignore[import-untyped]
@@ -17,6 +19,12 @@ from ict_agent.data import CaseStore
 logger = logging.getLogger(__name__)
 NOTIFICATION_CHAT_KEY = "feishu_notification_chat_id"
 BIND_COMMAND = "绑定通知群"
+CaseNotificationEvent = Literal[
+    "CASE_CREATED",
+    "INVESTIGATION_COMPLETED",
+    "PARTIAL_REPORT",
+    "REVIEW_COMPLETED",
+]
 
 
 class FeishuIntegrationError(RuntimeError):
@@ -30,6 +38,82 @@ class FeishuStatus:
     configured: bool
     connected: bool
     bound: bool
+
+
+@dataclass(frozen=True)
+class CaseNotification:
+    """案件流程通知的确定性输入。"""
+
+    event_type: CaseNotificationEvent
+    case_id: str
+    case_type: str
+    entity_label: str
+    priority: str
+    status: str
+    summary: str
+    business_type: str | None
+    observation_date: str
+    exposure_amount: float
+    detail: str
+    public_base_url: str | None = None
+
+
+_EVENT_PRESENTATION: dict[CaseNotificationEvent, tuple[str, str]] = {
+    "CASE_CREATED": ("新风险案件", "blue"),
+    "INVESTIGATION_COMPLETED": ("案件调查完成", "green"),
+    "PARTIAL_REPORT": ("案件调查中断", "orange"),
+    "REVIEW_COMPLETED": ("人工复核完成", "purple"),
+}
+
+
+def build_case_notification_card(notification: CaseNotification) -> dict[str, object]:
+    """构造不含内部执行信息的案件通知卡片。"""
+
+    event_title, event_color = _EVENT_PRESENTATION[notification.event_type]
+    priority = notification.priority or "—"
+    business_type = notification.business_type or "—"
+    elements: list[dict[str, object]] = [
+        {"tag": "markdown", "content": f"**事件**：{event_title} · `{notification.event_type}`"},
+        {
+            "tag": "markdown",
+            "content": f"**风险等级**：{priority}\n**主体**：{notification.entity_label}",
+        },
+        {
+            "tag": "markdown",
+            "content": f"**业务类型**：{business_type}\n**状态**：{notification.status}",
+        },
+        {
+            "tag": "markdown",
+            "content": (
+                f"**数据截至**：{notification.observation_date}\n"
+                f"**风险敞口**：{notification.exposure_amount:,.2f} 元"
+            ),
+        },
+        {"tag": "markdown", "content": f"**摘要**：{notification.summary}\n{notification.detail}"},
+    ]
+    if notification.public_base_url:
+        base = notification.public_base_url.rstrip("/")
+        url = f"{base}/cases/{quote(notification.case_id, safe='')}"
+        elements.append(
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "打开案件详情"},
+                        "type": "primary",
+                        "url": url,
+                    }
+                ],
+            }
+        )
+    return {
+        "header": {
+            "template": event_color,
+            "title": {"tag": "plain_text", "content": event_title},
+        },
+        "elements": elements,
+    }
 
 
 def build_connection_card() -> dict[str, object]:
@@ -114,6 +198,19 @@ class FeishuBot:
             raise FeishuIntegrationError("飞书测试消息发送失败，请检查应用版本和机器人权限。")
         return result.message_id or ""
 
+    async def send_case_notification(self, notification: CaseNotification) -> str:
+        """向已绑定群发送一张案件通知卡片。"""
+
+        chat_id = self._store.get_integration_setting(NOTIFICATION_CHAT_KEY)
+        if not chat_id:
+            raise FeishuIntegrationError(f"尚未绑定通知群，请先在群里 @{BIND_COMMAND}。")
+        result = await self._channel.send(
+            chat_id, {"card": build_case_notification_card(notification)}
+        )
+        if not result.success:
+            raise FeishuIntegrationError("飞书案件通知发送失败，请检查应用版本和机器人权限。")
+        return result.message_id or ""
+
     async def _handle_message(self, message: InboundMessage) -> None:
         if message.chat_type != "group":
             await self._channel.send(
@@ -185,3 +282,11 @@ async def send_feishu_test_card() -> str:
     if _bot is None or not _bot.connected:
         raise FeishuIntegrationError("飞书机器人长连接尚未就绪。")
     return await _bot.send_test_card()
+
+
+async def send_feishu_case_notification(notification: CaseNotification) -> str:
+    """通过全局机器人发送案件通知卡片。"""
+
+    if _bot is None or not _bot.connected:
+        raise FeishuIntegrationError("飞书机器人长连接尚未就绪。")
+    return await _bot.send_case_notification(notification)

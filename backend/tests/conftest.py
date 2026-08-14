@@ -44,6 +44,8 @@ def raw_data_dir(tmp_path: Path) -> Path:
                 "事务处理类型名称": "正常销售",
                 "销售金额_折扣后_含税": 100,
                 "出库成本金额": 70,
+                "订单类型": "信产常规销售订单",
+                "核算大类名称": "IPHONE",
             },
             {
                 "出库日期": "2026-07-11",
@@ -58,6 +60,8 @@ def raw_data_dir(tmp_path: Path) -> Path:
                 "事务处理类型名称": "正常销售",
                 "销售金额_折扣后_含税": 200,
                 "出库成本金额": 160,
+                "订单类型": "信产项目N",
+                "核算大类名称": "IT-存储",
             },
             {
                 "出库日期": "2026-07-12",
@@ -72,6 +76,8 @@ def raw_data_dir(tmp_path: Path) -> Path:
                 "事务处理类型名称": "退货",
                 "销售金额_折扣后_含税": -10,
                 "出库成本金额": -7,
+                "订单类型": "信产常规销售订单",
+                "核算大类名称": "IPHONE",
             },
         ],
     )
@@ -324,7 +330,7 @@ def settings(raw_data_dir: Path, database_path: Path) -> Settings:
         data_dir=raw_data_dir,
         database_path=database_path,
         case_database_path=database_path.parent / "cases.duckdb",
-        simulated_data_dir=database_path.parent.parent / "simulated",
         feishu_app_id=None,
         feishu_app_secret=None,
+        public_base_url=None,
     )
