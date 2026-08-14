@@ -473,7 +473,7 @@ def _receivable_cases(
                         severity="HIGH",
                         exposure_amount=ar_amount,
                         reason=(
-                            f"客户无授信额度（0），仍有应收 {_money(ar_amount)}"
+                            f"客户无授信额度，仍有应收 {_money(ar_amount)}"
                             f"且近 3 个月仍有销售 {_money(sales_3m)}。"
                         ),
                         metrics=common_metrics,
