@@ -55,7 +55,7 @@ const gradeDistribution = computed(() => warning.value.grade_distribution || {})
 const pendingRecommendations = computed(() => warning.value.pending_recommendations || []);
 const openAlerts = computed(() => warning.value.open_alerts || []);
 
-// 待办事项合并（名单建议 + 预警），只展示前 5 条与右侧健康度分布平齐；剩余跳转名单管理
+// 待办事项合并（名单建议 + 预警），只展示前 5 条；剩余跳转名单管理
 const TODO_LIMIT = 5;
 const todoItems = computed(() => {
   const items = [
@@ -171,9 +171,9 @@ function go(path) {
       </section>
     </div>
 
-    <div class="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,0.75fr)]">
-      <!-- 待办列表：待审批名单 + 未处理预警（限 5 条，与健康度分布平齐） -->
-      <section class="card">
+    <div class="grid grid-cols-1 gap-4 xl:grid-cols-3">
+      <!-- 待办列表：待审批名单 + 未处理预警（限 5 条） -->
+      <section class="card xl:col-span-2">
         <div class="panel-head">
           <h3>待办事项</h3>
           <button type="button" @click="go('/lists')" class="inline-flex items-center gap-1 text-sm font-semibold text-brand hover:text-brand-dark">
@@ -199,7 +199,7 @@ function go(path) {
       </section>
 
       <!-- 健康度分布 -->
-      <section class="card pb-4">
+      <section class="card pb-4 xl:col-span-1">
         <div class="panel-head"><h3>健康度分布</h3></div>
         <div ref="donutHostRef" class="px-5 pt-3">
           <VueApexCharts ref="donutChartRef" type="donut" height="210" :options="donutOptions" :series="gradeSeries" />
