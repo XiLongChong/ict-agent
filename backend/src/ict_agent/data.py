@@ -163,6 +163,7 @@ class InvestigationWrite:
     case_id: str
     report_json: str
     evidence_json: str
+    protocol_json: str
     created_at: str
 
 
@@ -766,6 +767,15 @@ class CaseStore:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS investigation_protocols (
+                investigation_id VARCHAR PRIMARY KEY,
+                protocol_json VARCHAR NOT NULL,
+                created_at TIMESTAMP NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS case_reviews (
                 review_id VARCHAR PRIMARY KEY,
                 case_id VARCHAR NOT NULL,
@@ -1231,8 +1241,12 @@ class CaseStore:
 
         return self._fetch(
             """
-            SELECT investigation_id, case_id, report_json, evidence_json, created_at
-            FROM case_investigations WHERE case_id = ? ORDER BY created_at DESC LIMIT 1
+            SELECT i.investigation_id, i.case_id, i.report_json, i.evidence_json,
+                   i.created_at, p.protocol_json
+            FROM case_investigations AS i
+            LEFT JOIN investigation_protocols AS p
+              ON p.investigation_id = i.investigation_id
+            WHERE i.case_id = ? ORDER BY i.created_at DESC LIMIT 1
             """,
             [case_id],
         )
@@ -1324,6 +1338,10 @@ class CaseStore:
                         record.evidence_json,
                         record.created_at,
                     ],
+                )
+                connection.execute(
+                    "INSERT INTO investigation_protocols VALUES (?, ?, ?)",
+                    [record.investigation_id, record.protocol_json, record.created_at],
                 )
                 updated = connection.execute(
                     """

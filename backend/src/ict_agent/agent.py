@@ -4,16 +4,28 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal, cast
 from uuid import uuid4
 
+from pydantic import JsonValue
 from pydantic_ai import Agent, AgentRunResultEvent, ModelRetry, RunContext, UsageLimits
-from pydantic_ai.messages import FunctionToolCallEvent, FunctionToolResultEvent, ToolReturnPart
-from pydantic_ai.models import Model
+from pydantic_ai.messages import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelResponse,
+    ToolReturnPart,
+)
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.providers.deepseek import DeepSeekProvider
+from pydantic_ai.settings import ModelSettings
+from pydantic_core import to_jsonable_python
 
 from ict_agent import tools as analysis_tools
 from ict_agent.config import OFFICIAL_DEEPSEEK_BASE_URL, Settings
@@ -27,6 +39,7 @@ from ict_agent.models import (
     InvestigationCaseInput,
     InvestigationFact,
     InvestigationHypothesis,
+    InvestigationProtocolSnapshot,
     InvestigationReport,
     InvestigationStreamEventType,
     InvestigationToolName,
@@ -97,6 +110,7 @@ class InvestigationOutcome:
     partial: bool = False
     usage: dict[str, int | float | str | None] | None = None
     called_tools: tuple[InvestigationToolName, ...] = ()
+    protocol: InvestigationProtocolSnapshot | None = None
 
 
 @dataclass(frozen=True)
@@ -107,6 +121,62 @@ class InvestigationAgentProgress:
     message: str
     tool_name: InvestigationToolName | None = None
     evidence: Evidence | None = None
+
+
+def _serialize_messages(messages: Sequence[ModelMessage]) -> list[dict[str, JsonValue]]:
+    """按 Pydantic AI 原始 JSON 结构序列化模型消息。"""
+
+    return cast(
+        list[dict[str, JsonValue]],
+        ModelMessagesTypeAdapter.dump_python(list(messages), mode="json"),
+    )
+
+
+class InvestigationProtocolRecorder(WrapperModel):
+    """保留最后一次完整模型请求，避免重复保存累计历史。"""
+
+    def __init__(self, wrapped: Model) -> None:
+        super().__init__(wrapped)
+        self._request_index = 0
+        self._model_settings: dict[str, JsonValue] = {}
+        self._request_parameters: dict[str, JsonValue] = {}
+        self._messages: list[ModelMessage] = []
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncIterator[StreamedResponse]:
+        self._request_index += 1
+        self._model_settings = cast(dict[str, JsonValue], to_jsonable_python(model_settings or {}))
+        self._request_parameters = cast(
+            dict[str, JsonValue], to_jsonable_python(model_request_parameters)
+        )
+        self._messages = list(messages)
+        async with self.wrapped.request_stream(
+            messages, model_settings, model_request_parameters, run_context
+        ) as response_stream:
+            yield response_stream
+
+    def snapshot(
+        self, response: ModelResponse | None = None
+    ) -> InvestigationProtocolSnapshot | None:
+        """输出最后请求及其响应；尚未请求模型时不伪造记录。"""
+
+        if self._request_index == 0:
+            return None
+        serialized_response = _serialize_messages([response])[0] if response is not None else None
+        return InvestigationProtocolSnapshot(
+            request_index=self._request_index,
+            model_name=self.model_name,
+            model_settings=self._model_settings,
+            model_request_parameters=self._request_parameters,
+            messages=_serialize_messages(self._messages),
+            response=serialized_response,
+        )
 
 
 def _now() -> str:
@@ -568,7 +638,8 @@ async def stream_investigation_agent(
 ) -> AsyncIterator[InvestigationAgentProgress | InvestigationOutcome]:
     """运行调查并把动态查询和证据事件提炼成可观察进度。"""
 
-    agent = _create_investigation_agent(settings, model)
+    recorder = InvestigationProtocolRecorder(_create_model(settings, model))
+    agent = _create_investigation_agent(settings, recorder)
     dependencies = InvestigationDependencies(store=DuckDBStore(settings.database_path), case=case)
     emitted_evidence_ids: set[str] = set()
     validation_announced = False
@@ -638,10 +709,20 @@ async def stream_investigation_agent(
                 elif isinstance(event, AgentRunResultEvent):
                     report = _normalize_investigation_report(event.result.output, dependencies)
                     usage = event.result.usage
+                    messages = event.result.all_messages()
+                    final_response = next(
+                        (
+                            message
+                            for message in reversed(messages)
+                            if isinstance(message, ModelResponse)
+                        ),
+                        None,
+                    )
                     yield InvestigationOutcome(
                         report=report,
                         evidence=list(dependencies.evidence),
                         called_tools=tuple(sorted(dependencies.called_tools)),
+                        protocol=recorder.snapshot(final_response),
                         usage={
                             "requests": usage.requests,
                             "tool_calls": usage.tool_calls,
@@ -670,6 +751,7 @@ async def stream_investigation_agent(
             evidence=list(dependencies.evidence),
             partial=True,
             called_tools=tuple(sorted(dependencies.called_tools)),
+            protocol=recorder.snapshot(),
         )
 
 

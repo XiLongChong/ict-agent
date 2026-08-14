@@ -209,6 +209,13 @@ async def test_investigation_service_persists_report(settings: Settings) -> None
     assert len(record.evidence) == 6
     assert detail.status == "PENDING_HUMAN_REVIEW"
     assert detail.latest_investigation is not None
+    assert record.protocol is not None
+    assert record.protocol.response is not None
+    assert detail.latest_investigation.protocol == record.protocol
+    assert (
+        CaseStore(settings.case_database_path).fetch_latest_investigation(case_id).rows[0][5]
+        is not None
+    )
 
     await review_case(
         case_id,

@@ -7,6 +7,7 @@ import pytest
 from ict_agent.agent import (
     InvestigationOutcome,
     _query_is_redundant,
+    _serialize_messages,
     build_investigation_case_input,
     run_investigation_agent,
     stream_investigation_agent,
@@ -23,6 +24,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
     RetryPromptPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
 )
@@ -468,6 +470,32 @@ async def test_investigation_agent_discovers_and_queries_evidence(
     assert outcome.report.evidence_completeness == "HIGH"
     assert outcome.report.risk_assessment.stage == "DETERIORATING"
     assert outcome.report.requires_human_review is True
+    assert outcome.protocol is not None
+    assert outcome.protocol.request_index == 6
+    assert outcome.protocol.model_settings["thinking"] == "high"
+    assert [
+        tool["name"] for tool in outcome.protocol.model_request_parameters["function_tools"]
+    ] == [
+        "discover_evidence_capabilities",
+        "search_business_records",
+        "query_business_evidence",
+    ]
+    assert outcome.protocol.messages[0]["instructions"]
+    assert outcome.protocol.response is not None
+    assert outcome.protocol.response["parts"][0]["tool_name"] == "final_result"
+
+
+def test_protocol_serialization_preserves_model_thinking_content() -> None:
+    messages = [
+        ModelResponse(
+            parts=[ThinkingPart(content="用于调查调试的模型草稿", id="reasoning_content")]
+        )
+    ]
+
+    serialized = _serialize_messages(messages)
+
+    assert serialized[0]["parts"][0]["part_kind"] == "thinking"
+    assert serialized[0]["parts"][0]["content"] == "用于调查调试的模型草稿"
 
 
 async def test_pre_transaction_agent_uses_history_aligned_evidence(

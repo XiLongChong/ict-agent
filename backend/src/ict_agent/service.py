@@ -450,6 +450,9 @@ def get_case_detail(
                 case_id=str(investigation[1]),
                 report=json.loads(str(investigation[2])),
                 evidence=json.loads(str(investigation[3])),
+                protocol=(
+                    json.loads(str(investigation[5])) if investigation[5] is not None else None
+                ),
                 created_at=str(investigation[4]),
             )
         reviews = [
@@ -538,12 +541,15 @@ def recover_interrupted_investigations(*, settings: Settings | None = None) -> i
 def _save_investigation(
     prepared: PreparedInvestigation, outcome: InvestigationOutcome
 ) -> InvestigationRecord:
+    if outcome.protocol is None:
+        raise RuntimeError("调查已完成但缺少最后一轮模型协议。")
     created_at = datetime.now(UTC).isoformat()
     record = InvestigationRecord(
         investigation_id=uuid4().hex,
         case_id=prepared.case.case_id,
         report=outcome.report,
         evidence=outcome.evidence,
+        protocol=outcome.protocol,
         created_at=created_at,
     )
     CaseStore(prepared.settings.case_database_path).save_investigation(
@@ -555,6 +561,7 @@ def _save_investigation(
                 [item.model_dump(mode="json") for item in record.evidence],
                 ensure_ascii=False,
             ),
+            protocol_json=outcome.protocol.model_dump_json(),
             created_at=record.created_at,
         )
     )

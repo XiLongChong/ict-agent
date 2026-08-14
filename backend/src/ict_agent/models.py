@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, JsonValue, model_validator
 
 type JsonScalar = str | int | float | bool | None
 BusinessType = Literal["DISTRIBUTION", "PROJECT", "SERVICE_CLOUD"]
@@ -358,6 +358,18 @@ class InvestigationReport(BaseModel):
     trace: Annotated[list[InvestigationTraceEvent], Field(max_length=30)] = []
 
 
+class InvestigationProtocolSnapshot(BaseModel):
+    """一次调查最后一轮的完整模型请求与响应。"""
+
+    schema_version: Literal["1.0"] = "1.0"
+    request_index: Annotated[int, Field(ge=1)]
+    model_name: str
+    model_settings: dict[str, JsonValue]
+    model_request_parameters: dict[str, JsonValue]
+    messages: list[dict[str, JsonValue]]
+    response: dict[str, JsonValue] | None = None
+
+
 class InvestigationRecord(BaseModel):
     """已经保存的一次调查。"""
 
@@ -365,6 +377,7 @@ class InvestigationRecord(BaseModel):
     case_id: str
     report: InvestigationReport
     evidence: list[Evidence]
+    protocol: InvestigationProtocolSnapshot | None = None
     created_at: str
 
 
