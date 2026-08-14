@@ -127,8 +127,14 @@ Pydantic AI 输出校验器拒绝以下报告并要求模型修正：
 
 最终 `REPORT_COMPLETED` 携带完整 `InvestigationRecord`。页面使用 Fetch Streams 增量解析；报告中的
 trace 保存工具完成和报告校验轨迹，供刷新后回放。页面以顺序消息流展示可验证的审查进度；完成后
-默认只展示结构化结论与处理建议，完整分析依据、工具证据和执行路径保持折叠可查。页面不展示模型
-私有思维链。
+默认只展示结构化结论与处理建议，完整分析依据、工具证据和执行路径保持折叠可查。
+
+每次调查另以 `InvestigationProtocolSnapshot 1.0` 保存最后一次模型请求及其最终响应，避免重复保存多轮
+请求中高度重叠的累计历史。请求快照包含模型设置、完整系统指令、函数工具与输出工具 JSON Schema、
+此前全部消息、工具调用、工具返回和重试提示；最终响应保留 Pydantic AI 的原始消息结构，包括 DeepSeek
+返回的 `ThinkingPart/reasoning_content` 和 `final_result`。该 JSON 在 AI 审查页单独折叠展示，用于开发
+调试和调查复盘，不参与业务结论或人工复核状态计算。协议快照保存在独立表中；启用前的历史调查不伪造
+或回填消息。
 
 公开案件状态只有 `PENDING_AGENT_REVIEW`、`PENDING_HUMAN_REVIEW`、`ACTION_IN_PROGRESS` 和
 `CLOSED`，页面对应待调查、待复核、处理中和已关闭。Agent 执行时数据库短暂使用

@@ -11,6 +11,9 @@ const events = ref([]);
 const record = ref(props.caseItem?.latest_investigation || null);
 const error = ref("");
 const canInvestigate = computed(() => props.caseItem?.status === "PENDING_AGENT_REVIEW");
+const protocolJson = computed(() =>
+  record.value?.protocol ? JSON.stringify(record.value.protocol, null, 2) : ""
+);
 
 watch(
   () => props.caseItem,
@@ -297,6 +300,28 @@ function completenessLabel(value) {
               </article>
             </div>
           </section>
+        </div>
+      </details>
+
+      <details class="card">
+        <summary class="cursor-pointer select-none px-5 py-4 text-sm font-semibold text-ink">
+          查看模型原始 JSON
+        </summary>
+        <div class="border-t border-border px-5 py-5">
+          <template v-if="record.protocol">
+            <div class="mb-3 flex flex-wrap items-center gap-2 text-sm text-muted">
+              <span>最后一次完整请求与最终响应</span>
+              <Badge tone="neutral">第 {{ record.protocol.request_index }} 次请求</Badge>
+              <Badge tone="neutral">{{ record.protocol.model_name }}</Badge>
+            </div>
+            <pre
+              data-testid="investigation-protocol-json"
+              class="max-h-[65vh] overflow-auto rounded-lg bg-[#101828] p-4 font-mono text-xs leading-5 text-[#d0d5dd]"
+            ><code>{{ protocolJson }}</code></pre>
+          </template>
+          <p v-else class="text-sm leading-6 text-muted">
+            该调查完成时尚未启用原始协议记录；后续新调查将显示最后一次累计请求与最终响应。
+          </p>
         </div>
       </details>
     </template>
