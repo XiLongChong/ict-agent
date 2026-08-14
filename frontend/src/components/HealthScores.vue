@@ -225,7 +225,5 @@ function jumpToPage() {
         </div>
       </div>
     </section>
-
-    <p class="text-[0.75rem] text-muted">健康度由确定性经营指标计算（回款 / 项目进度 / 应收 / 合同授信 / 担保人 / 舆情六维加权），不消耗模型额度。</p>
   </div>
 </template>
