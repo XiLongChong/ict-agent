@@ -148,8 +148,7 @@ function jumpToPage() {
           <tbody>
             <tr v-for="item in paginated" :key="item.id" class="hover:bg-canvas/60">
               <td>
-                <strong class="block truncate text-[0.8125rem] text-ink" :title="item.subject_label">{{ item.subject_label }}</strong>
-                <span class="text-[0.75rem] text-muted">{{ item.subject_id }}</span>
+                <strong class="block truncate text-[0.8125rem] text-ink" :title="`${item.subject_id} ${item.subject_label}`">{{ item.subject_id }} {{ item.subject_label }}</strong>
               </td>
               <td><Badge tone="neutral">{{ item.subject_type === "CUSTOMER" ? "客户" : "项目合同" }}</Badge></td>
               <td>
