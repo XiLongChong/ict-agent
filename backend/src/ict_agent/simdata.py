@@ -54,24 +54,6 @@ class SimulatedGuarantor:
 
 
 @dataclass(frozen=True)
-class SimulatedSentiment:
-    """模拟舆情事件。"""
-
-    sentiment_id: str
-    title: str
-    source: str
-    published_at: str
-    subject_type: str
-    subject: str
-    event_type: str
-    severity: str
-    impact_amount_wan: float
-    verify_status: str  # PENDING | CONFIRMED | EXCLUDED
-    related_project: str
-    process_status: str
-
-
-@dataclass(frozen=True)
 class SimulatedNewProject:
     """模拟新项目（事前评估用）。"""
 
@@ -95,7 +77,6 @@ class SimulatedData:
 
     project_stages: tuple[SimulatedProjectStage, ...]
     guarantors: tuple[SimulatedGuarantor, ...]
-    sentiments: tuple[SimulatedSentiment, ...]
     new_projects: tuple[SimulatedNewProject, ...]
 
 
@@ -125,15 +106,6 @@ def _to_int(value: str | None) -> int:
         return int(float(value))
     except ValueError:
         return 0
-
-
-def _normalize_sentiment_status(raw: str) -> str:
-    value = str(raw or "").strip()
-    if value in ("已确认", "CONFIRMED"):
-        return "CONFIRMED"
-    if value in ("已排除", "EXCLUDED"):
-        return "EXCLUDED"
-    return "PENDING"
 
 
 def _amount_tier(amount_wan: float) -> str:
@@ -175,23 +147,6 @@ def load_simulated_data(simulated_dir: Path) -> SimulatedData:
         )
         for row in _read_rows(simulated_dir / "sim_guarantors.csv")
     )
-    sentiments = tuple(
-        SimulatedSentiment(
-            sentiment_id=str(row.get("舆情编号", "")),
-            title=str(row.get("标题", "")),
-            source=str(row.get("来源", "")),
-            published_at=str(row.get("发布时间", "")),
-            subject_type=str(row.get("涉及主体类型", "")),
-            subject=str(row.get("涉及主体", "")),
-            event_type=str(row.get("事件类型", "")),
-            severity=str(row.get("严重程度", "")),
-            impact_amount_wan=_to_float(row.get("影响金额_万元")),
-            verify_status=_normalize_sentiment_status(row.get("真实性状态") or ""),
-            related_project=str(row.get("关联合同或项目", "")),
-            process_status=str(row.get("处理状态", "")),
-        )
-        for row in _read_rows(simulated_dir / "sim_sentiments.csv")
-    )
     new_projects = tuple(
         SimulatedNewProject(
             project_id=str(row.get("项目编号", "")),
@@ -212,6 +167,5 @@ def load_simulated_data(simulated_dir: Path) -> SimulatedData:
     return SimulatedData(
         project_stages=stages,
         guarantors=guarantors,
-        sentiments=sentiments,
         new_projects=new_projects,
     )

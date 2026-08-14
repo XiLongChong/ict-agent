@@ -10,7 +10,6 @@ export const labels = {
     SENTIMENT: "舆情",
     HIGH_AMOUNT: "高金额",
   },
-  verifyStatus: { PENDING: "待核验", CONFIRMED: "已确认", EXCLUDED: "已排除" },
   recommendationStatus: { PENDING: "待审批", APPROVED: "已采纳", REJECTED: "已驳回" },
   preAssessmentConclusion: {
     APPROVED: "通过",
@@ -57,7 +56,6 @@ export const statusColor = (value) => ({ PENDING_AGENT_REVIEW: "brand", PENDING_
 export const gradeColor = (value) => ({ HEALTHY: "success", WATCH: "warning", WARNING: "orange", HIGH_RISK: "danger" }[value] || "neutral");
 export const listColor = (value) => ({ WHITE: "success", WATCH: "warning", BLACK: "danger", GENERAL: "neutral" }[value] || "neutral");
 export const severityColor = (value) => ({ LOW: "neutral", MEDIUM: "warning", HIGH: "danger", CRITICAL: "danger" }[value] || "neutral");
-export const verifyStatusColor = (value) => ({ PENDING: "warning", CONFIRMED: "success", EXCLUDED: "neutral" }[value] || "neutral");
 export const recommendationStatusColor = (value) => ({ PENDING: "warning", APPROVED: "success", REJECTED: "neutral" }[value] || "neutral");
 export const alertTypeColor = (value) => ({
   PRE_ASSESSMENT: "brand",

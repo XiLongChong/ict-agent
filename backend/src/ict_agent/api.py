@@ -35,8 +35,6 @@ from ict_agent.models import (
     RiskCaseSummary,
     RiskOverviewResponse,
     RuleRunResponse,
-    SentimentResponse,
-    SentimentVerifyRequest,
     WarningOverviewResponse,
 )
 from ict_agent.service import (
@@ -53,7 +51,6 @@ from ict_agent.service import (
     list_health_scores,
     list_projects_service,
     list_recommendations,
-    list_sentiments_service,
     prepare_investigation,
     recalculate_health_scores,
     recover_interrupted_investigations,
@@ -63,7 +60,6 @@ from ict_agent.service import (
     run_rule_scan,
     send_feishu_test_service,
     stream_prepared_investigation,
-    verify_sentiment_service,
     warning_overview,
 )
 
@@ -360,36 +356,6 @@ async def acknowledge_alert_api(alert_id: str) -> dict[str, object]:
 
 
 @app.get(
-    "/api/v1/sentiments",
-    response_model=list[SentimentResponse],
-    responses={503: {"model": ErrorResponse}},
-    tags=["risk-warning"],
-)
-async def sentiments() -> list[SentimentResponse]:
-    """返回模拟舆情列表。"""
-
-    return list_sentiments_service()
-
-
-@app.post(
-    "/api/v1/sentiments/{sentiment_id}/verify",
-    response_model=SentimentResponse,
-    responses={
-        404: {"model": ErrorResponse},
-        409: {"model": ErrorResponse},
-        503: {"model": ErrorResponse},
-    },
-    tags=["risk-warning"],
-)
-async def verify_sentiment_api(
-    sentiment_id: str, request: SentimentVerifyRequest
-) -> SentimentResponse:
-    """核验舆情（确认/排除）并写留痕。"""
-
-    return verify_sentiment_service(sentiment_id, request)
-
-
-@app.get(
     "/api/v1/projects",
     response_model=list[ProjectViewResponse],
     responses={503: {"model": ErrorResponse}},
@@ -435,7 +401,6 @@ async def frontend_index() -> FileResponse:
 @app.get("/risk", include_in_schema=False)
 @app.get("/health", include_in_schema=False)
 @app.get("/lists", include_in_schema=False)
-@app.get("/sentiments", include_in_schema=False)
 @app.get("/projects", include_in_schema=False)
 @app.get("/cases", include_in_schema=False)
 @app.get("/cases/{case_id}", include_in_schema=False)

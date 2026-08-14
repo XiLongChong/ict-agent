@@ -154,15 +154,13 @@ trace 保存工具完成和报告校验轨迹，供刷新后回放。页面以�
 | `POST /api/v1/list-recommendations/{id}/reviews` | 名单建议审批/驳回（404 不存在 / 409 已处理） |
 | `GET /api/v1/alerts` | 预警列表 |
 | `POST /api/v1/alerts/{id}/acknowledge` | 确认预警 |
-| `GET /api/v1/sentiments` | 模拟舆情列表 |
-| `POST /api/v1/sentiments/{id}/verify` | 舆情核验（确认/排除，404 不存在 / 409 已核验） |
 | `GET /api/v1/projects` | 项目类视图（存量合同 + 模拟新项目，金额万元） |
 | `POST /api/v1/projects/{id}/pre-assessment/run` | 模拟新项目事前评估（黑名单/金额档位/历史超期/担保人） |
 | `GET /api/v1/warning/overview` | 预警总览聚合 |
 | `GET /api/v1/integrations/feishu/status` | 飞书配置、长连接和通知群绑定状态 |
 | `POST /api/v1/integrations/feishu/test` | 向已绑定群发送连通性测试卡片 |
 
-阶段 A（风险预警）说明：健康度由确定性指标计算（六维加权，可配置），不消耗模型额度；模拟数据（担保人/项目阶段/舆情/新项目）位于 `data/simulated/`，页面必须标注“模拟”；名单变更保留人工审批并写审计。
+阶段 A（风险预警）说明：健康度由确定性指标计算（加权，可配置），不消耗模型额度；模拟数据（担保人/项目阶段/新项目）位于 `data/simulated/`，页面必须标注“模拟”；名单变更保留人工审批并写审计。
 
 通用 `/api/v1/chat` 已删除。
 

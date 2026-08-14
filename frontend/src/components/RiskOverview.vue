@@ -8,7 +8,6 @@ import {
   FileWarning,
   ListChecks,
   ListTodo,
-  Newspaper,
   ShieldAlert,
 } from "lucide-vue-next";
 import Badge from "./ui/Badge.vue";
@@ -97,7 +96,6 @@ const metrics = computed(() => [
   { label: "待处理案件", value: pendingCases.value, tone: "warning", icon: ListTodo },
   { label: "健康度下降", value: warning.value.health_drop_count ?? "—", tone: "orange", icon: FileWarning },
   { label: "待审批名单", value: warning.value.pending_list_recommendations ?? "—", tone: "danger", icon: ListChecks },
-  { label: "未处理舆情", value: warning.value.open_sentiments ?? "—", tone: "warning", icon: Newspaper },
   { label: "健康度高危", value: warning.value.high_risk_count ?? "—", tone: "danger", icon: ShieldAlert },
 ]);
 

@@ -44,8 +44,7 @@ def build_connection_card() -> dict[str, object]:
             {
                 "tag": "markdown",
                 "content": (
-                    "**当前群已设为风险通知群**\n"
-                    "后续可接收规则扫描、AI 审查、舆情核验和事前评估结果。"
+                    "**当前群已设为风险通知群**\n后续可接收规则扫描、AI 审查和事前评估结果。"
                 ),
             }
         ],

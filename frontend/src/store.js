@@ -9,7 +9,6 @@ export const workspace = reactive({
   healthScores: [],
   recommendations: [],
   alerts: [],
-  sentiments: [],
   projects: [],
   loading: true,
   scanning: false,
@@ -27,7 +26,6 @@ const warningEndpoints = [
   ["healthScores", "/api/v1/health-scores"],
   ["recommendations", "/api/v1/list-recommendations"],
   ["alerts", "/api/v1/alerts"],
-  ["sentiments", "/api/v1/sentiments"],
   ["projects", "/api/v1/projects"],
 ];
 
@@ -111,21 +109,6 @@ export async function acknowledgeAlert(id) {
   try {
     await api(`/api/v1/alerts/${id}/acknowledge`, { method: "POST" });
     await Promise.all([refresh("alerts"), refresh("warningOverview")]);
-  } catch (error) {
-    workspace.status = { text: error.message, error: true };
-    throw error;
-  }
-}
-
-export async function verifySentiment(id, body) {
-  try {
-    const updated = await api(`/api/v1/sentiments/${id}/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    await Promise.all([refresh("sentiments"), refresh("warningOverview")]);
-    return updated;
   } catch (error) {
     workspace.status = { text: error.message, error: true };
     throw error;

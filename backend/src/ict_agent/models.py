@@ -431,7 +431,7 @@ class RiskOverviewResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# 阶段 A：风险预警系统（健康度 / 名单建议 / 预警 / 舆情 / 项目）
+# 阶段 A：风险预警系统（健康度 / 名单建议 / 预警 / 项目）
 # ---------------------------------------------------------------------------
 
 
@@ -514,32 +514,6 @@ class AlertResponse(BaseModel):
     related_id: str = ""
 
 
-class SentimentResponse(BaseModel):
-    """一条模拟舆情。"""
-
-    sentiment_id: str
-    title: str
-    source: str
-    published_at: str
-    subject_type: str
-    subject: str
-    event_type: str
-    severity: str
-    impact_amount_wan: float
-    verify_status: str
-    verify_label: str
-    related_project: str
-    process_status: str
-    simulated: bool = True
-
-
-class SentimentVerifyRequest(BaseModel):
-    """舆情核验请求。"""
-
-    decision: Literal["CONFIRMED", "EXCLUDED"]
-    verifier: str = Field(min_length=1, max_length=100)
-
-
 class ProjectViewResponse(BaseModel):
     """项目类视图（合同 + 模拟阶段/担保人 + 真实风险指标）。"""
 
@@ -585,7 +559,6 @@ class WarningOverviewResponse(BaseModel):
     in_process_alerts: int
     health_drop_count: int
     pending_list_recommendations: int
-    open_sentiments: int
     high_risk_count: int
     risk_exposure: float
     grade_distribution: dict[str, int]

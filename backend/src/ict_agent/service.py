@@ -65,13 +65,10 @@ from ict_agent.models import (
     RiskPriority,
     RuleHit,
     RuleRunResponse,
-    SentimentResponse,
-    SentimentVerifyRequest,
     WarningOverviewResponse,
 )
 from ict_agent.project import list_new_projects, run_pre_assessment
 from ict_agent.rules import build_rule_scan
-from ict_agent.sentiment import list_sentiments, verify_sentiment
 from ict_agent.simdata import SimulatedData, load_simulated_data
 from ict_agent.tools import (
     get_ar_trend,
@@ -821,52 +818,6 @@ def acknowledge_alert(
         raise ServiceError(str(exc), request_id, 503) from exc
 
 
-def list_sentiments_service(
-    *,
-    settings: Settings | None = None,
-) -> list[SentimentResponse]:
-    """返回模拟舆情列表。"""
-
-    request_id = uuid4().hex
-    try:
-        runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
-        sim = _simulated_data(runtime_settings)
-        return [SentimentResponse.model_validate(item) for item in list_sentiments(sim)]
-    except (ConfigurationError, DataAccessError) as exc:
-        raise ServiceError(str(exc), request_id, 503) from exc
-
-
-def verify_sentiment_service(
-    sentiment_id: str,
-    request: SentimentVerifyRequest,
-    *,
-    settings: Settings | None = None,
-) -> SentimentResponse:
-    """核验舆情并写留痕（通知/预警）。"""
-
-    request_id = uuid4().hex
-    try:
-        runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
-        sim = _simulated_data(runtime_settings)
-        store = CaseStore(runtime_settings.case_database_path)
-        now = datetime.now(UTC).isoformat()
-        item = verify_sentiment(
-            sim,
-            sentiment_id,
-            decision=request.decision,
-            verifier=request.verifier,
-            now=now,
-            store=store,
-        )
-        return SentimentResponse.model_validate(item)
-    except KeyError as exc:
-        raise ServiceError(str(exc), request_id, 404) from exc
-    except ValueError as exc:
-        raise ServiceError(str(exc), request_id, 409) from exc
-    except (ConfigurationError, DataAccessError) as exc:
-        raise ServiceError(str(exc), request_id, 503) from exc
-
-
 def list_projects_service(
     *,
     settings: Settings | None = None,
@@ -958,10 +909,6 @@ def warning_overview(
             if str(row[12]) == "PENDING"
         ]
         open_alerts = [_alert_response(tuple(row)) for row in alert_rows if str(row[8]) == "OPEN"]
-        sentiments = list_sentiments(sim)
-        open_sentiments = sum(
-            1 for item in sentiments if item.get("verify_status") in ("PENDING", "CONFIRMED")
-        )
         risk_exposure = _as_float(case_store.fetch_overview().rows[0][6])
 
         return WarningOverviewResponse(
@@ -971,7 +918,6 @@ def warning_overview(
             ),
             health_drop_count=health_drop_count,
             pending_list_recommendations=len(pending_recommendations),
-            open_sentiments=open_sentiments,
             high_risk_count=grade_distribution.get("HIGH_RISK", 0),
             risk_exposure=risk_exposure,
             grade_distribution=grade_distribution,

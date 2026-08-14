@@ -912,16 +912,6 @@ class CaseStore:
         )
         connection.execute(
             """
-            CREATE TABLE IF NOT EXISTS sentiment_verifications (
-                sentiment_id VARCHAR PRIMARY KEY,
-                decision VARCHAR NOT NULL,
-                verifier VARCHAR NOT NULL,
-                verified_at TIMESTAMP NOT NULL
-            )
-            """
-        )
-        connection.execute(
-            """
             CREATE TABLE IF NOT EXISTS integration_settings (
                 setting_key VARCHAR PRIMARY KEY,
                 setting_value VARCHAR NOT NULL,
@@ -1575,34 +1565,6 @@ class CaseStore:
                 )
         except duckdb.Error as exc:
             raise DataAccessError("外部集成配置无法写入案件数据库。") from exc
-
-    def fetch_sentiment_verification(self, sentiment_id: str) -> QueryResult:
-        """返回一条舆情核验记录（sentiment_id 主键）。"""
-
-        return self._fetch(
-            "SELECT sentiment_id, decision, verifier, verified_at "
-            "FROM sentiment_verifications WHERE sentiment_id = ?",
-            [sentiment_id],
-        )
-
-    def save_sentiment_verification(
-        self, sentiment_id: str, decision: str, verifier: str, verified_at: str
-    ) -> None:
-        """写入舆情核验记录（幂等：同 sentiment_id 已存在时更新为最新核验）。"""
-
-        self.ensure_ready()
-        try:
-            with duckdb.connect(str(self.database_path)) as connection:
-                connection.execute(
-                    "INSERT INTO sentiment_verifications VALUES (?, ?, ?, ?) "
-                    "ON CONFLICT (sentiment_id) DO UPDATE SET "
-                    "decision = excluded.decision, "
-                    "verifier = excluded.verifier, "
-                    "verified_at = excluded.verified_at",
-                    [sentiment_id, decision, verifier, verified_at],
-                )
-        except duckdb.Error as exc:
-            raise DataAccessError("舆情核验无法写入案件数据库。") from exc
 
     def save_investigation(self, record: InvestigationWrite) -> None:
         """保存调查并将案件推进到待审核。"""

@@ -11,16 +11,15 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 from ict_agent.data import DuckDBStore
-from ict_agent.simdata import SimulatedData, SimulatedProjectStage, SimulatedSentiment
+from ict_agent.simdata import SimulatedData, SimulatedProjectStage
 
-# 客户健康度六维权重（合计 100%）
+# 客户健康度五维权重（合计 100%，舆情维度已随舆情模块移除）
 HEALTH_WEIGHTS: dict[str, float] = {
-    "payment": 30.0,  # 回款节奏
-    "progress": 20.0,  # 项目进度
-    "receivable": 15.0,  # 应收超期
-    "credit": 15.0,  # 合同授信/名单
-    "guarantor": 10.0,  # 客户担保人
-    "sentiment": 10.0,  # 舆情
+    "payment": 33.33,  # 回款节奏
+    "progress": 22.22,  # 项目进度
+    "receivable": 16.67,  # 应收超期
+    "credit": 16.67,  # 合同授信/名单
+    "guarantor": 11.11,  # 客户担保人
 }
 
 CUSTOMER_DIMENSION_NAMES: dict[str, str] = {
@@ -29,16 +28,14 @@ CUSTOMER_DIMENSION_NAMES: dict[str, str] = {
     "receivable": "应收超期",
     "credit": "合同授信",
     "guarantor": "客户担保人",
-    "sentiment": "舆情",
 }
 
-# 合同（项目）健康度五维权重（合计 100%）
+# 合同（项目）健康度四维权重（合计 100%，舆情维度已随舆情模块移除）
 CONTRACT_HEALTH_WEIGHTS: dict[str, float] = {
-    "progress": 40.0,  # 项目进度（阶段 + 里程碑）
-    "payment": 25.0,  # 计划回款
-    "contract": 15.0,  # 合同毛利
-    "guarantor": 10.0,  # 担保人
-    "sentiment": 10.0,  # 舆情
+    "progress": 44.44,  # 项目进度（阶段 + 里程碑）
+    "payment": 27.78,  # 计划回款
+    "contract": 16.67,  # 合同毛利
+    "guarantor": 11.11,  # 担保人
 }
 
 CONTRACT_DIMENSION_NAMES: dict[str, str] = {
@@ -46,7 +43,6 @@ CONTRACT_DIMENSION_NAMES: dict[str, str] = {
     "payment": "计划回款",
     "contract": "合同毛利",
     "guarantor": "担保人",
-    "sentiment": "舆情",
 }
 
 # 项目阶段基础分
@@ -66,14 +62,6 @@ _LIST_STATUS_SCORES: dict[int, float] = {0: 80.0, 1: 100.0, 2: 10.0, 3: 40.0}
 _ABNORMAL_GUARANTOR_STATUS: frozenset[str] = frozenset(
     {"经营异常", "失联待核验", "待核验", "失信", "注销", "逾期"}
 )
-
-# 负面舆情事件类型（sim_sentiments.事件类型）；正面报道不扣分
-_NEGATIVE_EVENT_TYPES: frozenset[str] = frozenset(
-    {"失联", "经营异常", "诉讼", "停业传闻", "失信被执行", "负面新闻", "经营风险", "股权变动"}
-)
-
-# 舆情严重程度扣分（已确认/待核验的负面事件）
-_SENTIMENT_PENALTY: dict[str, float] = {"重大": 30.0, "高": 20.0, "中": 10.0, "低": 5.0}
 
 # 缺数据维度的中性分
 _MISSING_NEUTRAL = 60.0
@@ -313,7 +301,6 @@ def _compute_customer(
     flow = _fetch_flow_3m(store, customer_id)
     margin_rate = _fetch_customer_margin(store, customer_name)
     guarantor_status = _worst_guarantor_status(_guarantors_of(sim, customer_id, customer_name))
-    sentiments = _customer_sentiments(sim, customer_id, customer_name)
     stages = [s for s in sim.project_stages if s.customer_name == customer_name]
 
     ar_amount = _as_float(latest_ar["ar_amount"]) if latest_ar else 0.0
@@ -329,7 +316,6 @@ def _compute_customer(
     payment_score, payment_missing = _payment_score(flow)
     credit_score, credit_missing = _credit_score(utilization, list_status, margin_rate)
     guarantor_score, guarantor_missing = _guarantor_score(guarantor_status)
-    sentiment_score, sentiment_missing = _sentiment_score(sentiments)
     progress_score, progress_missing = _progress_score(stages)
 
     dimensions: list[dict[str, Any]] = [
@@ -368,13 +354,6 @@ def _compute_customer(
             "weight": HEALTH_WEIGHTS["guarantor"],
             "missing": guarantor_missing,
         },
-        {
-            "key": "sentiment",
-            "name": CUSTOMER_DIMENSION_NAMES["sentiment"],
-            "score": sentiment_score,
-            "weight": HEALTH_WEIGHTS["sentiment"],
-            "missing": sentiment_missing,
-        },
     ]
     total = round(sum(d["score"] * d["weight"] for d in dimensions) / 100.0, 1)
 
@@ -391,7 +370,6 @@ def _compute_customer(
             list_status,
             margin_rate,
             guarantor_status,
-            sentiments,
             stages,
         ),
         "trend": _fetch_customer_trend(store, customer_id),
@@ -451,24 +429,6 @@ def _guarantor_score(worst_status: str | None) -> tuple[float, bool]:
     return 60.0, False
 
 
-def _sentiment_score(sentiments: list[SimulatedSentiment]) -> tuple[float, bool]:
-    """舆情维度：无负面事件记中性；已确认负面按严重程度扣分，待核验按半额扣分。
-
-    已排除（EXCLUDED）事件在传入前已被过滤，不计入任何扣分。
-    """
-
-    if not sentiments:
-        return _MISSING_NEUTRAL, True
-    penalty = 0.0
-    for item in sentiments:
-        base = _SENTIMENT_PENALTY.get(item.severity, 20.0)
-        if item.verify_status == "CONFIRMED":
-            penalty += base
-        elif item.verify_status == "PENDING":
-            penalty += base * 0.5
-    return round(_clamp(100.0 - penalty), 1), False
-
-
 def _progress_score(stages: list[SimulatedProjectStage]) -> tuple[float, bool]:
     """项目进度维度：按客户名下项目里程碑进度均值。"""
 
@@ -500,26 +460,12 @@ def _worst_guarantor_status(guarantors: list[Any]) -> str | None:
     return statuses[0]
 
 
-def _customer_sentiments(
-    sim: SimulatedData, customer_id: str, customer_name: str
-) -> list[SimulatedSentiment]:
-    return [
-        s
-        for s in sim.sentiments
-        if s.subject_type == "客户"
-        and s.subject in (customer_id, customer_name)
-        and s.verify_status != "EXCLUDED"
-        and s.event_type in _NEGATIVE_EVENT_TYPES
-    ]
-
-
 def _customer_drivers(
     overdue_rate: float | None,
     collection_ratio: float | None,
     list_status: int | None,
     margin_rate: float | None,
     guarantor_status: str | None,
-    sentiments: list[SimulatedSentiment],
     stages: list[SimulatedProjectStage],
 ) -> dict[str, list[str]]:
     down: list[str] = []
@@ -544,13 +490,6 @@ def _customer_drivers(
         down.append(f"担保人状态异常（{guarantor_status}）")
     elif guarantor_status == "正常":
         up.append("担保人状态正常")
-    if sentiments:
-        confirmed = sum(1 for s in sentiments if s.verify_status == "CONFIRMED")
-        pending = sum(1 for s in sentiments if s.verify_status == "PENDING")
-        if confirmed:
-            down.append(f"存在 {confirmed} 条已确认负面舆情")
-        if pending:
-            down.append(f"存在 {pending} 条待核验舆情")
     if stages:
         average = sum(stage.milestone_progress for stage in stages) / len(stages)
         if average >= 80:
@@ -596,8 +535,6 @@ def _compute_contract(
         or _guarantors_of(sim, "", stage.customer_name)
     )
     guarantor_score, guarantor_missing = _guarantor_score(worst_guarantor)
-    sentiments = _contract_sentiments(sim, stage)
-    sentiment_score, sentiment_missing = _sentiment_score(sentiments)
 
     dimensions: list[dict[str, Any]] = [
         {
@@ -628,13 +565,6 @@ def _compute_contract(
             "weight": CONTRACT_HEALTH_WEIGHTS["guarantor"],
             "missing": guarantor_missing,
         },
-        {
-            "key": "sentiment",
-            "name": CONTRACT_DIMENSION_NAMES["sentiment"],
-            "score": sentiment_score,
-            "weight": CONTRACT_HEALTH_WEIGHTS["sentiment"],
-            "missing": sentiment_missing,
-        },
     ]
     total = round(sum(d["score"] * d["weight"] for d in dimensions) / 100.0, 1)
 
@@ -645,9 +575,7 @@ def _compute_contract(
         "score": total,
         "grade": grade_of(total),
         "dimensions": dimensions,
-        "drivers": _contract_drivers(
-            stage, payment_score, margin_rate, worst_guarantor, sentiments
-        ),
+        "drivers": _contract_drivers(stage, payment_score, margin_rate, worst_guarantor),
         "trend": [],
         "computed_at": _now_iso(),
     }
@@ -672,22 +600,11 @@ def _planned_payment_score(planned_date: str | None, today: date) -> tuple[float
     return 100.0, False
 
 
-def _contract_sentiments(
-    sim: SimulatedData, stage: SimulatedProjectStage
-) -> list[SimulatedSentiment]:
-    return [
-        s
-        for s in sim.sentiments
-        if s.related_project == stage.project_name and s.verify_status != "EXCLUDED"
-    ]
-
-
 def _contract_drivers(
     stage: SimulatedProjectStage,
     payment_score: float,
     margin_rate: float | None,
     worst_guarantor: str | None,
-    sentiments: list[SimulatedSentiment],
 ) -> dict[str, list[str]]:
     down: list[str] = []
     up: list[str] = []
@@ -705,8 +622,4 @@ def _contract_drivers(
         down.append(f"合同毛利为负（{margin_rate:.1%}）")
     if worst_guarantor is not None and worst_guarantor != "正常":
         down.append(f"担保人状态异常（{worst_guarantor}）")
-    if sentiments:
-        confirmed = sum(1 for s in sentiments if s.verify_status == "CONFIRMED")
-        if confirmed:
-            down.append(f"存在 {confirmed} 条已确认项目负面舆情")
     return {"down": down, "up": up}

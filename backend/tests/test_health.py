@@ -93,16 +93,6 @@ GUARANTORS = (
     "G4,C001,测试客户甲,担保公司丁,公司,800,正常,项目P005,存量项目担保\n"
 )
 
-SENTIMENTS = (
-    "舆情编号,标题,来源,发布时间,涉及主体类型,涉及主体,事件类型,严重程度,"
-    "影响金额_万元,真实性状态,关联合同或项目,处理状态\n"
-    "S1,测试客户丙涉诉,法院公告,2026-07-01,客户,测试客户丙,诉讼,高,200,已确认,,已处理\n"
-    "S2,测试客户丙资金链紧张,网络新闻,2026-07-10,客户,测试客户丙,负面新闻,中,0,待核验,,未处理\n"
-    "S3,担保公司乙经营异常,工商公示,2026-06-20,担保人,担保公司乙,经营异常,高,0,已确认,项目P002,处理中\n"
-    "S4,测试客户甲正常经营,行业媒体,2026-07-05,客户,测试客户甲,正面报道,低,0,已确认,,已处理\n"
-    "S5,测试客户乙网传欠款已排除,网络新闻,2026-07-02,客户,测试客户乙,负面新闻,中,0,已排除,,已处理\n"
-)
-
 NEW_PROJECTS = (
     "项目编号,项目名称,客户编号,客户名称,客户名单,项目金额_万元,授信金额_万元,"
     "担保人,申请日期,计划回款日期,备注\n"
@@ -136,7 +126,6 @@ def sim(tmp_path: Path):
     simulated_dir.mkdir()
     _write_csv(simulated_dir / "sim_project_stages.csv", PROJECT_STAGES)
     _write_csv(simulated_dir / "sim_guarantors.csv", GUARANTORS)
-    _write_csv(simulated_dir / "sim_sentiments.csv", SENTIMENTS)
     _write_csv(simulated_dir / "sim_new_projects.csv", NEW_PROJECTS)
     return load_simulated_data(simulated_dir)
 
@@ -188,7 +177,7 @@ def test_health_weights_sum() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 客户健康度：结构 / 缺失中性分 / 维度分 / 舆情排除 / 趋势
+# 客户健康度：结构 / 缺失中性分 / 维度分 / 趋势
 # ---------------------------------------------------------------------------
 
 
@@ -201,7 +190,7 @@ def test_customer_health_output_structure(store: DuckDBStore, sim) -> None:
         assert item["subject_label"]
         assert isinstance(item["score"], float)
         assert item["grade"] in {"HEALTHY", "WATCH", "WARNING", "HIGH_RISK"}
-        assert len(item["dimensions"]) == 6
+        assert len(item["dimensions"]) == 5
         for dim in item["dimensions"]:
             assert set(dim) == {"key", "name", "score", "weight", "missing"}
             assert isinstance(dim["missing"], bool)
@@ -222,8 +211,8 @@ def test_customer_health_dimension_weights(store: DuckDBStore, sim) -> None:
 def test_missing_dimensions_neutral(store: DuckDBStore, sim) -> None:
     results = compute_customer_health(store, sim)
     customer = _customer_by_id(results, "C005")
-    # C005 无应收、无销售/回款、无担保人、无舆情、无项目阶段
-    for key in ("payment", "progress", "receivable", "guarantor", "sentiment"):
+    # C005 无应收、无销售/回款、无担保人、无项目阶段
+    for key in ("payment", "progress", "receivable", "guarantor"):
         dim = _dimension(customer, key)
         assert dim["missing"] is True
         assert dim["score"] == pytest.approx(60.0)
@@ -234,30 +223,13 @@ def test_missing_dimensions_neutral(store: DuckDBStore, sim) -> None:
 def test_customer_dimension_scores(store: DuckDBStore, sim) -> None:
     results = compute_customer_health(store, sim)
     customer = _customer_by_id(results, "C003")
-    # C003：黑名单 + 高应收超期率 + 无回款 + 担保人异常 + 已确认/待核验舆情
+    # C003：黑名单 + 高应收超期率 + 无回款 + 担保人异常
     assert _dimension(customer, "receivable")["score"] == pytest.approx(0.0)
     assert _dimension(customer, "payment")["score"] == pytest.approx(0.0)
     assert _dimension(customer, "credit")["score"] == pytest.approx(25.0)
     assert _dimension(customer, "guarantor")["score"] == pytest.approx(30.0)
-    assert _dimension(customer, "sentiment")["score"] == pytest.approx(75.0)
     assert _dimension(customer, "progress")["score"] == pytest.approx(90.0)
     assert customer["grade"] == "HIGH_RISK"
-
-
-def test_sentiment_excluded_not_counted(store: DuckDBStore, sim) -> None:
-    results = compute_customer_health(store, sim)
-    # C002 仅有一条已排除负面舆情，视为无舆情 → 中性 60 且缺失
-    c002 = _customer_by_id(results, "C002")
-    assert _dimension(c002, "sentiment")["missing"] is True
-    assert _dimension(c002, "sentiment")["score"] == pytest.approx(60.0)
-    # C005 无任何舆情事件 → 同样中性 60 且缺失（证明已排除事件不影响）
-    c005 = _customer_by_id(results, "C005")
-    assert _dimension(c005, "sentiment")["missing"] is True
-    assert _dimension(c005, "sentiment")["score"] == pytest.approx(60.0)
-    # C003 的已确认/待核验负面舆情确实降低分数
-    c003 = _customer_by_id(results, "C003")
-    assert _dimension(c003, "sentiment")["missing"] is False
-    assert _dimension(c003, "sentiment")["score"] == pytest.approx(75.0)
 
 
 def test_customer_trend_from_ar_snapshots(store: DuckDBStore, sim) -> None:
@@ -277,7 +249,6 @@ def test_customer_drivers_present(store: DuckDBStore, sim) -> None:
     joined = "，".join(c003["drivers"]["down"])
     assert "黑名单" in joined
     assert "担保人状态异常" in joined
-    assert "已确认负面舆情" in joined
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +266,7 @@ def test_contract_health(store: DuckDBStore, sim, monkeypatch) -> None:
         assert item["subject_type"] == "CONTRACT"
         assert item["subject_id"]
         assert item["subject_label"]
-        assert len(item["dimensions"]) == 5
+        assert len(item["dimensions"]) == 4
         assert set(item["drivers"]) == {"down", "up"}
         assert item["trend"] == []
 
@@ -307,18 +278,16 @@ def test_contract_health(store: DuckDBStore, sim, monkeypatch) -> None:
     assert _dimension(c1, "payment")["score"] == pytest.approx(85.0)
     assert _dimension(c1, "contract")["score"] == pytest.approx(90.0)
     assert _dimension(c1, "guarantor")["score"] == pytest.approx(100.0)
-    assert _dimension(c1, "sentiment")["missing"] is True
-    assert c1["score"] == pytest.approx(76.35, abs=0.06)
+    assert c1["score"] == pytest.approx(78.17, abs=0.06)
     assert c1["grade"] == "WATCH"
 
-    # C2 项目P002：回款阶段、里程碑 90、计划回款已逾期 43 天、担保人经营异常、项目负面舆情已确认
+    # C2 项目P002：回款阶段、里程碑 90、计划回款已逾期 43 天、担保人经营异常
     c2 = by_id["C2"]
     assert _dimension(c2, "progress")["score"] == pytest.approx(45.0)
     assert _dimension(c2, "payment")["score"] == pytest.approx(10.0)
     assert _dimension(c2, "contract")["score"] == pytest.approx(40.0)
     assert _dimension(c2, "guarantor")["score"] == pytest.approx(30.0)
-    assert _dimension(c2, "sentiment")["score"] == pytest.approx(80.0)
-    assert c2["score"] == pytest.approx(37.5)
+    assert c2["score"] == pytest.approx(32.78, abs=0.06)
     assert c2["grade"] == "HIGH_RISK"
 
 
