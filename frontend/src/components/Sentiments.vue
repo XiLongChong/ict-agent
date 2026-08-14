@@ -54,7 +54,7 @@ async function submitVerify(decision) {
 <template>
   <div class="space-y-5">
     <div class="flex flex-wrap items-center gap-3">
-      <h2 class="text-[17px] font-bold text-ink">舆情监控</h2>
+      <h2 class="text-[1.0625rem] font-bold text-ink">舆情监控</h2>
       <Badge tone="warning">模拟数据</Badge>
       <div class="flex-1"></div>
       <select
@@ -69,7 +69,7 @@ async function submitVerify(decision) {
       <div class="overflow-x-auto">
         <table class="w-full min-w-[980px] text-left text-sm">
           <thead>
-            <tr class="border-b border-border text-[12px] text-muted">
+            <tr class="border-b border-border text-[0.75rem] text-muted">
               <th class="px-4 py-3 font-semibold">标题 / 来源</th>
               <th class="px-4 py-3 font-semibold">发布时间</th>
               <th class="px-4 py-3 font-semibold">涉及主体</th>
@@ -90,12 +90,12 @@ async function submitVerify(decision) {
             >
               <td class="px-4 py-3">
                 <strong class="block max-w-[280px] text-ink">{{ item.title }}</strong>
-                <span class="text-[12px] text-muted">{{ item.source }} · {{ item.sentiment_id }}</span>
+                <span class="text-[0.75rem] text-muted">{{ item.source }} · {{ item.sentiment_id }}</span>
               </td>
               <td class="px-4 py-3 text-muted">{{ formatDate(item.published_at) }}</td>
               <td class="px-4 py-3">
                 <span class="block text-ink">{{ item.subject }}</span>
-                <span class="text-[12px] text-muted">{{ item.subject_type }}</span>
+                <span class="text-[0.75rem] text-muted">{{ item.subject_type }}</span>
               </td>
               <td class="px-4 py-3 text-muted">{{ item.event_type }}</td>
               <td class="px-4 py-3">
@@ -110,12 +110,12 @@ async function submitVerify(decision) {
                 <button
                   v-if="item.verify_status === 'PENDING'"
                   type="button"
-                  class="inline-flex h-8 items-center rounded-lg bg-brand px-3 text-[12px] font-semibold text-white transition-colors hover:bg-brand-dark"
+                  class="inline-flex h-8 items-center rounded-lg bg-brand px-3 text-[0.75rem] font-semibold text-white transition-colors hover:bg-brand-dark"
                   @click="openVerify(item)"
                 >
                   核验
                 </button>
-                <span v-else class="text-[12px] text-muted">{{ item.verify_label }}</span>
+                <span v-else class="text-[0.75rem] text-muted">{{ item.verify_label }}</span>
               </td>
             </tr>
             <tr v-if="!sentiments.length">

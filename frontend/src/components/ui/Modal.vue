@@ -9,7 +9,7 @@ defineEmits(["close"]);
       <div class="absolute inset-0 bg-black/40" @click="$emit('close')"></div>
       <div class="relative max-h-[calc(100vh-2rem)] w-full overflow-y-auto rounded-xl border border-border bg-surface shadow-lg" :class="width">
         <div class="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
-          <h3 class="text-[15px] font-bold text-ink">{{ title }}</h3>
+          <h3 class="text-[0.9375rem] font-bold text-ink">{{ title }}</h3>
           <button
             type="button"
             class="grid h-8 w-8 flex-none place-items-center rounded-lg text-muted transition-colors hover:bg-canvas hover:text-ink"

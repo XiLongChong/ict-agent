@@ -184,7 +184,7 @@ function returnToSource() {
           <BrandMark />
         </span>
         <strong
-          class="ml-2 flex-none whitespace-nowrap text-[15px] text-ink transition-opacity duration-100"
+          class="ml-2 flex-none whitespace-nowrap text-[0.9375rem] text-ink transition-opacity duration-100"
           :class="sidebarExpanded ? 'delay-100 opacity-100' : 'opacity-0'"
         >佳华智审</strong>
       </div>
@@ -195,7 +195,7 @@ function returnToSource() {
           :key="item.value"
           type="button"
           :title="item.label"
-          class="relative flex h-11 w-full items-center rounded-lg text-[13px] font-semibold transition-colors"
+          class="relative flex h-11 w-full items-center rounded-lg text-[0.8125rem] font-semibold transition-colors"
           :class="
             section === item.value
               ? 'bg-brand-wash text-brand-deep'
@@ -238,7 +238,7 @@ function returnToSource() {
     <header
       class="sticky top-0 z-30 flex h-[72px] items-center gap-3 border-b border-border bg-surface/95 px-4 backdrop-blur md:px-6"
     >
-      <h1 class="text-[15px] font-bold text-ink">{{ currentSectionLabel }}</h1>
+      <h1 class="text-[0.9375rem] font-bold text-ink">{{ currentSectionLabel }}</h1>
       <div class="flex-1"></div>
       <button
         type="button"
@@ -317,7 +317,7 @@ function returnToSource() {
                     </span>
                     <div class="min-w-0">
                       <dt class="text-sm text-muted">{{ fact.label }}</dt>
-                      <dd class="truncate text-[15px] font-semibold text-ink">{{ fact.value }}</dd>
+                      <dd class="truncate text-[0.9375rem] font-semibold text-ink">{{ fact.value }}</dd>
                     </div>
                   </div>
                 </dl>
@@ -325,14 +325,14 @@ function returnToSource() {
 
               <div class="p-5">
                 <div>
-                  <h3 class="text-[15px] font-bold text-ink">风险概况</h3>
+                  <h3 class="text-[0.9375rem] font-bold text-ink">风险概况</h3>
                   <p class="mt-1 text-sm leading-6 text-muted">{{ caseItem.risk_overview }}</p>
                 </div>
 
                 <div class="mt-5 border-t border-border pt-4">
                   <div class="flex items-center gap-2">
                     <Radar :size="17" class="text-brand" />
-                    <h3 class="text-[15px] font-bold text-ink">风险信号</h3>
+                    <h3 class="text-[0.9375rem] font-bold text-ink">风险信号</h3>
                   </div>
                   <div class="mt-2 divide-y divide-border">
                     <article
@@ -341,12 +341,12 @@ function returnToSource() {
                       class="py-4 first:pt-2"
                     >
                       <div class="flex flex-wrap items-start gap-2">
-                        <strong class="text-[15px] text-ink">{{ hit.rule_name }}</strong>
+                        <strong class="text-[0.9375rem] text-ink">{{ hit.rule_name }}</strong>
                         <Badge :tone="priorityColor(hit.severity)">
                           {{ labels.priority[hit.severity] }}
                         </Badge>
                       </div>
-                      <p class="mt-1 text-[13px] leading-6 text-muted">{{ hit.reason }}</p>
+                      <p class="mt-1 text-[0.8125rem] leading-6 text-muted">{{ hit.reason }}</p>
                       <span class="mt-1 block text-sm text-muted">
                         数据来源：{{ hit.sources.map((source) => labels.source[source] || "业务数据").join("、") }}
                         · 观察期：{{ hit.period }}
@@ -399,7 +399,7 @@ function returnToSource() {
             </div>
 
             <div class="bg-canvas/40 p-5">
-              <h3 class="text-[15px] font-bold text-ink">复核历史</h3>
+              <h3 class="text-[0.9375rem] font-bold text-ink">复核历史</h3>
             <div class="space-y-3">
               <article
                 v-for="review in caseItem.reviews"

@@ -41,6 +41,6 @@ const flat = computed(() => values.value.length > 0 && new Set(values.value).siz
       <line v-if="flat" x1="2" :y1="height / 2" :x2="width - 2" :y2="height / 2" :stroke="color" stroke-width="1.6" stroke-linecap="round" />
       <circle v-for="(p, i) in points.split(' ')" :key="i" :cx="p.split(',')[0]" :cy="p.split(',')[1]" r="1.8" :fill="color" />
     </svg>
-    <span class="text-[11px] tabular-nums text-muted" v-if="values.length">{{ values[values.length - 1] }}</span>
+    <span class="text-[0.6875rem] tabular-nums text-muted" v-if="values.length">{{ values[values.length - 1] }}</span>
   </div>
 </template>

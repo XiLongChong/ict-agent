@@ -145,7 +145,7 @@ async function scan() {
               @keydown.enter="openCase(item.case_id)"
             >
               <td>
-                <strong class="block truncate text-[13px] text-ink" :title="item.entity_label">{{ item.entity_label }}</strong>
+                <strong class="block truncate text-[0.8125rem] text-ink" :title="item.entity_label">{{ item.entity_label }}</strong>
               </td>
               <td><span class="text-sm text-muted">{{ labels.caseType[item.case_type] }}</span></td>
               <td><span class="block truncate text-sm font-medium text-ink" :title="item.risk_overview">{{ item.risk_overview }}</span></td>

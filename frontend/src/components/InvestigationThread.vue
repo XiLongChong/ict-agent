@@ -103,7 +103,7 @@ function completenessLabel(value) {
 
     <section v-if="events.length && !record" class="card overflow-hidden">
       <header class="border-b border-border px-5 py-4">
-        <h3 class="text-[15px] font-bold text-ink">审查进度</h3>
+        <h3 class="text-[0.9375rem] font-bold text-ink">审查进度</h3>
       </header>
       <div class="divide-y divide-border px-5">
         <article v-for="event in events" :key="event.sequence" class="py-4">
@@ -136,7 +136,7 @@ function completenessLabel(value) {
 
     <section v-if="!events.length && !record" class="card px-6 py-12 text-center">
       <Sparkles :size="24" class="mx-auto text-brand" />
-      <h3 class="mt-3 text-[15px] font-bold text-ink">等待开始AI审查</h3>
+      <h3 class="mt-3 text-[0.9375rem] font-bold text-ink">等待开始AI审查</h3>
     </section>
 
     <template v-if="record">
@@ -152,13 +152,13 @@ function completenessLabel(value) {
         </header>
 
         <div class="p-5">
-          <p class="text-[15px] leading-7 text-ink">
+          <p class="text-[0.9375rem] leading-7 text-ink">
             {{ record.report.risk_assessment.statement }}
           </p>
 
           <div class="mt-6 border-t border-border pt-5">
             <div class="flex items-center gap-2">
-              <h4 class="text-[15px] font-bold text-ink">后续处理建议</h4>
+              <h4 class="text-[0.9375rem] font-bold text-ink">后续处理建议</h4>
               <Badge :tone="priorityColor(record.report.recommended_priority)">
                 {{ labels.priority[record.report.recommended_priority] }}优先级
               </Badge>
@@ -189,12 +189,12 @@ function completenessLabel(value) {
         </summary>
         <div class="space-y-6 border-t border-border px-5 py-5">
           <section>
-            <h4 class="text-[15px] font-bold text-ink">审查摘要</h4>
+            <h4 class="text-[0.9375rem] font-bold text-ink">审查摘要</h4>
             <p class="mt-2 text-sm leading-6 text-muted">{{ record.report.investigation_summary }}</p>
           </section>
 
           <section>
-            <h4 class="text-[15px] font-bold text-ink">判断依据</h4>
+            <h4 class="text-[0.9375rem] font-bold text-ink">判断依据</h4>
             <div class="mt-3 grid grid-cols-1 gap-4 md:grid-cols-3">
               <div>
                 <strong class="text-sm text-ink">主要驱动</strong>
@@ -219,7 +219,7 @@ function completenessLabel(value) {
           </section>
 
           <section>
-            <h4 class="text-[15px] font-bold text-ink">确定事实</h4>
+            <h4 class="text-[0.9375rem] font-bold text-ink">确定事实</h4>
             <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
               <article
                 v-for="fact in record.report.facts"
@@ -237,7 +237,7 @@ function completenessLabel(value) {
           </section>
 
           <section>
-            <h4 class="text-[15px] font-bold text-ink">证据支持的判断</h4>
+            <h4 class="text-[0.9375rem] font-bold text-ink">证据支持的判断</h4>
             <div class="mt-3 space-y-3">
               <article
                 v-for="item in record.report.hypotheses"
@@ -256,7 +256,7 @@ function completenessLabel(value) {
           </section>
 
           <section>
-            <h4 class="text-[15px] font-bold text-ink">数据限制</h4>
+            <h4 class="text-[0.9375rem] font-bold text-ink">数据限制</h4>
             <ul class="mt-2 space-y-1 text-sm leading-6 text-muted">
               <li v-for="item in record.report.limitations" :key="item">· {{ item }}</li>
               <li v-if="!record.report.limitations.length">· 未报告额外限制</li>
@@ -271,7 +271,7 @@ function completenessLabel(value) {
         </summary>
         <div class="border-t border-border px-5 py-5">
           <section v-if="record.report.trace?.length">
-            <h4 class="text-[15px] font-bold text-ink">执行路径</h4>
+            <h4 class="text-[0.9375rem] font-bold text-ink">执行路径</h4>
             <div class="mt-2 divide-y divide-border">
               <article v-for="item in record.report.trace" :key="item.created_at + item.title" class="py-3">
                 <div class="flex items-center gap-2">
@@ -284,7 +284,7 @@ function completenessLabel(value) {
           </section>
 
           <section class="mt-5 border-t border-border pt-5">
-            <h4 class="text-[15px] font-bold text-ink">工具证据</h4>
+            <h4 class="text-[0.9375rem] font-bold text-ink">工具证据</h4>
             <div class="mt-2 divide-y divide-border">
               <article v-for="item in record.evidence" :key="item.evidence_id" class="py-3">
                 <div class="flex flex-wrap items-center gap-2">

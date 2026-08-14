@@ -55,7 +55,7 @@ const evidenceText = (item) => (item.evidence || []).map((e) => e.summary).join(
 <template>
   <div class="space-y-5">
     <div class="flex flex-wrap items-center gap-3">
-      <h2 class="text-[17px] font-bold text-ink">名单管理</h2>
+      <h2 class="text-[1.0625rem] font-bold text-ink">名单管理</h2>
       <div class="flex-1"></div>
       <select
         v-model="filter"
@@ -69,14 +69,14 @@ const evidenceText = (item) => (item.evidence || []).map((e) => e.summary).join(
       <div v-for="item in recommendations" :key="item.recommendation_id" class="card p-5">
         <!-- 头部行：主体 + 状态徽标，右侧固定审批按钮位（无按钮时由 flex-1 撑开，保持对齐） -->
         <div class="flex items-center gap-2">
-          <strong class="text-[15px] text-ink">{{ item.subject_label }}</strong>
-          <span class="text-[12px] text-muted">{{ item.subject_id }}</span>
+          <strong class="text-[0.9375rem] text-ink">{{ item.subject_label }}</strong>
+          <span class="text-[0.75rem] text-muted">{{ item.subject_id }}</span>
           <Badge :tone="recommendationStatusColor(item.status)">{{ labels.recommendationStatus[item.status] || item.status }}</Badge>
           <div class="flex-1"></div>
           <button
             v-if="item.status === 'PENDING'"
             type="button"
-            class="inline-flex h-9 items-center rounded-lg bg-brand px-3 text-[13px] font-semibold text-white transition-colors hover:bg-brand-dark"
+            class="inline-flex h-9 items-center rounded-lg bg-brand px-3 text-[0.8125rem] font-semibold text-white transition-colors hover:bg-brand-dark"
             @click="openReview(item)"
           >
             审批
@@ -84,7 +84,7 @@ const evidenceText = (item) => (item.evidence || []).map((e) => e.summary).join(
         </div>
 
         <!-- 名单变化信息行 -->
-        <div class="mt-2 flex flex-wrap items-center gap-2 text-[13px]">
+        <div class="mt-2 flex flex-wrap items-center gap-2 text-[0.8125rem]">
           <Badge :tone="listColor(item.current_list)">{{ labels.list[item.current_list] || item.current_list }}</Badge>
           <span class="text-muted">→</span>
           <Badge :tone="listColor(item.target_list)">{{ labels.list[item.target_list] || item.target_list }}</Badge>
@@ -93,11 +93,11 @@ const evidenceText = (item) => (item.evidence || []).map((e) => e.summary).join(
         </div>
 
         <!-- 详情区：理由 / 证据 / 健康度变化 / 审核人 -->
-        <div class="mt-3 border-t border-border/60 pt-3 text-[13px] text-muted">
+        <div class="mt-3 border-t border-border/60 pt-3 text-[0.8125rem] text-muted">
           <p class="text-ink">{{ item.reason }}</p>
-          <p class="mt-1 text-[12px]">证据：{{ evidenceText(item) }}</p>
-          <p class="mt-1 text-[12px]">健康度变化：{{ item.health_change }} · 触发规则：{{ item.trigger_rule }}</p>
-          <p v-if="item.status !== 'PENDING'" class="mt-1 text-[12px]">
+          <p class="mt-1 text-[0.75rem]">证据：{{ evidenceText(item) }}</p>
+          <p class="mt-1 text-[0.75rem]">健康度变化：{{ item.health_change }} · 触发规则：{{ item.trigger_rule }}</p>
+          <p v-if="item.status !== 'PENDING'" class="mt-1 text-[0.75rem]">
             审核人：{{ item.reviewer }} · {{ item.review_reason }} · {{ formatDateTime(item.review_at) }}
           </p>
         </div>

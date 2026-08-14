@@ -76,7 +76,7 @@ const trendOptions = computed(() => ({
       <section v-for="card in cards" :key="card.label" class="card min-h-[132px] p-5">
         <span class="mb-3 grid h-10 w-10 place-items-center rounded-lg" :class="toneIcon[card.tone]"><component :is="card.icon" :size="20" /></span>
         <span class="block text-sm font-medium text-muted">{{ card.label }}</span>
-        <strong class="mt-1 block text-[19px] leading-tight text-ink">{{ card.value }}</strong>
+        <strong class="mt-1 block text-[1.1875rem] leading-tight text-ink">{{ card.value }}</strong>
       </section>
     </div>
 

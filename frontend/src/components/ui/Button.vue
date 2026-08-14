@@ -17,7 +17,7 @@ defineEmits(["click"]);
     @click="$emit('click')"
     class="inline-flex items-center justify-center gap-2 rounded-lg px-4 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50"
     :class="[
-      size === 'sm' ? 'h-9 text-[13px]' : 'h-10 text-sm',
+      size === 'sm' ? 'h-9 text-[0.8125rem]' : 'h-10 text-sm',
       tone === 'neutral' ? 'border border-border bg-white text-ink hover:bg-canvas'
       : tone === 'danger' ? 'bg-danger text-white hover:bg-danger/90'
       : tone === 'success' ? 'bg-success text-white hover:bg-success/90'
