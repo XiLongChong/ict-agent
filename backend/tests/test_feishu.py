@@ -7,8 +7,10 @@ from ict_agent.data import CaseStore
 from ict_agent.feishu import (
     NOTIFICATION_CHAT_KEY,
     CaseNotification,
+    RuleScanNotification,
     build_case_notification_card,
     build_connection_card,
+    build_rule_scan_notification_card,
     build_test_card,
 )
 
@@ -71,6 +73,24 @@ def test_case_notification_card_contains_no_sensitive_execution_fields() -> None
     assert "secret" not in rendered
     assert "api_key" not in rendered
     assert "思维链" not in rendered
+
+
+def test_rule_scan_notification_is_aggregated() -> None:
+    card = build_rule_scan_notification_card(
+        RuleScanNotification(
+            run_id="run-1",
+            observation_date="2026-07-31",
+            cases_detected=88,
+            cases_created=82,
+            signal_count=140,
+            public_base_url="https://example.test/app",
+        )
+    )
+    rendered = repr(card)
+
+    assert "规则扫描完成" in rendered
+    assert "88" in rendered and "82" in rendered and "140" in rendered
+    assert card["elements"][-1]["actions"][0]["url"] == "https://example.test/app/cases"
 
 
 def test_feishu_cards_do_not_contain_credentials() -> None:

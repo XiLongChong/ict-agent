@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 NOTIFICATION_CHAT_KEY = "feishu_notification_chat_id"
 BIND_COMMAND = "绑定通知群"
 CaseNotificationEvent = Literal[
+    "RULE_SCAN_COMPLETED",
     "CASE_CREATED",
     "INVESTIGATION_COMPLETED",
     "PARTIAL_REPORT",
@@ -58,12 +59,69 @@ class CaseNotification:
     public_base_url: str | None = None
 
 
+@dataclass(frozen=True)
+class RuleScanNotification:
+    """一次规则扫描的聚合通知，避免按案件刷屏。"""
+
+    run_id: str
+    observation_date: str
+    cases_detected: int
+    cases_created: int
+    signal_count: int
+    public_base_url: str | None = None
+
+
 _EVENT_PRESENTATION: dict[CaseNotificationEvent, tuple[str, str]] = {
+    "RULE_SCAN_COMPLETED": ("规则扫描完成", "blue"),
     "CASE_CREATED": ("新风险案件", "blue"),
     "INVESTIGATION_COMPLETED": ("案件调查完成", "green"),
     "PARTIAL_REPORT": ("案件调查中断", "orange"),
     "REVIEW_COMPLETED": ("人工复核完成", "purple"),
 }
+
+
+def build_rule_scan_notification_card(
+    notification: RuleScanNotification,
+) -> dict[str, object]:
+    """构造一次扫描一张的聚合卡片。"""
+
+    elements: list[dict[str, object]] = [
+        {
+            "tag": "markdown",
+            "content": (
+                f"**数据截至**：{notification.observation_date}\n"
+                f"**候选案件**：{notification.cases_detected} 个\n"
+                f"**本次新建**：{notification.cases_created} 个\n"
+                f"**风险信号**：{notification.signal_count} 条"
+            ),
+        },
+        {
+            "tag": "markdown",
+            "content": "规则命中只代表需要调查，不代表风险已经成立。",
+        },
+    ]
+    if notification.public_base_url:
+        url = f"{notification.public_base_url.rstrip('/')}/cases"
+        elements.append(
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "打开案件队列"},
+                        "type": "primary",
+                        "url": url,
+                    }
+                ],
+            }
+        )
+    return {
+        "header": {
+            "template": "blue",
+            "title": {"tag": "plain_text", "content": "规则扫描完成"},
+        },
+        "elements": elements,
+    }
 
 
 def build_case_notification_card(notification: CaseNotification) -> dict[str, object]:
@@ -211,6 +269,20 @@ class FeishuBot:
             raise FeishuIntegrationError("飞书案件通知发送失败，请检查应用版本和机器人权限。")
         return result.message_id or ""
 
+    async def send_rule_scan_notification(self, notification: RuleScanNotification) -> str:
+        """向已绑定群发送一张规则扫描聚合卡片。"""
+
+        chat_id = self._store.get_integration_setting(NOTIFICATION_CHAT_KEY)
+        if not chat_id:
+            raise FeishuIntegrationError(f"尚未绑定通知群，请先在群里 @{BIND_COMMAND}。")
+        result = await self._channel.send(
+            chat_id,
+            {"card": build_rule_scan_notification_card(notification)},
+        )
+        if not result.success:
+            raise FeishuIntegrationError("飞书扫描通知发送失败，请检查应用版本和机器人权限。")
+        return result.message_id or ""
+
     async def _handle_message(self, message: InboundMessage) -> None:
         if message.chat_type != "group":
             await self._channel.send(
@@ -290,3 +362,11 @@ async def send_feishu_case_notification(notification: CaseNotification) -> str:
     if _bot is None or not _bot.connected:
         raise FeishuIntegrationError("飞书机器人长连接尚未就绪。")
     return await _bot.send_case_notification(notification)
+
+
+async def send_feishu_rule_scan_notification(notification: RuleScanNotification) -> str:
+    """通过全局机器人发送规则扫描聚合卡片。"""
+
+    if _bot is None or not _bot.connected:
+        raise FeishuIntegrationError("飞书机器人长连接尚未就绪。")
+    return await _bot.send_rule_scan_notification(notification)

@@ -35,8 +35,10 @@ from ict_agent.feishu import (
     CaseNotification,
     CaseNotificationEvent,
     FeishuIntegrationError,
+    RuleScanNotification,
     get_feishu_status,
     send_feishu_case_notification,
+    send_feishu_rule_scan_notification,
     send_feishu_test_card,
 )
 from ict_agent.models import (
@@ -136,6 +138,42 @@ async def _notify_case_event(
         notification_id=notification_id,
         event_type=event_type,
         case_id=case.case_id,
+        status=status,
+        message_id=message_id,
+        error_message=error_message,
+        created_at=created_at,
+    )
+
+
+async def _notify_rule_scan(response: RuleRunResponse, settings: Settings) -> None:
+    """规则扫描只发送一张聚合卡片，避免首次扫描产生通知风暴。"""
+
+    if settings.feishu_app_id is None or settings.feishu_app_secret is None:
+        return
+    created_at = datetime.now(UTC).isoformat()
+    notification_id = uuid5(NAMESPACE_URL, f"feishu:scan:{response.run_id}").hex
+    status = "SENT"
+    message_id = ""
+    error_message = ""
+    try:
+        message_id = await send_feishu_rule_scan_notification(
+            RuleScanNotification(
+                run_id=response.run_id,
+                observation_date=response.observation_date,
+                cases_detected=response.cases_detected,
+                cases_created=response.cases_created,
+                signal_count=response.rule_hits,
+                public_base_url=settings.public_base_url,
+            )
+        )
+    except FeishuIntegrationError as exc:
+        status = "FAILED"
+        error_message = str(exc)
+        logger.warning("飞书规则扫描通知未发送：%s", exc)
+    CaseStore(settings.case_database_path).save_feishu_notification(
+        notification_id=notification_id,
+        event_type="RULE_SCAN_COMPLETED",
+        case_id=response.run_id,
         status=status,
         message_id=message_id,
         error_message=error_message,
@@ -292,12 +330,7 @@ async def run_rule_scan(*, settings: Settings | None = None) -> RuleRunResponse:
             inventory_cases=run.inventory_cases,
             created_at=run.created_at,
         )
-        for case_id in created_case_ids:
-            await _notify_case_event(
-                "CASE_CREATED",
-                get_case_detail(case_id, settings=runtime_settings),
-                runtime_settings,
-            )
+        await _notify_rule_scan(response, runtime_settings)
         return response
     except (ConfigurationError, DataAccessError) as exc:
         raise ServiceError(str(exc), request_id, 503) from exc
