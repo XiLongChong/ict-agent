@@ -2,7 +2,7 @@
 
 ## 1. 当前目标
 
-系统用一个轻量规则集发现值得调查的异常，再由准确率优先的 Agent 完成证据调查。规则不负责复杂
+系统接收企业预警、确定性规则或成交前交易信号，再由准确率优先的 Agent 完成证据调查。信号源不负责复杂
 定性，Agent 也不能修改规则或业务数据。完成标准不是“模型给出了答案”，而是能判断有证据的风险
 信号、只对未知根因局部弃答、结论可引用、运行中断时不丢失已有证据，且过程可在页面观察和回放。
 
@@ -10,13 +10,18 @@
 flowchart LR
     CSV["7 张比赛 CSV"] --> DB["业务 DuckDB（原子重建 + 快照身份）"]
     DB --> RULE["23 条确定性规则"]
-    RULE --> CASE["独立案件库"]
+    DB --> SIM["历史分布新交易模拟"]
+    RULE --> CASE["统一信号与案件库"]
+    SIM --> CASE
     CASE --> CATALOG["真实探测证据能力"]
     CATALOG --> GATEWAY["发现 / 搜索 / 查询网关"]
     GATEWAY --> TOOLS["类型化语义注册表"]
     TOOLS --> VALIDATE["证据与结论校验"]
     VALIDATE --> REPORT["完整或部分报告"]
     REPORT --> REVIEW["人工复核结论"]
+    CASE --> FEISHU["飞书案件通知"]
+    REPORT --> FEISHU
+    REVIEW --> FEISHU
     CATALOG --> STREAM["NDJSON 调查事件流"]
     GATEWAY --> STREAM
     VALIDATE --> STREAM
@@ -26,13 +31,13 @@ flowchart LR
 
 | 层 | 实现 | 职责 |
 |---|---|---|
-| 页面 | Vue 3 + Vite + Tailwind CSS 4 | TailAdmin 风格的风险总览、案件队列、独立案件处理页、顺序流式 AI 审查、报告回放、人工复核和经营看板 |
+| 页面 | Vue 3 + Vite + Tailwind CSS 4 | 风险总览、统一案件队列、事前交易、独立案件处理页、流式 AI 审查、人工复核和经营看板 |
 | HTTP | FastAPI + Pydantic | `/api/v1` 校验、错误映射、NDJSON 流和 OpenAPI |
-| 应用服务 | `service.py` | 经营、扫描、案件状态流转、调查保存和人工复核用例 |
+| 应用服务 | `service.py` | 经营、信号入口、案件状态流转、调查保存、飞书通知和人工复核用例 |
 | Agent | Pydantic AI | DeepSeek 高强度思考、工具事件、结构化输出和输出校验 |
-| 业务分析 | `semantic.py` / `tools.py` / `rules.py` | 单一语义注册表、参数化指标查询和版本化确定性规则 |
+| 业务分析 | `business_type.py` / `pretransaction.py` / `semantic.py` / `tools.py` / `rules.py` | 交易级业务分类、纯计算模拟器、语义注册表、参数化指标查询和版本化规则 |
 | 数据 | `data.py` | 业务 DuckDB 加固只读查询、带快照身份的原子导入、独立案件库写入 |
-| 飞书适配 | `feishu.py` | 官方长连接、通知群绑定和结果卡片发送；不参与 Agent 调查推理 |
+| 飞书适配 | `feishu.py` | 官方长连接接收绑定指令，消息 API 主动发送结果卡片；不参与 Agent 调查推理 |
 
 通用数据问答 Agent 已删除。经营看板继续直接调用确定性工具，避免无关工具进入案件调查上下文。
 
@@ -60,14 +65,14 @@ flowchart LR
 
 ### 4.2 冻结案件输入契约
 
-规则存储模型在进入 Agent 前统一映射为 `InvestigationCaseInput 2.0`：案件编号、发现来源、类型、主体、
-观察日、优先级、风险敞口、摘要、来源版本、信号列表和数据质量状态。每条信号包含名称、原因、严重度、
-命中指标、阈值来源、数据来源和期间。当前规则案件使用 `discovery_source=RULE`；规则尚未提供独立数据
-质量判断时显式写 `UNKNOWN`。
+统一案件在进入 Agent 前映射为 `InvestigationCaseInput 3.0`：案件编号、发现来源、案件类型、交易级
+业务类型、主体、观察日、优先级、敞口、摘要、来源版本、数据快照、信号列表和数据质量状态。每条信号
+包含名称、原因、严重度、指标、阈值来源、数据来源和期间。规则案件使用 `discovery_source=RULE`，
+模拟新交易使用 `PRE_TRANSACTION`；数据质量 warning 必须进入报告限制。
 
 ### 4.3 统一证据查询网关
 
-应收与库存 Agent 都只注册三个动作：
+应收、库存和事前交易 Agent 都只注册三个动作：
 
 1. `discover_evidence_capabilities`：针对当前案件和当前数据快照真实探测可用能力，返回数据集、单一
    粒度、指标、窗口、期间、可用状态和限制，不暴露物理表或 SQL。
@@ -75,13 +80,15 @@ flowchart LR
    不搜索文件名、物理表、日志或任意数据库文本。
 3. `query_business_evidence`：执行注册的受控查询，每次结果生成独立 `evidence_id`。
 
-`semantic.py` 是唯一能力注册表，当前开放 9 个组合：应收的 `receivables/month`、
+`semantic.py` 是唯一能力注册表。除应收的 `receivables/month`、
 `receivables/order`、`sales_payments/month`、`extensions/order`、`credit/customer`、
-`contracts/contract`，库存的 `inventory/quarter`、`inventory/age_bucket`、`sales/month`。
+`contracts/contract` 与库存的 `inventory/quarter`、`inventory/age_bucket`、`sales/month` 外，事前交易
+增加 `proposal/order` 和 `customer_profile/business_type`，并复用应收、同业务销售回款和授信能力。
 所有执行器均为后端固定参数化查询，自动锁定案件主体，不接收任意字段、关联、SQL、路径、正则或代码。
 
 深度超期应收固定要求前三项核心证据加展期与授信；敞口积累固定要求前三项加合同与授信；库存固定要求
-季度历史、最新库龄分桶和销售月度证据。相同查询及已被更宽指标集合覆盖的子集查询都会被拒绝。
+季度历史、最新库龄分桶和销售月度证据；事前交易固定要求拟交易、同业务历史画像、应收、销售回款和
+授信。相同查询及已被更宽指标集合覆盖的子集查询都会被拒绝。
 
 ### 4.4 证据与输出校验
 
@@ -131,7 +138,7 @@ trace 保存工具完成和报告校验轨迹，供刷新后回放。页面以�
 跟踪工单和具体处置流程。服务启动时会把上一个进程异常退出所遗留的 `AGENT_REVIEWING` 临时状态
 恢复为待调查，避免本地连接中断或服务重启后案件永久无法再次调查。
 
-案件队列的 `risk_overview` 来自该案件最高严重度规则命中的 `rule_name`，不由前端根据案件类型硬编码。
+案件队列的 `signal_overview` 来自该案件最高严重度信号的名称，不由前端根据案件类型硬编码。
 公开风险等级只显示低、一般、高；规则引擎内部的 `CRITICAL` 在 API 输出时统一归并为高。
 
 ## 6. HTTP 接口
@@ -147,22 +154,13 @@ trace 保存工具完成和报告校验轨迹，供刷新后回放。页面以�
 | `GET /api/v1/cases/{case_id}` | 规则、最新调查和审核历史 |
 | `POST /api/v1/cases/{case_id}/investigations` | NDJSON 调查事件流 |
 | `POST /api/v1/cases/{case_id}/reviews` | 人工审核和状态推进 |
-| `GET /api/v1/health-scores` | 健康度列表（可按类型/等级筛选） |
-| `GET /api/v1/health-scores/{score_id}` | 单条健康度详情（维度拆解/趋势） |
-| `POST /api/v1/health-scores/recalculate` | 重算全部健康度并生成名单建议（确定性，不耗模型） |
-| `GET /api/v1/list-recommendations` | 名单建议列表 |
-| `POST /api/v1/list-recommendations/{id}/reviews` | 名单建议审批/驳回（404 不存在 / 409 已处理） |
-| `GET /api/v1/alerts` | 预警列表 |
-| `POST /api/v1/alerts/{id}/acknowledge` | 确认预警 |
-| `GET /api/v1/projects` | 项目类视图（存量合同 + 模拟新项目，金额万元） |
-| `POST /api/v1/projects/{id}/pre-assessment/run` | 模拟新项目事前评估（黑名单/金额档位/历史超期/担保人） |
-| `GET /api/v1/warning/overview` | 预警总览聚合 |
+| `GET /api/v1/pre-transaction/simulations` | 最近模拟新交易与对应案件 |
+| `POST /api/v1/pre-transaction/simulations` | 按历史分布生成新交易并创建统一案件 |
 | `GET /api/v1/integrations/feishu/status` | 飞书配置、长连接和通知群绑定状态 |
 | `POST /api/v1/integrations/feishu/test` | 向已绑定群发送连通性测试卡片 |
 
-阶段 A（风险预警）说明：健康度由七张真实业务表中的确定性指标计算，不消耗模型额度。每家公司按实际发生的分销、项目、服务云业务分别生成健康记录，并使用对应的维度与权重；不设置额外的“分析对象”字段。项目合同只有在销售订单类型也判定为项目类时才作为项目评分证据，不单独生成健康记录。担保人、项目阶段和新项目仍来自 `data/simulated/`，页面必须标注“模拟”；名单变更保留人工审批并写审计。
-
-通用 `/api/v1/chat` 已删除。
+健康度、名单建议、独立预警列表、静态模拟项目和通用 `/api/v1/chat` 已删除；它们不再构成第二套案件流程。
+飞书卡片可跳转同一案件页。当前没有登录与飞书身份映射，因而不开放卡片内审批。
 
 ## 7. 评测与边界
 

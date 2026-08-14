@@ -9,13 +9,16 @@
 
 - 7 张比赛 CSV 可以原子导入本地 DuckDB。
 - FastAPI 同时提供确定性经营分析接口，以及风险扫描、案件、NDJSON 调查事件流和人工审核接口。
-- Pydantic AI 使用 DeepSeek `deepseek-v4-flash` 高强度思考模式；案件调查按应收或库存类型自动
+- Pydantic AI 使用 DeepSeek `deepseek-v4-flash` 高强度思考模式；案件调查按应收、库存或事前交易类型自动
   执行完整的最小只读工具集，并对最终证据引用和结论状态进行校验。
 - 已支持经营概览、最新应收、应收趋势、客户画像、库存健康和合同闭环。
 - 已落地 23 条版本化确定性风险规则、独立案件库、风险信号判断、完整与部分调查报告、证据引用和人工审核闭环。
 - `frontend/` 是由 FastAPI 同源提供的响应式风险调查工作台，实时展示工具和证据，同时保留
   确定性经营分析；通用数据问答已经删除。
-- 当前自动验收基线为 Ruff、mypy 和 92 个 pytest 测试。
+- 已统一规则扫描与成交前交易信号入口，业务类型只作为交易级调查上下文，不再维护平行的健康度、
+  名单建议或静态项目审批链。
+- 飞书已接入新案件、调查完成/中断和人工复核通知；审批仍在同一案件页面完成。
+- 当前自动验收基线为 Ruff、mypy 和 75 个 pytest 测试。
 
 不得把已经完成的系统描述成“待搭建”，不得根据旧计划重复创建骨架，也不得为了未来功能
 破坏已经跑通的真实数据 → DuckDB → 工具 → Agent → API → 页面链路。
@@ -39,15 +42,13 @@ ict-agent/
 │  │  ├─ models.py                   # API、工具和证据模型
 │  │  ├─ prompts.py                  # Agent 固定指令
 │  │  ├─ config.py                   # `.env` 和路径配置
-│  │  ├─ health.py                   # 健康度引擎（阶段 A 风险预警）
-│  │  ├─ listmgmt.py                 # 名单建议/审批/审计（阶段 A）
-│  │  ├─ project.py                  # 项目类视图与事前评估（阶段 A）
-│  │  ├─ simdata.py                  # 模拟数据加载（阶段 A，data/simulated/）
+│  │  ├─ business_type.py            # 交易级业务类型判定
+│  │  ├─ pretransaction.py           # 历史分布新交易纯计算模拟器
 │  │  └─ evaluation.py               # 调查评测运行器
 │  ├─ tests/                         # 七表微型夹具及单元/集成测试
 │  └─ evals/                         # 真实 DeepSeek 调查评测集与独立运行器
 ├─ frontend/                         # 无构建依赖的 HTML/CSS/JavaScript 页面
-│  └─ src/components/                # 含风险预警/健康度/名单/项目评估页面
+│  └─ src/components/                # 风险总览、案件、事前交易和经营分析页面
 ├─ docs/
 │  ├─ technical-solution.md          # 当前已落地架构与安全边界
 │  ├─ metric-contract.md             # 当前代码执行的指标口径
