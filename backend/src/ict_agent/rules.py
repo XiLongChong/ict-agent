@@ -457,7 +457,7 @@ def _receivable_cases(
                     rule_name="无授信仍有应收敞口",
                     severity="MEDIUM",
                     exposure_amount=ar_amount,
-                    reason=f"客户授信额度为 0，仍有应收 {_money(ar_amount)}。",
+                    reason=f"客户无授信额度，仍有应收 {_money(ar_amount)}。",
                     metrics=common_metrics,
                     sources=["customer_credit", "ar_snapshots"],
                     period=observation_date,
