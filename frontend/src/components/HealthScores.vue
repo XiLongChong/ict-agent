@@ -1,36 +1,75 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
+import { ChevronLeft, ChevronRight } from "lucide-vue-next";
 import Badge from "./ui/Badge.vue";
 import SelectInput from "./ui/SelectInput.vue";
+import TextInput from "./ui/TextInput.vue";
 import TrendSpark from "./TrendSpark.vue";
 import { formatDateTime, gradeColor, labels } from "../lib";
 import { recalcHealth, workspace } from "../store";
 
 const subjectType = ref("");
 const grade = ref("");
+const query = ref("");
+const pageSize = ref("10");
+const currentPage = ref(1);
+const pageJump = ref("1");
 const recalculating = ref(false);
+
+const subjectOptions = [
+  { title: "全部类型", value: "" },
+  { title: "客户", value: "CUSTOMER" },
+  { title: "项目合同", value: "CONTRACT" },
+];
+const gradeOptions = [
+  { title: "全部等级", value: "" },
+  { title: "健康", value: "HEALTHY" },
+  { title: "关注", value: "WATCH" },
+  { title: "预警", value: "WARNING" },
+  { title: "高危", value: "HIGH_RISK" },
+];
+const pageSizeOptions = [10, 20, 50].map((value) => ({ title: `${value} 行/页`, value: String(value) }));
 
 const filtered = computed(() => {
   const items = workspace.healthScores || [];
+  const keyword = String(query.value ?? "").trim().toLocaleLowerCase();
   return items.filter((item) => {
-    if (subjectType.value && item.subject_type !== subjectType.value) return false;
-    if (grade.value && item.grade !== grade.value) return false;
-    return true;
+    const matchesFilters =
+      (!subjectType.value || item.subject_type === subjectType.value) &&
+      (!grade.value || item.grade === grade.value);
+    if (!matchesFilters || !keyword) return matchesFilters;
+    const searchable = [
+      item.subject_id,
+      item.subject_label,
+      item.subject_type === "CUSTOMER" ? "客户" : "项目合同",
+      labels.grade[item.grade],
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLocaleLowerCase();
+    return searchable.includes(keyword);
   });
 });
 
-const subjectOptions = [
-  { value: "", label: "全部类型" },
-  { value: "CUSTOMER", label: "客户" },
-  { value: "CONTRACT", label: "项目合同" },
-];
-const gradeOptions = [
-  { value: "", label: "全部等级" },
-  { value: "HEALTHY", label: "健康" },
-  { value: "WATCH", label: "关注" },
-  { value: "WARNING", label: "预警" },
-  { value: "HIGH_RISK", label: "高风险" },
-];
+const pageSizeValue = computed(() => Number(pageSize.value));
+const totalPages = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSizeValue.value)));
+const paginated = computed(() => {
+  const start = (currentPage.value - 1) * pageSizeValue.value;
+  return filtered.value.slice(start, start + pageSizeValue.value);
+});
+const pageNumbers = computed(() => {
+  const visibleCount = Math.min(5, totalPages.value);
+  let start = Math.max(1, currentPage.value - 2);
+  start = Math.min(start, totalPages.value - visibleCount + 1);
+  return Array.from({ length: visibleCount }, (_, index) => start + index);
+});
+const rangeStart = computed(() => (filtered.value.length ? (currentPage.value - 1) * pageSizeValue.value + 1 : 0));
+const rangeEnd = computed(() => Math.min(currentPage.value * pageSizeValue.value, filtered.value.length));
+
+watch([subjectType, grade, query, pageSize], () => goToPage(1));
+watch(totalPages, (total) => {
+  if (currentPage.value > total) goToPage(total);
+});
 
 const gradeTone = {
   HEALTHY: "bg-success",
@@ -48,54 +87,72 @@ async function recalculate() {
   recalculating.value = true;
   try {
     await recalcHealth();
+    goToPage(1);
   } finally {
     recalculating.value = false;
   }
+}
+
+function goToPage(page) {
+  const normalized = Math.min(totalPages.value, Math.max(1, Math.trunc(Number(page) || 1)));
+  currentPage.value = normalized;
+  pageJump.value = String(normalized);
+}
+
+function jumpToPage() {
+  goToPage(pageJump.value);
 }
 </script>
 
 <template>
   <div class="space-y-5">
-    <div class="flex flex-wrap items-center gap-3">
-      <h2 class="text-[17px] font-bold text-ink">健康度总览</h2>
-      <div class="flex-1"></div>
-      <SelectInput :model-value="subjectType" :options="subjectOptions" @update:model-value="subjectType = $event" />
-      <SelectInput :model-value="grade" :options="gradeOptions" @update:model-value="grade = $event" />
-      <button
-        type="button"
-        class="inline-flex h-10 items-center gap-2 rounded-lg bg-brand px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-dark disabled:opacity-50"
-        :disabled="recalculating"
-        @click="recalculate"
-      >
-        <span :class="recalculating ? 'animate-spin' : ''">⟳</span>
-        重算健康度
-      </button>
-    </div>
-
     <section class="card overflow-hidden">
+      <div class="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
+        <SelectInput v-model="subjectType" :options="subjectOptions" class="w-[180px]" />
+        <SelectInput v-model="grade" :options="gradeOptions" class="w-[180px]" />
+        <TextInput v-model="query" search clearable class="w-[320px] max-w-full" placeholder="搜索客户、合同或等级" aria-label="搜索客户、合同或等级" @clear="query = ''" />
+        <span class="ml-auto text-sm text-muted">共 {{ filtered.length }} 个主体</span>
+        <button
+          type="button"
+          class="inline-flex h-10 items-center gap-2 rounded-lg bg-brand px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-dark disabled:opacity-50"
+          :disabled="recalculating"
+          @click="recalculate"
+        >
+          <span :class="recalculating ? 'animate-spin' : ''">⟳</span>
+          {{ recalculating ? "计算中…" : "重算健康度" }}
+        </button>
+      </div>
+
       <div class="overflow-x-auto">
-        <table class="w-full min-w-[880px] text-left text-sm">
+        <table class="table-base table-fixed min-w-[960px]">
+          <colgroup>
+            <col class="w-[22%]" />
+            <col class="w-[9%]" />
+            <col class="w-[16%]" />
+            <col class="w-[9%]" />
+            <col class="w-[14%]" />
+            <col class="w-[22%]" />
+            <col class="w-[8%]" />
+          </colgroup>
           <thead>
-            <tr class="border-b border-border text-[12px] text-muted">
-              <th class="px-4 py-3 font-semibold">主体</th>
-              <th class="px-4 py-3 font-semibold">类型</th>
-              <th class="px-4 py-3 font-semibold">分数</th>
-              <th class="px-4 py-3 font-semibold">等级</th>
-              <th class="px-4 py-3 font-semibold">近 12 期趋势</th>
-              <th class="px-4 py-3 font-semibold">主要拉低因素</th>
-              <th class="px-4 py-3 font-semibold">计算时间</th>
+            <tr>
+              <th>主体</th>
+              <th>类型</th>
+              <th>分数</th>
+              <th>等级</th>
+              <th>近 12 期趋势</th>
+              <th>主要拉低因素</th>
+              <th>计算时间</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="item in filtered" :key="item.id" class="border-b border-border/60 last:border-0 hover:bg-canvas/60">
-              <td class="px-4 py-3">
-                <strong class="block text-ink">{{ item.subject_label }}</strong>
+            <tr v-for="item in paginated" :key="item.id" class="hover:bg-canvas/60">
+              <td>
+                <strong class="block truncate text-[13px] text-ink" :title="item.subject_label">{{ item.subject_label }}</strong>
                 <span class="text-[12px] text-muted">{{ item.subject_id }}</span>
               </td>
-              <td class="px-4 py-3">
-                <Badge tone="neutral">{{ item.subject_type === "CUSTOMER" ? "客户" : "项目合同" }}</Badge>
-              </td>
-              <td class="px-4 py-3">
+              <td><Badge tone="neutral">{{ item.subject_type === "CUSTOMER" ? "客户" : "项目合同" }}</Badge></td>
+              <td>
                 <div class="flex items-center gap-2">
                   <span class="h-2 w-14 overflow-hidden rounded-full bg-gray-100">
                     <span class="block h-full rounded-full" :class="gradeTone[item.grade] || 'bg-gray-300'" :style="{ width: item.score + '%' }"></span>
@@ -103,18 +160,69 @@ async function recalculate() {
                   <strong class="text-ink tabular-nums">{{ item.score }}</strong>
                 </div>
               </td>
-              <td class="px-4 py-3">
-                <Badge :tone="gradeColor(item.grade)">{{ labels.grade[item.grade] || item.grade }}</Badge>
-              </td>
-              <td class="px-4 py-3"><TrendSpark :data="item.trend" /></td>
-              <td class="max-w-[260px] truncate px-4 py-3 text-muted" :title="topDrivers(item)">{{ topDrivers(item) }}</td>
-              <td class="px-4 py-3 text-[12px] text-muted">{{ formatDateTime(item.computed_at) }}</td>
+              <td><Badge :tone="gradeColor(item.grade)">{{ labels.grade[item.grade] || item.grade }}</Badge></td>
+              <td><TrendSpark :data="item.trend" /></td>
+              <td><span class="block truncate text-sm text-muted" :title="topDrivers(item)">{{ topDrivers(item) }}</span></td>
+              <td><span class="text-[12px] text-muted">{{ formatDateTime(item.computed_at) }}</span></td>
             </tr>
-            <tr v-if="!filtered.length">
-              <td colspan="7" class="empty-state px-4 py-10 text-center">暂无健康度数据，请点击“重算健康度”生成</td>
-            </tr>
+            <tr v-if="!workspace.loading && !filtered.length"><td colspan="7" class="empty-state">当前筛选条件下没有健康度数据，请点击“重算健康度”生成</td></tr>
           </tbody>
         </table>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-3 border-t border-border px-5 py-4">
+        <span class="text-sm text-muted">第 {{ rangeStart }}–{{ rangeEnd }} 条，共 {{ filtered.length }} 条</span>
+        <SelectInput v-model="pageSize" :options="pageSizeOptions" class="w-[120px]" />
+
+        <div class="ml-auto flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            class="grid h-9 w-9 place-items-center rounded-lg border border-border text-muted transition-colors hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40"
+            :disabled="currentPage === 1"
+            aria-label="上一页"
+            @click="goToPage(currentPage - 1)"
+          >
+            <ChevronLeft :size="16" />
+          </button>
+          <button
+            v-for="page in pageNumbers"
+            :key="page"
+            type="button"
+            class="grid h-9 min-w-9 place-items-center rounded-lg border px-2 text-sm font-semibold transition-colors"
+            :class="page === currentPage ? 'border-brand bg-brand text-white' : 'border-border text-muted hover:bg-canvas'"
+            :aria-current="page === currentPage ? 'page' : undefined"
+            @click="goToPage(page)"
+          >
+            {{ page }}
+          </button>
+          <button
+            type="button"
+            class="grid h-9 w-9 place-items-center rounded-lg border border-border text-muted transition-colors hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40"
+            :disabled="currentPage === totalPages"
+            aria-label="下一页"
+            @click="goToPage(currentPage + 1)"
+          >
+            <ChevronRight :size="16" />
+          </button>
+          <span class="ml-1 text-sm text-muted">跳至</span>
+          <input
+            v-model="pageJump"
+            type="number"
+            min="1"
+            :max="totalPages"
+            step="1"
+            class="h-9 w-16 rounded-lg border border-border bg-white px-2 text-center text-sm text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand-wash"
+            aria-label="跳转页码"
+            @keydown.enter="jumpToPage"
+          />
+          <button
+            type="button"
+            class="h-9 rounded-lg border border-border px-3 text-sm font-semibold text-muted transition-colors hover:bg-canvas hover:text-ink"
+            @click="jumpToPage"
+          >
+            跳转
+          </button>
+        </div>
       </div>
     </section>
 

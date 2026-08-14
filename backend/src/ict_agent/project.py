@@ -76,13 +76,75 @@ def _guarantor_label(guarantor: SimulatedGuarantor | None) -> str:
     return f"{guarantor.guarantor_name}（{guarantor.guarantor_status}）"
 
 
+def _fetch_payment_by_contract(store: DuckDBStore) -> dict[str, float]:
+    """按合同号聚合回款金额（元），只统计 contracts 中存在的项目合同。"""
+
+    result = store.fetch(
+        'SELECT p."合同号", SUM(p."回款金额") FROM payments p '
+        'INNER JOIN contracts c ON p."合同号" = c."合同编号" '
+        'WHERE p."合同号" IS NOT NULL AND p."合同号" <> \'\' GROUP BY 1'
+    )
+    return {str(row[0]): float(row[1] or 0.0) for row in result.rows}
+
+
+def _fetch_ar_by_contract(store: DuckDBStore) -> dict[str, dict[str, float]]:
+    """按合同号聚合最新期末应收与超期，只统计 contracts 中存在的项目合同。"""
+
+    result = store.fetch(
+        'WITH latest AS (SELECT MAX("快照时间") AS d FROM ar_snapshots) '
+        'SELECT a."合同号", SUM(a."应收金额"), SUM(a."超期应收金额") FROM ar_snapshots a, latest '
+        'INNER JOIN contracts c ON a."合同号" = c."合同编号" '
+        'WHERE a."快照时间" = d AND a."合同号" IS NOT NULL AND a."合同号" <> \'\' GROUP BY 1'
+    )
+    return {
+        str(row[0]): {"ar": float(row[1] or 0.0), "overdue": float(row[2] or 0.0)}
+        for row in result.rows
+    }
+
+
+def _fetch_contract_metrics(store: DuckDBStore) -> dict[str, dict[str, float | int | None]]:
+    """按合同号聚合毛利与账期，返回 {合同号: {margin, term_gap}}。"""
+
+    result = store.fetch(
+        'SELECT "合同编号", '
+        'SUM("销售金额" * "实际净毛利率_不含税") / NULLIF(SUM("销售金额"), 0), '
+        'MAX(COALESCE("实际账期", 0) - COALESCE("合同文本账期", 0)) '
+        "FROM contracts GROUP BY 1"
+    )
+    out: dict[str, dict[str, float | int | None]] = {}
+    for row in result.rows:
+        margin = float(row[1]) if row[1] is not None else None
+        term_gap = int(row[2]) if row[2] is not None else None
+        out[str(row[0])] = {"margin_rate": margin, "term_gap_days": term_gap}
+    return out
+
+
+def _risk_level(flags: list[str]) -> str:
+    """根据风险提示集合给出项目风险等级（确定性规则）。"""
+
+    if any(f in flags for f in ("负毛利", "回款率低于 30%")):
+        return "CRITICAL"
+    if any(f in flags for f in ("应收超期率高于 50%", "回款率低于 60%")):
+        return "HIGH"
+    if any(f.startswith("账期超期") for f in flags) or any(
+        f in flags for f in ("回款率低于 80%", "应收超期率高于 30%")
+    ):
+        return "MEDIUM"
+    return "LOW"
+
+
 def list_projects(store: DuckDBStore, sim: SimulatedData) -> list[dict[str, object]]:
     """合并真实合同与模拟阶段/担保人，输出项目视图（金额统一为万元）。
 
     同一合同编号可能有多行签约明细，按合同号聚合金额并去重，保证 project_id 唯一。
+    同时从真实 7 表计算每个合同的风险指标（回款率/超期率/毛利/账期）并给出风险等级。
     """
 
     stages_by_contract = {stage.contract_no: stage for stage in sim.project_stages}
+    payments_by_contract = _fetch_payment_by_contract(store)
+    ar_by_contract = _fetch_ar_by_contract(store)
+    contract_metrics = _fetch_contract_metrics(store)
+
     result = store.fetch(
         'SELECT "合同编号", "客户名称", "销售金额" FROM contracts ORDER BY "合同编号"'
     )
@@ -103,9 +165,46 @@ def list_projects(store: DuckDBStore, sim: SimulatedData) -> list[dict[str, obje
             customer_name=customer,
             related_project=stage.project_name if stage else "",
         )
-        risk_note = ""
+
+        # 真实风险指标（金额单位：元 → 万元）
+        paid_yuan = payments_by_contract.get(contract_no, 0.0)
+        paid_wan = round(paid_yuan / 10000.0, 2)
+        raw_payment_rate = paid_yuan / sales_yuan if sales_yuan > 0 else None
+        payment_rate = (
+            round(min(raw_payment_rate, 1.0), 4) if raw_payment_rate is not None else None
+        )
+        ar_info = ar_by_contract.get(contract_no)
+        overdue_rate = (
+            round(ar_info["overdue"] / ar_info["ar"], 4) if ar_info and ar_info["ar"] > 0 else None
+        )
+        metrics = contract_metrics.get(contract_no, {})
+        margin_rate = metrics.get("margin_rate")
+        margin_rate = float(margin_rate) if margin_rate is not None else None
+        term_gap = metrics.get("term_gap_days")
+        term_gap = int(term_gap) if term_gap is not None else None
+
+        # 风险提示与等级（确定性规则）
+        flags: list[str] = []
+        if margin_rate is not None and margin_rate < 0:
+            flags.append("负毛利")
+        if raw_payment_rate is not None and raw_payment_rate > 1.0:
+            flags.append("回款额超过合同额（数据待核验）")
+        if payment_rate is not None and payment_rate < 0.30:
+            flags.append("回款率低于 30%")
+        elif payment_rate is not None and payment_rate < 0.60:
+            flags.append("回款率低于 60%")
+        elif payment_rate is not None and payment_rate < 0.80:
+            flags.append("回款率低于 80%")
+        if overdue_rate is not None and overdue_rate > 0.50:
+            flags.append("应收超期率高于 50%")
+        elif overdue_rate is not None and overdue_rate > 0.30:
+            flags.append("应收超期率高于 30%")
+        if term_gap is not None and term_gap >= 60:
+            flags.append(f"账期超期 {term_gap} 天")
         if guarantor is not None and guarantor.guarantor_status not in ("正常", ""):
-            risk_note = f"担保人{guarantor.guarantor_status}"
+            flags.append(f"担保人{guarantor.guarantor_status}")
+
+        risk_note = "；".join(flags)
         aggregated[contract_no] = {
             "project_id": contract_no,
             "name": name,
@@ -116,6 +215,12 @@ def list_projects(store: DuckDBStore, sim: SimulatedData) -> list[dict[str, obje
             "planned_payment_date": stage.planned_payment_date if stage else "",
             "milestone_progress": stage.milestone_progress if stage else 0,
             "guarantor": _guarantor_label(guarantor),
+            "paid_amount_wan": paid_wan,
+            "payment_rate": payment_rate,
+            "overdue_rate": overdue_rate,
+            "margin_rate": margin_rate,
+            "term_gap_days": term_gap,
+            "risk_level": _risk_level(flags),
             "risk_note": risk_note,
             "simulated": False,
         }
@@ -228,8 +333,8 @@ def run_pre_assessment(
     )
     if guarantor is not None and guarantor.guarantor_status not in ("正常", ""):
         status = guarantor.guarantor_status
-        if "失联" in status:
-            reasons.append(f"担保人 {guarantor.guarantor_name} 失联，建议暂缓项目")
+        if "失联" in status or "失信" in status or "涉刑" in status:
+            reasons.append(f"担保人 {guarantor.guarantor_name} {status}，建议暂缓项目")
             conclusion = _escalate(conclusion, "暂缓项目")
         elif "经营异常" in status:
             reasons.append(f"担保人 {guarantor.guarantor_name} 经营异常，需人工复核")

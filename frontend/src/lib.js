@@ -1,5 +1,5 @@
 export const labels = {
-  grade: { HEALTHY: "健康", WATCH: "关注", WARNING: "预警", HIGH_RISK: "高风险" },
+  grade: { HEALTHY: "健康", WATCH: "关注", WARNING: "预警", HIGH_RISK: "高危" },
   list: { WHITE: "白名单", WATCH: "观察中", BLACK: "黑名单", GENERAL: "一般" },
   severity: { LOW: "低", MEDIUM: "中", HIGH: "高", CRITICAL: "重大" },
   alertType: {

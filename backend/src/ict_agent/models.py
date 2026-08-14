@@ -541,7 +541,7 @@ class SentimentVerifyRequest(BaseModel):
 
 
 class ProjectViewResponse(BaseModel):
-    """项目类视图（合同 + 模拟阶段/担保人）。"""
+    """项目类视图（合同 + 模拟阶段/担保人 + 真实风险指标）。"""
 
     project_id: str
     name: str
@@ -552,6 +552,12 @@ class ProjectViewResponse(BaseModel):
     planned_payment_date: str = ""
     milestone_progress: int = 0
     guarantor: str = ""
+    paid_amount_wan: float = 0.0
+    payment_rate: float | None = None
+    overdue_rate: float | None = None
+    margin_rate: float | None = None
+    term_gap_days: int | None = None
+    risk_level: str = "LOW"
     risk_note: str = ""
     credit_amount_wan: float | None = None
     simulated: bool = False

@@ -297,6 +297,39 @@ def test_list_projects_marks_existing_as_not_simulated(store: DuckDBStore) -> No
     assert all(row["project_id"] for row in rows)
 
 
+def test_list_projects_includes_risk_metrics(store: DuckDBStore) -> None:
+    """存量项目必须带真实风险指标与等级字段。"""
+
+    rows = list_projects(store, _sim())
+    assert len(rows) >= 1
+    first = rows[0]
+    for key in (
+        "paid_amount_wan",
+        "payment_rate",
+        "overdue_rate",
+        "margin_rate",
+        "term_gap_days",
+        "risk_level",
+        "risk_note",
+    ):
+        assert key in first, f"存量项目缺少字段 {key}"
+    assert first["risk_level"] in ("LOW", "MEDIUM", "HIGH", "CRITICAL")
+
+
+def test_risk_level_rules() -> None:
+    """风险分级规则：负毛利/低回款升级。"""
+
+    from ict_agent.project import _risk_level
+
+    assert _risk_level(["负毛利"]) == "CRITICAL"
+    assert _risk_level(["回款率低于 30%"]) == "CRITICAL"
+    assert _risk_level(["应收超期率高于 50%"]) == "HIGH"
+    assert _risk_level(["回款率低于 60%"]) == "HIGH"
+    assert _risk_level(["账期超期 90 天"]) == "MEDIUM"
+    assert _risk_level(["回款率低于 80%"]) == "MEDIUM"
+    assert _risk_level([]) == "LOW"
+
+
 def test_amount_tier_boundaries() -> None:
     assert amount_tier(299.0) == "<300"
     assert amount_tier(300.0) == "300~500"

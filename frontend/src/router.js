@@ -11,11 +11,11 @@ import CaseWorkspace from "./components/CaseWorkspace.vue";
 
 export const navItems = [
   { path: "/risk", label: "风险预警", icon: LayoutDashboard },
-  { path: "/health", label: "健康度", icon: Activity },
-  { path: "/lists", label: "名单管理", icon: ListChecks },
-  { path: "/sentiments", label: "舆情监控", icon: Newspaper },
-  { path: "/projects", label: "项目评估", icon: FolderKanban },
   { path: "/cases", label: "案件队列", icon: ListTodo },
+  { path: "/health", label: "健康度", icon: Activity },
+  { path: "/projects", label: "项目评估", icon: FolderKanban },
+  { path: "/sentiments", label: "舆情监控", icon: Newspaper },
+  { path: "/lists", label: "名单管理", icon: ListChecks },
   { path: "/business", label: "经营分析", icon: ChartLine },
 ];
 

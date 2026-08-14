@@ -69,7 +69,7 @@ from ict_agent.models import (
     SentimentVerifyRequest,
     WarningOverviewResponse,
 )
-from ict_agent.project import list_new_projects, list_projects, run_pre_assessment
+from ict_agent.project import list_new_projects, run_pre_assessment
 from ict_agent.rules import build_rule_scan
 from ict_agent.sentiment import list_sentiments, verify_sentiment
 from ict_agent.simdata import SimulatedData, load_simulated_data
@@ -871,18 +871,13 @@ def list_projects_service(
     *,
     settings: Settings | None = None,
 ) -> list[ProjectViewResponse]:
-    """返回项目类视图：存量合同（真实） + 模拟新项目（P2026-，事前评估入口）。"""
+    """返回模拟新项目（P2026-，事前评估入口）。存量合同视图暂不下发（板块暂移除）。"""
 
     request_id = uuid4().hex
     try:
         runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
-        business_store = DuckDBStore(runtime_settings.database_path)
-        business_store.ensure_ready()
         sim = _simulated_data(runtime_settings)
-        existing = [
-            ProjectViewResponse.model_validate(item) for item in list_projects(business_store, sim)
-        ]
-        new_items = [
+        return [
             ProjectViewResponse(
                 project_id=str(item["project_id"]),
                 name=str(item["project_name"]),
@@ -899,7 +894,6 @@ def list_projects_service(
             )
             for item in list_new_projects(sim)
         ]
-        return [*existing, *new_items]
     except (ConfigurationError, DataAccessError) as exc:
         raise ServiceError(str(exc), request_id, 503) from exc
 
@@ -968,7 +962,7 @@ def warning_overview(
         open_sentiments = sum(
             1 for item in sentiments if item.get("verify_status") in ("PENDING", "CONFIRMED")
         )
-        risk_exposure = sum(_as_float(row[7]) for row in alert_rows if str(row[8]) != "RESOLVED")
+        risk_exposure = _as_float(case_store.fetch_overview().rows[0][6])
 
         return WarningOverviewResponse(
             pre_assessment_pending=len(sim.new_projects),
