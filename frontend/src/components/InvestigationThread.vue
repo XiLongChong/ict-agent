@@ -79,7 +79,7 @@ function completenessLabel(value) {
 </script>
 
 <template>
-  <section class="mx-auto w-full max-w-[1280px] space-y-4 pb-10" aria-live="polite">
+  <section class="w-full space-y-4 pb-10" aria-live="polite">
     <div v-if="canInvestigate || running" class="card flex items-center gap-4 p-4">
       <div v-if="running" class="flex items-center gap-2 text-sm text-muted">
         <span class="flex items-end gap-1">

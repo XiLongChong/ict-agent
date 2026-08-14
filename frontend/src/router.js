@@ -12,7 +12,7 @@ import CaseWorkspace from "./components/CaseWorkspace.vue";
 export const navItems = [
   { path: "/risk", label: "风险总览", icon: LayoutDashboard },
   { path: "/cases", label: "案件队列", icon: ListTodo },
-  { path: "/health", label: "健康度", icon: Activity },
+  { path: "/health", label: "健康分析", icon: Activity },
   { path: "/projects", label: "项目评估", icon: FolderKanban },
   { path: "/sentiments", label: "舆情监控", icon: Newspaper },
   { path: "/lists", label: "名单管理", icon: ListChecks },
@@ -24,7 +24,7 @@ const router = createRouter({
   routes: [
     { path: "/", redirect: "/risk" },
     { path: "/risk", name: "risk", component: RiskOverview, meta: { title: "风险总览" } },
-    { path: "/health", name: "health", component: HealthScores, meta: { title: "健康度" } },
+    { path: "/health", name: "health", component: HealthScores, meta: { title: "健康分析" } },
     { path: "/lists", name: "lists", component: ListManagement, meta: { title: "名单管理" } },
     { path: "/sentiments", name: "sentiments", component: Sentiments, meta: { title: "舆情监控" } },
     { path: "/projects", name: "projects", component: Projects, meta: { title: "项目评估" } },
