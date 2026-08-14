@@ -8,6 +8,7 @@ import {
   CodeXml,
   FileText,
   LoaderCircle,
+  Menu,
   PanelLeftClose,
   PanelLeftOpen,
   Radar,
@@ -33,6 +34,15 @@ const loading = ref(true);
 const error = ref("");
 const section = ref("overview");
 const sidebarExpanded = ref(true);
+const mobileNav = ref(false);
+const mobileQuery = typeof window !== "undefined" ? window.matchMedia("(max-width: 767px)") : null;
+const isMobile = ref(mobileQuery ? mobileQuery.matches : false);
+if (mobileQuery) {
+  const onMobileChange = (event) => { isMobile.value = event.matches; };
+  mobileQuery.addEventListener("change", onMobileChange);
+}
+const expandedState = computed(() => !isMobile.value && sidebarExpanded.value);
+const labelsVisible = computed(() => isMobile.value || sidebarExpanded.value);
 const submitting = ref(false);
 const form = reactive({ decision: "", reviewer: "", reason: "" });
 const decisionOptions = [
@@ -168,25 +178,39 @@ function returnToSource() {
   }
   router.replace(sourcePath.value);
 }
+
+function selectSection(value) {
+  section.value = value;
+  if (isMobile.value) mobileNav.value = false;
+}
+
+function toggleNavigation() {
+  if (!isMobile.value) sidebarExpanded.value = !sidebarExpanded.value;
+  else mobileNav.value = !mobileNav.value;
+}
 </script>
 
 <template>
   <div
-    class="min-h-screen bg-canvas transition-[padding-left] duration-200 ease-out motion-reduce:transition-none"
-    :class="sidebarExpanded ? 'md:pl-[200px]' : 'md:pl-16'"
+    class="min-h-screen bg-canvas transition-[padding-left] duration-200 ease-out motion-reduce:transition-none md:will-change-[padding-left]"
+    :class="expandedState ? 'md:pl-[200px]' : 'md:pl-16'"
   >
+    <div v-if="mobileNav" class="fixed inset-0 z-40 bg-black/40 md:hidden" @click="mobileNav = false"></div>
+
     <aside
-      class="fixed inset-y-0 left-0 z-40 hidden flex-col overflow-hidden border-r border-border bg-surface transition-[width] duration-200 ease-out motion-reduce:transition-none md:flex"
-      :class="sidebarExpanded ? 'w-[200px]' : 'w-16'"
+      class="fixed inset-y-0 left-0 z-50 flex flex-col overflow-hidden border-r border-border bg-surface transition-[width,transform] duration-200 ease-out motion-reduce:transition-none md:translate-x-0"
+      :class="[expandedState ? 'w-[200px]' : 'w-16', mobileNav ? 'translate-x-0' : '-translate-x-full']"
     >
       <div class="flex h-[72px] items-center px-3">
         <span class="grid h-9 w-10 flex-none place-items-center">
           <BrandMark />
         </span>
-        <strong
-          class="ml-2 flex-none whitespace-nowrap text-[0.9375rem] text-ink transition-opacity duration-100"
-          :class="sidebarExpanded ? 'delay-100 opacity-100' : 'opacity-0'"
-        >佳华智审</strong>
+        <div
+          class="ml-2 flex-none whitespace-nowrap leading-tight transition-opacity duration-100"
+          :class="labelsVisible ? 'delay-100 opacity-100' : 'opacity-0'"
+        >
+          <strong class="block text-[0.9375rem] text-ink">佳华智审</strong>
+        </div>
       </div>
 
       <nav class="flex-1 space-y-1 overflow-x-hidden overflow-y-auto px-3 py-4" aria-label="案件处理导航">
@@ -201,7 +225,7 @@ function returnToSource() {
               ? 'bg-brand-wash text-brand-deep'
               : 'text-muted hover:bg-canvas hover:text-brand'
           "
-          @click="section = item.value"
+          @click="selectSection(item.value)"
         >
           <span
             v-if="section === item.value"
@@ -212,33 +236,41 @@ function returnToSource() {
           </span>
           <span
             class="ml-2 flex-none whitespace-nowrap transition-opacity duration-100"
-            :class="sidebarExpanded ? 'delay-100 opacity-100' : 'opacity-0'"
+            :class="labelsVisible ? 'delay-100 opacity-100' : 'opacity-0'"
           >{{ item.label }}</span>
         </button>
       </nav>
 
       <button
         type="button"
-        class="mx-3 mb-4 flex h-10 items-center rounded-lg border border-border text-sm font-semibold text-muted transition-colors hover:bg-brand-wash hover:text-brand"
-        :aria-label="sidebarExpanded ? '收起侧边栏' : '展开侧边栏'"
-        :title="sidebarExpanded ? '收起侧边栏' : '展开侧边栏'"
-        @click="sidebarExpanded = !sidebarExpanded"
+        class="mx-3 mb-4 hidden h-10 items-center rounded-lg border border-border text-sm font-semibold text-muted transition-colors hover:bg-brand-wash hover:text-brand md:flex"
+        :aria-label="expandedState ? '收起侧边栏' : '展开侧边栏'"
+        :title="expandedState ? '收起侧边栏' : '展开侧边栏'"
+        @click="toggleNavigation"
       >
         <span class="grid h-10 w-10 flex-none place-items-center">
-          <PanelLeftClose v-if="sidebarExpanded" :size="18" />
+          <PanelLeftClose v-if="expandedState" :size="18" />
           <PanelLeftOpen v-else :size="18" />
         </span>
         <span
           class="ml-2 flex-none whitespace-nowrap transition-opacity duration-100"
-          :class="sidebarExpanded ? 'delay-100 opacity-100' : 'opacity-0'"
+          :class="labelsVisible ? 'delay-100 opacity-100' : 'opacity-0'"
         >收起侧边栏</span>
       </button>
     </aside>
 
     <header
-      class="sticky top-0 z-30 flex h-[72px] items-center gap-3 border-b border-border bg-surface/95 px-4 backdrop-blur md:px-6"
+      class="sticky top-0 z-30 flex h-[72px] items-center gap-4 border-b border-border bg-surface/95 px-4 backdrop-blur md:px-6"
     >
-      <h1 class="text-[0.9375rem] font-bold text-ink">{{ currentSectionLabel }}</h1>
+      <button
+        type="button"
+        class="grid h-10 w-10 flex-none place-items-center rounded-lg border border-border text-muted transition-colors hover:bg-brand-wash hover:text-brand md:hidden"
+        aria-label="切换导航"
+        @click="toggleNavigation"
+      >
+        <Menu :size="20" />
+      </button>
+      <strong class="block text-[0.9375rem] text-ink">{{ currentSectionLabel }}</strong>
       <div class="flex-1"></div>
       <button
         type="button"
@@ -249,27 +281,6 @@ function returnToSource() {
         <span class="hidden sm:inline">返回并关闭</span>
       </button>
     </header>
-
-    <nav
-      class="flex gap-1 overflow-x-auto border-b border-border bg-surface px-3 py-2 md:hidden"
-      aria-label="案件处理导航"
-    >
-      <button
-        v-for="item in sections"
-        :key="item.value"
-        type="button"
-        class="flex h-10 flex-none items-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors"
-        :class="
-          section === item.value
-            ? 'bg-brand-wash text-brand-deep'
-            : 'text-muted hover:bg-canvas hover:text-brand'
-        "
-        @click="section = item.value"
-      >
-        <component :is="item.icon" :size="17" />
-        {{ item.label }}
-      </button>
-    </nav>
 
     <div class="mx-auto w-full max-w-[1920px] px-4 py-7 md:px-8">
       <section
