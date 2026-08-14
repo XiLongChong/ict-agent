@@ -28,6 +28,11 @@ from ict_agent.data import (
     InvestigationWrite,
     ReviewWrite,
 )
+from ict_agent.feishu import (
+    FeishuIntegrationError,
+    get_feishu_status,
+    send_feishu_test_card,
+)
 from ict_agent.health import compute_health_scores
 from ict_agent.listmgmt import (
     build_recommendations,
@@ -41,6 +46,8 @@ from ict_agent.models import (
     DashboardResponse,
     DataSnapshotResponse,
     DataSourceSnapshot,
+    FeishuStatusResponse,
+    FeishuTestResponse,
     HealthScoreResponse,
     InvestigationCaseInput,
     InvestigationRecord,
@@ -537,6 +544,29 @@ def review_case(
         raise
     except (ConfigurationError, DataAccessError) as exc:
         raise ServiceError(str(exc), request_id, 503) from exc
+
+
+def get_feishu_status_service(*, settings: Settings | None = None) -> FeishuStatusResponse:
+    """返回不含密钥的飞书机器人运行状态。"""
+
+    request_id = uuid4().hex
+    try:
+        runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
+        status = get_feishu_status(runtime_settings)
+        return FeishuStatusResponse(**status.__dict__)
+    except (ConfigurationError, DataAccessError) as exc:
+        raise ServiceError(str(exc), request_id, 503) from exc
+
+
+async def send_feishu_test_service() -> FeishuTestResponse:
+    """向当前绑定群发送一张飞书测试卡片。"""
+
+    request_id = uuid4().hex
+    try:
+        message_id = await send_feishu_test_card()
+        return FeishuTestResponse(sent=True, message_id=message_id)
+    except FeishuIntegrationError as exc:
+        raise ServiceError(str(exc), request_id, 409) from exc
 
 
 # ---------------------------------------------------------------------------

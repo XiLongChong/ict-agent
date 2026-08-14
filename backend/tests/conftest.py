@@ -325,4 +325,6 @@ def settings(raw_data_dir: Path, database_path: Path) -> Settings:
         database_path=database_path,
         case_database_path=database_path.parent / "cases.duckdb",
         simulated_data_dir=database_path.parent.parent / "simulated",
+        feishu_app_id=None,
+        feishu_app_secret=None,
     )
