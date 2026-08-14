@@ -122,8 +122,7 @@ const evidenceText = (item) => (item.evidence || []).map((e) => e.summary).join(
           <tbody>
             <tr v-for="item in paginated" :key="item.recommendation_id" class="hover:bg-canvas/60">
               <td>
-                <strong class="block truncate text-[0.8125rem] text-ink" :title="item.subject_label">{{ item.subject_label }}</strong>
-                <span class="text-[0.75rem] text-muted">{{ item.subject_id }}</span>
+                <strong class="block truncate text-[0.8125rem] text-ink" :title="`${item.subject_id} ${item.subject_label}`">{{ item.subject_id }} {{ item.subject_label }}</strong>
               </td>
               <td>
                 <div class="flex items-center gap-1.5">

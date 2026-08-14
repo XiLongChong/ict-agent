@@ -133,8 +133,7 @@ function jumpToPage() {
               </td>
               <td><span class="text-sm text-muted">{{ formatDate(item.published_at) }}</span></td>
               <td>
-                <span class="block truncate text-sm text-ink">{{ item.subject }}</span>
-                <span class="text-[0.75rem] text-muted">{{ item.subject_type }}</span>
+                <strong class="block truncate text-[0.8125rem] text-ink" :title="`${item.subject_type} ${item.subject}`">{{ item.subject_type }} {{ item.subject }}</strong>
               </td>
               <td><span class="text-sm text-muted">{{ item.event_type }}</span></td>
               <td>

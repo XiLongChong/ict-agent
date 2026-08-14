@@ -127,7 +127,7 @@ async function scan() {
           </colgroup>
           <thead>
             <tr>
-              <th>案件主体</th>
+              <th>主体</th>
               <th>案件类型</th>
               <th>风险概况</th>
               <th>风险等级</th>
