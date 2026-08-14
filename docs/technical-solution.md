@@ -32,6 +32,7 @@ flowchart LR
 | Agent | Pydantic AI | DeepSeek 高强度思考、工具事件、结构化输出和输出校验 |
 | 业务分析 | `semantic.py` / `tools.py` / `rules.py` | 单一语义注册表、参数化指标查询和版本化确定性规则 |
 | 数据 | `data.py` | 业务 DuckDB 加固只读查询、带快照身份的原子导入、独立案件库写入 |
+| 飞书适配 | `feishu.py` | 官方长连接、通知群绑定和结果卡片发送；不参与 Agent 调查推理 |
 
 通用数据问答 Agent 已删除。经营看板继续直接调用确定性工具，避免无关工具进入案件调查上下文。
 
@@ -158,6 +159,8 @@ trace 保存工具完成和报告校验轨迹，供刷新后回放。页面以�
 | `GET /api/v1/projects` | 项目类视图（存量合同 + 模拟新项目，金额万元） |
 | `POST /api/v1/projects/{id}/pre-assessment/run` | 模拟新项目事前评估（黑名单/金额档位/历史超期/担保人） |
 | `GET /api/v1/warning/overview` | 预警总览聚合 |
+| `GET /api/v1/integrations/feishu/status` | 飞书配置、长连接和通知群绑定状态 |
+| `POST /api/v1/integrations/feishu/test` | 向已绑定群发送连通性测试卡片 |
 
 阶段 A（风险预警）说明：健康度由确定性指标计算（六维加权，可配置），不消耗模型额度；模拟数据（担保人/项目阶段/舆情/新项目）位于 `data/simulated/`，页面必须标注“模拟”；名单变更保留人工审批并写审计。
 
@@ -182,3 +185,4 @@ Run ID，既支持低成本回归，也不覆盖原始审计记录。
 
 当前不做登录、多租户、自由 SQL、RAG、联网、代码执行、多 Agent、自动数据刷新、模型 fallback、
 预测评分或自动业务处置。新增能力不得破坏 CSV → DuckDB → 工具 → Agent → API → 页面主链路。
+飞书只作为确定性的输入输出通道：群聊绑定和消息发送不改变核心调查 Agent 的工具、提示词和证据校验。

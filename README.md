@@ -70,12 +70,17 @@ Copy-Item .env.example .env
 DEEPSEEK_API_KEY=你的密钥
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-flash
+FEISHU_APP_ID=你的飞书应用 App ID
+FEISHU_APP_SECRET=你的飞书应用 App Secret
 ICT_DATA_DIR=D:/path/to/数据集目录
 ICT_DATABASE_PATH=data/processed/ict_agent.duckdb
 ICT_CASE_DATABASE_PATH=data/processed/ict_agent_cases.duckdb
 ```
 
 `ICT_DATA_DIR` 应直接指向包含七张 CSV 的目录。
+
+飞书接入为可选能力。两项飞书配置同时填写后，服务会建立官方长连接。把已发布的机器人加入群聊，
+发送“@机器人 绑定通知群”，即可把该群设为风险结果通知群；绑定信息保存在案件库中，服务重启不会丢失。
 
 ### 2. 导入数据
 
@@ -184,6 +189,7 @@ pytest -q
 ## 当前边界
 
 - 当前没有登录、多租户和权限管理。
+- 当前飞书接入面向同一企业租户的演示群，不包含个人授权或跨租户绑定。
 - 当前不提供自由 SQL、代码执行、联网搜索、RAG 或多 Agent。
 - AI 结论不能替代人工复核，也不会自动执行后续业务动作。
 - 指标口径以 [docs/metric-contract.md](docs/metric-contract.md) 为准，系统架构见 [docs/technical-solution.md](docs/technical-solution.md)。

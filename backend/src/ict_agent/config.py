@@ -30,6 +30,8 @@ class Settings(BaseModel):
     database_path: Path
     case_database_path: Path
     simulated_data_dir: Path
+    feishu_app_id: str | None
+    feishu_app_secret: SecretStr | None
 
 
 def _resolve_path(raw_path: str) -> Path:
@@ -73,6 +75,11 @@ def load_settings(
         values.get("ICT_CASE_DATABASE_PATH", "data/processed/ict_agent_cases.duckdb")
     )
     simulated_data_dir = _resolve_path(values.get("ICT_SIMULATED_DATA_DIR", "data/simulated"))
+    feishu_app_id = values.get("FEISHU_APP_ID", "").strip()
+    feishu_app_secret = values.get("FEISHU_APP_SECRET", "").strip()
+
+    if bool(feishu_app_id) != bool(feishu_app_secret):
+        raise ConfigurationError("FEISHU_APP_ID 和 FEISHU_APP_SECRET 必须同时配置。")
 
     if require_api_key and not api_key:
         raise ConfigurationError("缺少 DEEPSEEK_API_KEY，请在项目 .env 中填写后重试。")
@@ -93,4 +100,6 @@ def load_settings(
         database_path=database_path,
         case_database_path=case_database_path,
         simulated_data_dir=simulated_data_dir,
+        feishu_app_id=feishu_app_id or None,
+        feishu_app_secret=SecretStr(feishu_app_secret) if feishu_app_secret else None,
     )

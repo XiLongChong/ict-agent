@@ -12,7 +12,8 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from ict_agent.config import load_frontend_dist_dir
+from ict_agent.config import load_frontend_dist_dir, load_settings
+from ict_agent.feishu import start_feishu_bot, stop_feishu_bot
 from ict_agent.models import (
     AlertResponse,
     CaseStatus,
@@ -20,6 +21,8 @@ from ict_agent.models import (
     DashboardResponse,
     DataSnapshotResponse,
     ErrorResponse,
+    FeishuStatusResponse,
+    FeishuTestResponse,
     HealthResponse,
     HealthScoreResponse,
     ListRecommendationResponse,
@@ -42,6 +45,7 @@ from ict_agent.service import (
     get_case_detail,
     get_dashboard,
     get_data_snapshot,
+    get_feishu_status_service,
     get_health_score,
     get_risk_overview,
     list_alerts,
@@ -57,6 +61,7 @@ from ict_agent.service import (
     review_list_recommendation,
     run_pre_assessment_service,
     run_rule_scan,
+    send_feishu_test_service,
     stream_prepared_investigation,
     verify_sentiment_service,
     warning_overview,
@@ -68,12 +73,17 @@ FRONTEND_DIST_DIR = load_frontend_dist_dir()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """启动时清理由上一个服务进程遗留的临时调查状态。"""
+    """恢复临时状态，并在已配置时管理飞书长连接。"""
 
     recovered = recover_interrupted_investigations()
     if recovered:
         logger.warning("已恢复 %d 个被中断的 Agent 调查案件", recovered)
-    yield
+    settings = load_settings(require_api_key=False, require_data_dir=False)
+    await start_feishu_bot(settings)
+    try:
+        yield
+    finally:
+        await stop_feishu_bot()
 
 
 app = FastAPI(
@@ -103,6 +113,30 @@ async def health() -> HealthResponse:
     """确认 HTTP 服务已经启动。"""
 
     return HealthResponse(status="ok", service="ict-agent")
+
+
+@app.get(
+    "/api/v1/integrations/feishu/status",
+    response_model=FeishuStatusResponse,
+    responses={503: {"model": ErrorResponse}},
+    tags=["integrations"],
+)
+async def feishu_status() -> FeishuStatusResponse:
+    """返回飞书机器人的配置、连接和通知群绑定状态。"""
+
+    return get_feishu_status_service()
+
+
+@app.post(
+    "/api/v1/integrations/feishu/test",
+    response_model=FeishuTestResponse,
+    responses={409: {"model": ErrorResponse}},
+    tags=["integrations"],
+)
+async def send_feishu_test() -> FeishuTestResponse:
+    """向当前绑定通知群发送连通性测试卡片。"""
+
+    return await send_feishu_test_service()
 
 
 @app.get(

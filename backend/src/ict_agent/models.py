@@ -585,3 +585,18 @@ class WarningOverviewResponse(BaseModel):
     grade_distribution: dict[str, int]
     pending_recommendations: list[ListRecommendationResponse] = []
     open_alerts: list[AlertResponse] = []
+
+
+class FeishuStatusResponse(BaseModel):
+    """飞书机器人配置、连接和群绑定状态。"""
+
+    configured: bool
+    connected: bool
+    bound: bool
+
+
+class FeishuTestResponse(BaseModel):
+    """飞书测试消息发送结果。"""
+
+    sent: bool
+    message_id: str

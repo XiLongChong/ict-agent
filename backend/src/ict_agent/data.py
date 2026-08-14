@@ -920,6 +920,15 @@ class CaseStore:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS integration_settings (
+                setting_key VARCHAR PRIMARY KEY,
+                setting_value VARCHAR NOT NULL,
+                updated_at TIMESTAMP NOT NULL
+            )
+            """
+        )
 
     def ensure_ready(self) -> None:
         """创建案件库及固定表。"""
@@ -1539,6 +1548,33 @@ class CaseStore:
                 )
         except duckdb.Error as exc:
             raise DataAccessError("通知无法写入案件数据库。") from exc
+
+    def get_integration_setting(self, setting_key: str) -> str | None:
+        """读取单个外部集成配置。"""
+
+        result = self._fetch(
+            "SELECT setting_value FROM integration_settings WHERE setting_key = ?",
+            [setting_key],
+        )
+        return str(result.rows[0][0]) if result.rows else None
+
+    def save_integration_setting(
+        self, setting_key: str, setting_value: str, updated_at: str
+    ) -> None:
+        """保存或替换单个外部集成配置。"""
+
+        self.ensure_ready()
+        try:
+            with duckdb.connect(str(self.database_path)) as connection:
+                connection.execute(
+                    "INSERT INTO integration_settings VALUES (?, ?, ?) "
+                    "ON CONFLICT (setting_key) DO UPDATE SET "
+                    "setting_value = excluded.setting_value, "
+                    "updated_at = excluded.updated_at",
+                    [setting_key, setting_value, updated_at],
+                )
+        except duckdb.Error as exc:
+            raise DataAccessError("外部集成配置无法写入案件数据库。") from exc
 
     def fetch_sentiment_verification(self, sentiment_id: str) -> QueryResult:
         """返回一条舆情核验记录（sentiment_id 主键）。"""
