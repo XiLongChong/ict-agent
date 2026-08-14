@@ -1,10 +1,10 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { AlertCircle, Menu, PanelLeftClose, PanelLeftOpen, Radar } from "lucide-vue-next";
+import { AlertCircle, Menu, PanelLeftClose, PanelLeftOpen } from "lucide-vue-next";
 import BrandMark from "./components/BrandMark.vue";
 import { navItems } from "./router";
-import { loadAll, loadRiskData, runScan, workspace } from "./store";
+import { loadAll, loadRiskData, workspace } from "./store";
 
 const route = useRoute();
 const router = useRouter();
@@ -138,15 +138,6 @@ onUnmounted(() => window.removeEventListener("focus", refreshRiskDataOnFocus));
         </button>
         <strong class="block text-[15px] text-ink">{{ pageTitle }}</strong>
         <div class="flex-1"></div>
-        <button
-          type="button"
-          :disabled="workspace.scanning"
-          class="inline-flex h-10 items-center gap-2 rounded-lg bg-brand px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-dark disabled:opacity-50"
-          @click="runScan"
-        >
-          <Radar :size="16" :class="workspace.scanning ? 'animate-spin' : ''" />
-          重新扫描
-        </button>
       </header>
 
       <main

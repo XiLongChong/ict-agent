@@ -10,7 +10,7 @@ import BusinessView from "./components/BusinessView.vue";
 import CaseWorkspace from "./components/CaseWorkspace.vue";
 
 export const navItems = [
-  { path: "/risk", label: "风险预警", icon: LayoutDashboard },
+  { path: "/risk", label: "风险总览", icon: LayoutDashboard },
   { path: "/cases", label: "案件队列", icon: ListTodo },
   { path: "/health", label: "健康度", icon: Activity },
   { path: "/projects", label: "项目评估", icon: FolderKanban },
@@ -23,7 +23,7 @@ const router = createRouter({
   history: createWebHistory("/"),
   routes: [
     { path: "/", redirect: "/risk" },
-    { path: "/risk", name: "risk", component: RiskOverview, meta: { title: "风险预警" } },
+    { path: "/risk", name: "risk", component: RiskOverview, meta: { title: "风险总览" } },
     { path: "/health", name: "health", component: HealthScores, meta: { title: "健康度" } },
     { path: "/lists", name: "lists", component: ListManagement, meta: { title: "名单管理" } },
     { path: "/sentiments", name: "sentiments", component: Sentiments, meta: { title: "舆情监控" } },

@@ -1,12 +1,12 @@
 <script setup>
 import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { ChevronLeft, ChevronRight } from "lucide-vue-next";
+import { ChevronLeft, ChevronRight, Radar } from "lucide-vue-next";
 import Badge from "./ui/Badge.vue";
 import SelectInput from "./ui/SelectInput.vue";
 import TextInput from "./ui/TextInput.vue";
 import { formatMoney, labels, openCaseWorkspace, priorityColor, statusColor } from "../lib";
-import { workspace } from "../store";
+import { runScan, workspace } from "../store";
 
 const route = useRoute();
 const type = ref("");
@@ -88,6 +88,11 @@ function goToPage(page) {
 function jumpToPage() {
   goToPage(pageJump.value);
 }
+
+async function scan() {
+  await runScan();
+  goToPage(1);
+}
 </script>
 
 <template>
@@ -99,6 +104,15 @@ function jumpToPage() {
         <SelectInput v-model="priority" :options="priorityOptions" class="w-[180px]" />
         <TextInput v-model="query" search clearable class="w-[320px] max-w-full" placeholder="搜索案件、客户或物料" aria-label="搜索案件、客户或物料" @clear="query = ''" />
         <span class="ml-auto text-sm text-muted">共 {{ filtered.length }} 个案件</span>
+        <button
+          type="button"
+          class="inline-flex h-10 items-center gap-2 rounded-lg bg-brand px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-dark disabled:opacity-50"
+          :disabled="workspace.scanning"
+          @click="scan"
+        >
+          <Radar :size="16" :class="workspace.scanning ? 'animate-spin' : ''" />
+          {{ workspace.scanning ? "扫描中…" : "重新扫描" }}
+        </button>
       </div>
 
       <div class="overflow-x-auto">
