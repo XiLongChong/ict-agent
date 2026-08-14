@@ -1,28 +1,30 @@
-"""业务类型判定测试（项目 / 分销）。"""
+"""业务类型判定测试（项目 / 分销 / 软件服务云）。"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
-from ict_agent.business_type import customer_business_types, order_type_business
+from ict_agent.business_type import customer_business_profiles, order_business_type
 from ict_agent.data import DuckDBStore, rebuild_database
 
 SALES = (
     "出库日期,客户编号,客户名称,合同号,销售订单号,库存组织名称,物料编码,"
-    "数量,出库类型,事务处理类型名称,销售金额_折扣后_含税,出库成本金额,订单类型\n"
+    "数量,出库类型,事务处理类型名称,销售金额_折扣后_含税,出库成本金额,订单类型,核算大类名称\n"
     # 纯分销客户 C001
-    "2026-07-01,C001,分销客户甲,X1,S1,W1,M1,1,销售出库,正常销售,1000,800,信产常规销售订单\n"
+    "2026-07-01,C001,分销客户甲,X1,S1,W1,M1,1,销售出库,正常销售,1000,800,信产常规销售订单,IPHONE\n"
     # 纯项目客户 C002
-    "2026-07-01,C002,项目客户乙,X2,S2,W1,M1,1,销售出库,正常销售,5000,4000,信产项目N\n"
-    # 混合客户 C003：项目金额大 → PROJECT
-    "2026-07-01,C003,混合客户丙,X3,S3,W1,M1,1,销售出库,正常销售,3000,2400,信产项目S\n"
-    "2026-07-01,C003,混合客户丙,X4,S4,W1,M1,1,销售出库,正常销售,1000,800,信息科技常规销售订单\n"
-    # 混合客户 C004：分销金额大 → DISTRIBUTION
-    "2026-07-01,C004,混合客户丁,X5,S5,W1,M1,1,销售出库,正常销售,200,160,信产项目N\n"
-    "2026-07-01,C004,混合客户丁,X6,S6,W1,M1,1,销售出库,正常销售,1000,800,哆啦有货常规销售订单\n"
-    # 边界客户 C006：纯分销但净额为负（退货冲销）→ 应判 DISTRIBUTION 而非 PROJECT
-    "2026-07-01,C006,负分销客户己,X7,S7,W1,M1,1,销售出库,正常销售,-5000,-4000,信产常规销售订单\n"
+    "2026-07-01,C002,项目客户乙,X2,S2,W1,M1,1,销售出库,正常销售,5000,4000,信产项目N,IT-存储\n"
+    # 纯服务云客户 C003
+    "2026-07-01,C003,服务云客户丙,X3,S3,W1,M1,1,销售出库,正常销售,2000,1600,信息产品整机销售订单,微软Azure\n"
+    # 混合客户 C004：项目金额大 → 主导 PROJECT
+    "2026-07-01,C004,混合客户丁,X4,S4,W1,M1,1,销售出库,正常销售,3000,2400,信产项目S,IT-存储\n"
+    "2026-07-01,C004,混合客户丁,X5,S5,W1,M1,1,销售出库,正常销售,1000,800,信产常规销售订单,IPHONE\n"
+    # 混合客户 C005：分销金额大 → 主导 DISTRIBUTION，且含服务云
+    "2026-07-01,C005,混合客户戊,X6,S6,W1,M1,1,销售出库,正常销售,5000,4000,信产常规销售订单,IPHONE\n"
+    "2026-07-01,C005,混合客户戊,X7,S7,W1,M1,1,销售出库,正常销售,200,160,信息产品整机销售订单,微软Azure\n"
+    # 负分销客户 C006：分销净额为负 → 兜底 DISTRIBUTION
+    "2026-07-01,C006,负分销客户己,X8,S8,W1,M1,1,销售出库,正常销售,-5000,-4000,信产常规销售订单,IPHONE\n"
 )
 
 CUSTOMER_CREDIT = (
@@ -30,10 +32,11 @@ CUSTOMER_CREDIT = (
     "黑白名单创建时间,失信分级,净资产,净利润,信用保险\n"
     "C001,分销客户甲,1000,0,,2025-01-01,一般,3000,100,N\n"
     "C002,项目客户乙,1000,0,,2025-01-01,一般,3000,100,N\n"
-    "C003,混合客户丙,1000,0,,2025-01-01,一般,3000,100,N\n"
+    "C003,服务云客户丙,1000,0,,2025-01-01,一般,3000,100,N\n"
     "C004,混合客户丁,1000,0,,2025-01-01,一般,3000,100,N\n"
-    "C005,无销售客户戊,1000,0,,2025-01-01,一般,3000,100,N\n"
+    "C005,混合客户戊,1000,0,,2025-01-01,一般,3000,100,N\n"
     "C006,负分销客户己,1000,0,,2025-01-01,一般,3000,100,N\n"
+    "C007,无销售客户庚,1000,0,,2025-01-01,一般,3000,100,N\n"
 )
 
 PAYMENTS = (
@@ -84,33 +87,63 @@ def store(tmp_path: Path) -> DuckDBStore:
     return DuckDBStore(database_path)
 
 
-def test_order_type_business_classifies() -> None:
-    assert order_type_business("信产项目N") == "PROJECT"
-    assert order_type_business("信产项目S") == "PROJECT"
-    assert order_type_business("信产常规销售订单") == "DISTRIBUTION"
-    assert order_type_business("哆啦有货常规销售订单") == "DISTRIBUTION"
-    assert order_type_business("信息服务常规销售订单") == "DISTRIBUTION"
-    assert order_type_business("云服务常规销售订单") == "DISTRIBUTION"
+def test_order_business_type_classifies() -> None:
+    assert order_business_type("信产项目N", "IT-存储") == "PROJECT"
+    assert order_business_type("信产项目S", "计算-计算") == "PROJECT"
+    assert order_business_type("信产常规销售订单", "IPHONE") == "DISTRIBUTION"
+    assert order_business_type("哆啦有货常规销售订单", "雷蛇") == "DISTRIBUTION"
+    # 服务/云核算大类 → SERVICE_CLOUD（订单类型不是项目即可）
+    assert order_business_type("信息产品整机销售订单", "微软Azure") == "SERVICE_CLOUD"
+    assert order_business_type("信息产品整机销售订单", "西门子工业软件") == "SERVICE_CLOUD"
+    assert order_business_type("信息产品整机销售订单", "长虹专业服务") == "SERVICE_CLOUD"
+    # 项目订单优先于服务云核算大类
+    assert order_business_type("信产项目N", "微软Azure") == "PROJECT"
 
 
-def test_customer_business_types_amount_dominant(store: DuckDBStore) -> None:
-    result = customer_business_types(store)
+def test_customer_business_profiles_pure_types(store: DuckDBStore) -> None:
+    profiles = customer_business_profiles(store)
 
-    assert result["C001"] == "DISTRIBUTION"  # 纯分销
-    assert result["C002"] == "PROJECT"  # 纯项目
-    assert result["C003"] == "PROJECT"  # 项目 3000 > 分销 1000
-    assert result["C004"] == "DISTRIBUTION"  # 分销 1000 > 项目 200
+    assert profiles["C001"]["business_type"] == "DISTRIBUTION"
+    assert profiles["C001"]["is_mixed"] is False
+    assert profiles["C001"]["distribution_amount"] == pytest.approx(1000.0)
+
+    assert profiles["C002"]["business_type"] == "PROJECT"
+    assert profiles["C002"]["is_mixed"] is False
+    assert profiles["C002"]["project_amount"] == pytest.approx(5000.0)
+
+    assert profiles["C003"]["business_type"] == "SERVICE_CLOUD"
+    assert profiles["C003"]["is_mixed"] is False
+    assert profiles["C003"]["service_cloud_amount"] == pytest.approx(2000.0)
 
 
-def test_negative_distribution_amount_not_project(store: DuckDBStore) -> None:
-    result = customer_business_types(store)
+def test_mixed_customer_dominant_by_amount(store: DuckDBStore) -> None:
+    profiles = customer_business_profiles(store)
 
-    # C006 无项目订单，分销净额为负（退货冲销）→ 不能因 0 > 负数 误判为项目类
-    assert result["C006"] == "DISTRIBUTION"
+    # C004：项目 3000 > 分销 1000 → 主导 PROJECT，标记混合
+    c004 = profiles["C004"]
+    assert c004["business_type"] == "PROJECT"
+    assert c004["is_mixed"] is True
+    assert c004["project_amount"] == pytest.approx(3000.0)
+    assert c004["distribution_amount"] == pytest.approx(1000.0)
+
+    # C005：分销 5000 > 服务云 200 → 主导 DISTRIBUTION，标记混合
+    c005 = profiles["C005"]
+    assert c005["business_type"] == "DISTRIBUTION"
+    assert c005["is_mixed"] is True
+    assert c005["distribution_amount"] == pytest.approx(5000.0)
+    assert c005["service_cloud_amount"] == pytest.approx(200.0)
+
+
+def test_negative_distribution_amount_falls_back(store: DuckDBStore) -> None:
+    profiles = customer_business_profiles(store)
+
+    # C006 无项目/服务云订单，分销净额为负 → 兜底 DISTRIBUTION，不误判
+    assert profiles["C006"]["business_type"] == "DISTRIBUTION"
+    assert profiles["C006"]["is_mixed"] is False
 
 
 def test_customer_without_sales_excluded(store: DuckDBStore) -> None:
-    result = customer_business_types(store)
+    profiles = customer_business_profiles(store)
 
-    assert "C005" not in result
-    assert set(result) == {"C001", "C002", "C003", "C004", "C006"}
+    assert "C007" not in profiles
+    assert set(profiles) == {"C001", "C002", "C003", "C004", "C005", "C006"}
