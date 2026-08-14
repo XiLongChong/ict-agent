@@ -164,6 +164,7 @@ class HealthScoreWrite:
     trend_json: str
     computed_at: str
     data_snapshot_id: str
+    business_type: str = "DISTRIBUTION"
 
 
 @dataclass(frozen=True)
@@ -837,9 +838,15 @@ class CaseStore:
                 drivers_json VARCHAR NOT NULL,
                 trend_json VARCHAR NOT NULL,
                 computed_at TIMESTAMP NOT NULL,
-                data_snapshot_id VARCHAR NOT NULL
+                data_snapshot_id VARCHAR NOT NULL,
+                business_type VARCHAR
             )
             """
+        )
+        # 老库已存在 health_scores 时补充业务类型列（幂等，不重复添加）。
+        # DuckDB 的 ADD COLUMN 不支持约束，列允许 NULL；写入总提供值，读取时对 NULL 兜底。
+        connection.execute(
+            "ALTER TABLE health_scores ADD COLUMN IF NOT EXISTS business_type VARCHAR"
         )
         connection.execute(
             """
@@ -1184,7 +1191,7 @@ class CaseStore:
             with duckdb.connect(str(self.database_path)) as connection:
                 connection.execute(
                     """
-                    INSERT INTO health_scores VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO health_scores VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT (id) DO UPDATE SET
                         subject_type = excluded.subject_type,
                         subject_id = excluded.subject_id,
@@ -1195,7 +1202,8 @@ class CaseStore:
                         drivers_json = excluded.drivers_json,
                         trend_json = excluded.trend_json,
                         computed_at = excluded.computed_at,
-                        data_snapshot_id = excluded.data_snapshot_id
+                        data_snapshot_id = excluded.data_snapshot_id,
+                        business_type = excluded.business_type
                     """,
                     [
                         record.id,
@@ -1209,6 +1217,7 @@ class CaseStore:
                         record.trend_json,
                         record.computed_at,
                         record.data_snapshot_id,
+                        record.business_type,
                     ],
                 )
         except duckdb.Error as exc:
@@ -1226,7 +1235,7 @@ class CaseStore:
                 connection.execute("DELETE FROM health_scores")
                 for record in records:
                     connection.execute(
-                        "INSERT INTO health_scores VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO health_scores VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         [
                             record.id,
                             record.subject_type,
@@ -1239,6 +1248,7 @@ class CaseStore:
                             record.trend_json,
                             record.computed_at,
                             record.data_snapshot_id,
+                            record.business_type,
                         ],
                     )
                 connection.commit()
@@ -1268,7 +1278,8 @@ class CaseStore:
         return self._fetch(
             f"""
             SELECT id, subject_type, subject_id, subject_label, score, grade,
-                   dimension_json, drivers_json, trend_json, computed_at, data_snapshot_id
+                   dimension_json, drivers_json, trend_json, computed_at, data_snapshot_id,
+                   business_type
             FROM health_scores
             {where}
             ORDER BY score ASC, subject_label ASC
@@ -1283,7 +1294,8 @@ class CaseStore:
         return self._fetch(
             """
             SELECT id, subject_type, subject_id, subject_label, score, grade,
-                   dimension_json, drivers_json, trend_json, computed_at, data_snapshot_id
+                   dimension_json, drivers_json, trend_json, computed_at, data_snapshot_id,
+                   business_type
             FROM health_scores WHERE id = ?
             """,
             [score_id],

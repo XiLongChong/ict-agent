@@ -466,6 +466,7 @@ class HealthScoreResponse(BaseModel):
     trend: list[HealthTrendPoint] = []
     computed_at: str
     data_snapshot_id: str = ""
+    business_type: str = "DISTRIBUTION"
 
 
 class ListRecommendationResponse(BaseModel):

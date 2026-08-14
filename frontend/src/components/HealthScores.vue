@@ -42,6 +42,7 @@ const filtered = computed(() => {
       item.subject_id,
       item.subject_label,
       item.subject_type === "CUSTOMER" ? "客户" : "项目合同",
+      labels.businessType[item.business_type],
       labels.grade[item.grade],
     ]
       .filter(Boolean)
@@ -76,6 +77,12 @@ const gradeTone = {
   WATCH: "bg-warning",
   WARNING: "bg-[#f97316]",
   HIGH_RISK: "bg-danger",
+};
+
+const businessTypeTone = {
+  DISTRIBUTION: "neutral",
+  PROJECT: "brand",
+  SERVICE_CLOUD: "info",
 };
 
 const topDrivers = (item) => {
@@ -126,8 +133,8 @@ function jumpToPage() {
       <div class="overflow-x-auto">
         <table class="table-base table-fixed min-w-[960px]">
           <colgroup>
-            <col class="w-[22%]" />
-            <col class="w-[9%]" />
+            <col class="w-[19%]" />
+            <col class="w-[12%]" />
             <col class="w-[16%]" />
             <col class="w-[9%]" />
             <col class="w-[14%]" />
@@ -150,7 +157,14 @@ function jumpToPage() {
               <td>
                 <strong class="block truncate text-[0.8125rem] text-ink" :title="`${item.subject_id} ${item.subject_label}`">{{ item.subject_id }} {{ item.subject_label }}</strong>
               </td>
-              <td><Badge tone="neutral">{{ item.subject_type === "CUSTOMER" ? "客户" : "项目合同" }}</Badge></td>
+              <td>
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <Badge tone="neutral">{{ item.subject_type === "CUSTOMER" ? "客户" : "项目合同" }}</Badge>
+                  <Badge v-if="item.business_type" :tone="businessTypeTone[item.business_type] || 'neutral'">
+                    {{ labels.businessType[item.business_type] || item.business_type }}
+                  </Badge>
+                </div>
+              </td>
               <td>
                 <div class="flex items-center gap-2">
                   <span class="h-2 w-14 overflow-hidden rounded-full bg-gray-100">

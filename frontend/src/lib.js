@@ -1,5 +1,6 @@
 export const labels = {
   grade: { HEALTHY: "健康", WATCH: "关注", WARNING: "预警", HIGH_RISK: "高危" },
+  businessType: { DISTRIBUTION: "分销", PROJECT: "项目", SERVICE_CLOUD: "服务云" },
   list: { WHITE: "白名单", WATCH: "观察中", BLACK: "黑名单", GENERAL: "一般" },
   severity: { LOW: "低", MEDIUM: "中", HIGH: "高", CRITICAL: "重大" },
   alertType: {

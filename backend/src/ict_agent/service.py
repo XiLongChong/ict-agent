@@ -588,6 +588,7 @@ def _health_score_response(row: tuple[DatabaseScalar, ...]) -> HealthScoreRespon
         trend=json.loads(str(row[8])),
         computed_at=str(row[9]),
         data_snapshot_id=str(row[10]),
+        business_type=str(row[11]) if row[11] is not None else "DISTRIBUTION",
     )
 
 
@@ -661,6 +662,7 @@ def recalculate_health_scores(
                 trend_json=json.dumps(item.get("trend", []), ensure_ascii=False),
                 computed_at=computed_at,
                 data_snapshot_id=snapshot_id,
+                business_type=str(item.get("business_type", "DISTRIBUTION")),
             )
             for item in scores
         ]
