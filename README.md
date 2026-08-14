@@ -106,6 +106,23 @@ uvicorn ict_agent.api:app --app-dir backend/src --reload
 - API 文档：`http://127.0.0.1:8000/docs`
 - 健康检查：`http://127.0.0.1:8000/api/v1/health`
 
+### 开发时热更新
+
+开发阶段使用两个独立终端，不需要在每次修改后手动停止和重启服务：
+
+```powershell
+# 终端 1：后端代码变化后自动重载
+.venv\Scripts\python.exe -m uvicorn ict_agent.api:app --app-dir backend/src --host 127.0.0.1 --port 8000 --reload
+
+# 终端 2：前端热更新
+Set-Location frontend
+npm run dev
+```
+
+Vite 会把 `/api` 请求代理到 `http://127.0.0.1:8000`。长期运行的 Uvicorn 和 Vite 应始终放在
+独立终端中，不要通过一次性 Shell 工具调用里的 `Start-Process` 启动，否则工具可能一直等待后台
+进程而无法结束。
+
 ## Docker 服务器部署
 
 服务器建议使用 4 核 CPU、8 GB 内存和 50 GB SSD，不需要 GPU。服务器需要能够访问 DeepSeek API。

@@ -148,8 +148,7 @@ function jumpToPage() {
           <tbody>
             <tr v-for="item in paginated" :key="item.id" class="hover:bg-canvas/60">
               <td>
-                <strong class="block truncate text-[13px] text-ink" :title="item.subject_label">{{ item.subject_label }}</strong>
-                <span class="text-[12px] text-muted">{{ item.subject_id }}</span>
+                <strong class="block truncate text-[0.8125rem] text-ink" :title="`${item.subject_id} ${item.subject_label}`">{{ item.subject_id }} {{ item.subject_label }}</strong>
               </td>
               <td><Badge tone="neutral">{{ item.subject_type === "CUSTOMER" ? "客户" : "项目合同" }}</Badge></td>
               <td>
@@ -163,7 +162,7 @@ function jumpToPage() {
               <td><Badge :tone="gradeColor(item.grade)">{{ labels.grade[item.grade] || item.grade }}</Badge></td>
               <td><TrendSpark :data="item.trend" /></td>
               <td><span class="block truncate text-sm text-muted" :title="topDrivers(item)">{{ topDrivers(item) }}</span></td>
-              <td><span class="text-[12px] text-muted">{{ formatDateTime(item.computed_at) }}</span></td>
+              <td><span class="text-[0.75rem] text-muted">{{ formatDateTime(item.computed_at) }}</span></td>
             </tr>
             <tr v-if="!workspace.loading && !filtered.length"><td colspan="7" class="empty-state">当前筛选条件下没有健康度数据，请点击“重算健康度”生成</td></tr>
           </tbody>
@@ -172,7 +171,7 @@ function jumpToPage() {
 
       <div class="flex flex-wrap items-center gap-3 border-t border-border px-5 py-4">
         <span class="text-sm text-muted">第 {{ rangeStart }}–{{ rangeEnd }} 条，共 {{ filtered.length }} 条</span>
-        <SelectInput v-model="pageSize" :options="pageSizeOptions" class="w-[120px]" />
+        <SelectInput v-model="pageSize" :options="pageSizeOptions" class="w-[150px]" />
 
         <div class="ml-auto flex flex-wrap items-center gap-2">
           <button
@@ -225,7 +224,5 @@ function jumpToPage() {
         </div>
       </div>
     </section>
-
-    <p class="text-[12px] text-muted">健康度由确定性经营指标计算（回款 / 项目进度 / 应收 / 合同授信 / 担保人 / 舆情六维加权），不消耗模型额度。</p>
   </div>
 </template>

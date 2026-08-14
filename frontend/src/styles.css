@@ -21,26 +21,30 @@
   --color-success-deep: #027a48;
   --color-success-wash: #ecfdf3;
   --shadow-card: 0 1px 3px rgba(16, 24, 40, 0.05);
-  --font-sans: "DM Sans", "Microsoft YaHei", system-ui, sans-serif;
+  --font-sans: "DM Sans", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", monospace;
 }
 
 @layer base {
   html, body, #app { min-height: 100%; }
+  html { scrollbar-gutter: stable; }
   body { background: var(--color-canvas); color: var(--color-ink); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
   h1, h2, h3, h4, h5, h6 { letter-spacing: 0; }
   button, input, textarea, select { font: inherit; }
 }
 
+/* 流体根字号：≤1200px 视口保持 16px；1200→1920px 线性升到 21px；之后缓升并在 22.5px 封顶 */
+html { font-size: clamp(16px, 0.6944vw + 7.667px, 22.5px); }
+
 @layer components {
   .card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; box-shadow: var(--shadow-card); }
   .page-heading { margin-bottom: 24px; }
-  .page-heading span { color: var(--color-faint); font-size: 11px; font-weight: 500; }
-  .page-heading h1 { margin: 7px 0 0; font-size: 28px; font-weight: 700; color: var(--color-ink); }
+  .page-heading span { color: var(--color-faint); font-size: 0.6875rem; font-weight: 500; }
+  .page-heading h1 { margin: 7px 0 0; font-size: 1.75rem; font-weight: 700; color: var(--color-ink); }
   .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 58px; padding: 12px 18px; border-bottom: 1px solid var(--color-border); }
-  .panel-head h3 { margin: 0; font-size: 15px; color: #1d2939; }
-  .table-base { width: 100%; border-collapse: collapse; font-size: 13px; }
-  .table-base thead th { padding: 10px 16px; text-align: left; color: var(--color-muted); font-size: 12px; font-weight: 600; background: var(--color-canvas); border-bottom: 1px solid var(--color-border); white-space: nowrap; }
+  .panel-head h3 { margin: 0; font-size: 0.9375rem; color: #1d2939; }
+  .table-base { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+  .table-base thead th { padding: 10px 16px; text-align: left; color: var(--color-muted); font-size: 0.75rem; font-weight: 600; background: var(--color-canvas); border-bottom: 1px solid var(--color-border); white-space: nowrap; }
   .table-base tbody td { padding: 13px 16px; border-bottom: 1px solid var(--color-border); vertical-align: middle; }
   .table-base tbody tr { cursor: pointer; transition: background 0.12s ease-out; }
   .table-base tbody tr:hover { background: var(--color-canvas); }

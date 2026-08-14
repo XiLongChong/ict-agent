@@ -1,10 +1,10 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { AlertCircle, Menu, PanelLeftClose, PanelLeftOpen, Radar } from "lucide-vue-next";
+import { AlertCircle, Menu, PanelLeftClose, PanelLeftOpen } from "lucide-vue-next";
 import BrandMark from "./components/BrandMark.vue";
 import { navItems } from "./router";
-import { loadAll, loadRiskData, resetWorkspaceStatus, runScan, workspace } from "./store";
+import { loadAll, loadRiskData, resetWorkspaceStatus, workspace } from "./store";
 
 const route = useRoute();
 const router = useRouter();
@@ -83,7 +83,7 @@ onUnmounted(() => window.removeEventListener("focus", refreshRiskDataOnFocus));
           class="ml-2 flex-none whitespace-nowrap leading-tight transition-opacity duration-100"
           :class="labelsVisible ? 'delay-100 opacity-100' : 'opacity-0'"
         >
-          <strong class="block text-[15px] text-ink">佳华智审</strong>
+          <strong class="block text-[0.9375rem] text-ink">佳华智审</strong>
         </div>
       </div>
 
@@ -94,7 +94,7 @@ onUnmounted(() => window.removeEventListener("focus", refreshRiskDataOnFocus));
           type="button"
           @click="navigate(item.path)"
           :title="item.label"
-          class="relative flex h-11 w-full items-center rounded-lg text-[13px] font-semibold transition-colors"
+          class="relative flex h-11 w-full items-center rounded-lg text-[0.8125rem] font-semibold transition-colors"
           :class="isActive(item.path) ? 'bg-brand-wash text-brand-deep' : 'text-muted hover:bg-canvas hover:text-brand'"
         >
           <span v-if="isActive(item.path)" class="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r bg-brand"></span>
@@ -137,26 +137,13 @@ onUnmounted(() => window.removeEventListener("focus", refreshRiskDataOnFocus));
         >
           <Menu :size="20" />
         </button>
-        <strong class="block text-[15px] text-ink">{{ pageTitle }}</strong>
+        <strong class="block text-[0.9375rem] text-ink">{{ pageTitle }}</strong>
         <div class="flex-1"></div>
-        <div class="hidden items-center gap-2 text-sm text-muted sm:flex">
-          <span class="h-2 w-2 rounded-full" :class="workspace.status.error ? 'bg-danger' : 'bg-success'"></span>
-          {{ workspace.status.text }}
-        </div>
-        <button
-          type="button"
-          :disabled="workspace.scanning"
-          class="inline-flex h-10 items-center gap-2 rounded-lg bg-brand px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-dark disabled:opacity-50"
-          @click="runScan"
-        >
-          <Radar :size="16" :class="workspace.scanning ? 'animate-spin' : ''" />
-          重新扫描
-        </button>
       </header>
 
       <main
         class="w-full"
-        :class="isStandalone ? '' : 'mx-auto max-w-[1536px] px-4 py-7 md:px-8'"
+        :class="isStandalone ? '' : 'mx-auto max-w-[1920px] px-4 py-7 md:px-8'"
       >
         <router-view v-slot="{ Component, route: currentRoute }">
           <component :is="Component" :key="currentRoute.fullPath" />

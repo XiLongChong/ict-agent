@@ -1,12 +1,12 @@
 <script setup>
 import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { ChevronLeft, ChevronRight } from "lucide-vue-next";
+import { ChevronLeft, ChevronRight, Radar } from "lucide-vue-next";
 import Badge from "./ui/Badge.vue";
 import SelectInput from "./ui/SelectInput.vue";
 import TextInput from "./ui/TextInput.vue";
 import { formatMoney, labels, openCaseWorkspace, priorityColor, statusColor } from "../lib";
-import { workspace } from "../store";
+import { runScan, workspace } from "../store";
 
 const route = useRoute();
 const type = ref("");
@@ -88,6 +88,11 @@ function goToPage(page) {
 function jumpToPage() {
   goToPage(pageJump.value);
 }
+
+async function scan() {
+  await runScan();
+  goToPage(1);
+}
 </script>
 
 <template>
@@ -99,6 +104,15 @@ function jumpToPage() {
         <SelectInput v-model="priority" :options="priorityOptions" class="w-[180px]" />
         <TextInput v-model="query" search clearable class="w-[320px] max-w-full" placeholder="搜索案件、客户或物料" aria-label="搜索案件、客户或物料" @clear="query = ''" />
         <span class="ml-auto text-sm text-muted">共 {{ filtered.length }} 个案件</span>
+        <button
+          type="button"
+          class="inline-flex h-10 items-center gap-2 rounded-lg bg-brand px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-dark disabled:opacity-50"
+          :disabled="workspace.scanning"
+          @click="scan"
+        >
+          <Radar :size="16" :class="workspace.scanning ? 'animate-spin' : ''" />
+          {{ workspace.scanning ? "扫描中…" : "重新扫描" }}
+        </button>
       </div>
 
       <div class="overflow-x-auto">
@@ -113,7 +127,7 @@ function jumpToPage() {
           </colgroup>
           <thead>
             <tr>
-              <th>案件主体</th>
+              <th>主体</th>
               <th>案件类型</th>
               <th>风险概况</th>
               <th>风险等级</th>
@@ -131,7 +145,7 @@ function jumpToPage() {
               @keydown.enter="openCase(item.case_id)"
             >
               <td>
-                <strong class="block truncate text-[13px] text-ink" :title="item.entity_label">{{ item.entity_label }}</strong>
+                <strong class="block truncate text-[0.8125rem] text-ink" :title="item.entity_label">{{ item.entity_label }}</strong>
               </td>
               <td><span class="text-sm text-muted">{{ labels.caseType[item.case_type] }}</span></td>
               <td><span class="block truncate text-sm font-medium text-ink" :title="item.risk_overview">{{ item.risk_overview }}</span></td>
@@ -148,7 +162,7 @@ function jumpToPage() {
 
       <div class="flex flex-wrap items-center gap-3 border-t border-border px-5 py-4">
         <span class="text-sm text-muted">第 {{ rangeStart }}–{{ rangeEnd }} 条，共 {{ filtered.length }} 条</span>
-        <SelectInput v-model="pageSize" :options="pageSizeOptions" class="w-[120px]" />
+        <SelectInput v-model="pageSize" :options="pageSizeOptions" class="w-[150px]" />
 
         <div class="ml-auto flex flex-wrap items-center gap-2">
           <button

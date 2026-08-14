@@ -52,7 +52,7 @@ const gradeDistribution = computed(() => warning.value.grade_distribution || {})
 const pendingRecommendations = computed(() => warning.value.pending_recommendations || []);
 const openAlerts = computed(() => warning.value.open_alerts || []);
 
-// 待办事项合并（名单建议 + 预警），只展示前 5 条与右侧健康度分布平齐；剩余跳转名单管理
+// 待办事项合并（名单建议 + 预警），只展示前 5 条；剩余跳转名单管理
 const TODO_LIMIT = 5;
 const todoItems = computed(() => {
   const items = [
@@ -159,13 +159,13 @@ function go(path) {
           <component :is="m.icon" :size="20" />
         </span>
         <span class="block text-sm font-medium text-muted">{{ m.label }}</span>
-        <strong class="mt-1 block leading-tight text-ink" :class="m.compact ? 'text-[19px]' : 'text-[25px]'">{{ m.value }}</strong>
+        <strong class="mt-1 block leading-tight text-ink" :class="m.compact ? 'text-[1.1875rem]' : 'text-[1.5625rem]'">{{ m.value }}</strong>
       </section>
     </div>
 
-    <div class="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,0.75fr)]">
-      <!-- 待办列表：待审批名单 + 未处理预警（限 5 条，与健康度分布平齐） -->
-      <section class="card">
+    <div class="grid grid-cols-1 gap-4 xl:grid-cols-3">
+      <!-- 待办列表：待审批名单 + 未处理预警（限 5 条） -->
+      <section class="card xl:col-span-2">
         <div class="panel-head">
           <h3>待办事项</h3>
           <button type="button" @click="go('/lists')" class="inline-flex items-center gap-1 text-sm font-semibold text-brand hover:text-brand-dark">
@@ -176,18 +176,14 @@ function go(path) {
           <div v-for="item in todoItems.visible" :key="item.key" class="grid grid-cols-[3px_minmax(0,1fr)_auto] items-center gap-3 rounded-md px-2 py-2.5">
             <span class="h-full w-[3px] rounded" :class="item.barTone"></span>
             <span class="min-w-0">
-              <strong class="block truncate text-[13px] text-ink">{{ item.label }}</strong>
-              <span class="mt-1 flex flex-wrap items-center gap-1.5 text-[12px] text-muted">
+              <strong class="block truncate text-[0.8125rem] text-ink">{{ item.label }}</strong>
+              <span class="mt-1 flex flex-wrap items-center gap-1.5 text-[0.75rem] text-muted">
                 <Badge v-if="item.kind === 'recommendation'" :tone="listColor(item.current_list)">{{ labels.list[item.current_list] }}</Badge>
                 <span class="truncate">{{ item.sub }}</span>
               </span>
             </span>
             <Badge v-if="item.badgeText" :tone="item.badgeTone">{{ item.badgeText }}</Badge>
-            <span v-else class="text-right text-[13px] text-ink">{{ item.amountText }}</span>
-          </div>
-
-          <div v-if="todoItems.total > TODO_LIMIT" class="mt-1 border-t border-border/60 px-2 py-2 text-[12px] text-muted">
-            还有 {{ todoItems.total - TODO_LIMIT }} 条待办，前往名单管理查看全部
+            <span v-else class="text-right text-[0.8125rem] text-ink">{{ item.amountText }}</span>
           </div>
 
           <div v-if="!loading && !todoItems.total" class="empty-state">暂无待办事项</div>
@@ -195,7 +191,7 @@ function go(path) {
       </section>
 
       <!-- 健康度分布 -->
-      <section class="card pb-4">
+      <section class="card pb-4 xl:col-span-1">
         <div class="panel-head"><h3>健康度分布</h3></div>
         <p class="px-5 pb-1 text-[12px] text-muted">健康度等级由六维指标综合评分得出</p>
         <div class="px-5 pt-3">
@@ -212,7 +208,7 @@ function go(path) {
           </div>
         </div>
         <div class="space-y-3 px-5 pt-1">
-          <div v-for="(tone, grade) in { HEALTHY: 'bg-success', WATCH: 'bg-warning', WARNING: 'bg-[#f97316]', HIGH_RISK: 'bg-danger' }" :key="grade" class="flex items-center justify-between text-[13px]">
+          <div v-for="(tone, grade) in { HEALTHY: 'bg-success', WATCH: 'bg-warning', WARNING: 'bg-[#f97316]', HIGH_RISK: 'bg-danger' }" :key="grade" class="flex items-center justify-between text-[0.8125rem]">
             <span class="flex items-center gap-2 text-muted"><i class="h-2.5 w-2.5 rounded-sm" :class="tone"></i>{{ labels.grade[grade] }}</span>
             <strong class="text-ink">{{ gradeDistribution[grade] || 0 }}</strong>
           </div>
@@ -228,7 +224,6 @@ function go(path) {
           查看全部 <ArrowRight :size="15" />
         </button>
       </div>
-      <p class="px-5 pb-1 text-[12px] text-muted">案件优先级来自规则引擎（高风险信号优先调查），与健康度等级相互独立</p>
       <div class="px-2.5 py-2">
         <button
           v-for="item in priorityCases"
@@ -239,15 +234,15 @@ function go(path) {
         >
           <span class="h-full w-[3px] rounded" :class="barTone[item.priority] || 'bg-gray-200'"></span>
           <span>
-            <strong class="block text-[13px] text-ink">{{ item.entity_label }}</strong>
+            <strong class="block text-[0.8125rem] text-ink">{{ item.entity_label }}</strong>
             <span class="mt-1 flex max-w-[650px] items-center gap-1.5 overflow-hidden">
               <Badge :tone="priorityColor(item.priority)">{{ labels.priority[item.priority] }}风险</Badge>
               <Badge tone="neutral">{{ labels.caseType[item.case_type] }}</Badge>
-              <span class="min-w-0 truncate text-[12px] text-muted">{{ item.risk_overview }}</span>
+              <span class="min-w-0 truncate text-[0.75rem] text-muted">{{ item.risk_overview }}</span>
             </span>
           </span>
           <span class="text-right">
-            <strong class="block text-[13px] text-ink">{{ formatMoney(item.exposure_amount) }}</strong>
+            <strong class="block text-[0.8125rem] text-ink">{{ formatMoney(item.exposure_amount) }}</strong>
             <Badge class="mt-1" :tone="statusColor(item.status)">{{ labels.status[item.status] }}</Badge>
           </span>
         </button>
