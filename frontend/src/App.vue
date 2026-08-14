@@ -138,10 +138,6 @@ onUnmounted(() => window.removeEventListener("focus", refreshRiskDataOnFocus));
         </button>
         <strong class="block text-[15px] text-ink">{{ pageTitle }}</strong>
         <div class="flex-1"></div>
-        <div class="hidden items-center gap-2 text-sm text-muted sm:flex">
-          <span class="h-2 w-2 rounded-full" :class="workspace.status.error ? 'bg-danger' : 'bg-success'"></span>
-          {{ workspace.status.text }}
-        </div>
         <button
           type="button"
           :disabled="workspace.scanning"
