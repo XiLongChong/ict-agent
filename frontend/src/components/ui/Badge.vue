@@ -5,6 +5,8 @@ const cls = computed(() => ({
   brand: "bg-brand-wash text-brand-deep",
   danger: "bg-danger-wash text-danger",
   warning: "bg-warning-wash text-warning-deep",
+  yellow: "bg-[#fefce8] text-[#a16207]",
+  orange: "bg-[#fff7ed] text-[#c2410c]",
   success: "bg-success-wash text-success-deep",
   info: "bg-gray-100 text-ink",
   neutral: "bg-gray-100 text-muted",

@@ -149,6 +149,92 @@ class ReviewWrite:
     created_at: str
 
 
+@dataclass(frozen=True)
+class HealthScoreWrite:
+    """一条健康度评分的持久化记录。"""
+
+    id: str
+    subject_type: str
+    subject_id: str
+    subject_label: str
+    score: float
+    grade: str
+    dimension_json: str
+    drivers_json: str
+    trend_json: str
+    computed_at: str
+    data_snapshot_id: str
+
+
+@dataclass(frozen=True)
+class ListRecommendationWrite:
+    """一条名单调整建议的持久化记录。"""
+
+    recommendation_id: str
+    subject_type: str
+    subject_id: str
+    subject_label: str
+    current_list: str
+    target_list: str
+    reason: str
+    trigger_rule: str
+    evidence_json: str
+    health_change: str
+    risk_amount: float
+    review_due_date: str
+    status: str
+    created_at: str
+    reviewer: str = ""
+    review_reason: str = ""
+    review_at: str = ""
+
+
+@dataclass(frozen=True)
+class ListChangeWrite:
+    """一条名单变更审计记录。"""
+
+    change_id: str
+    subject_id: str
+    subject_label: str
+    from_list: str
+    to_list: str
+    approver: str
+    reason: str
+    recommendation_id: str
+    changed_at: str
+
+
+@dataclass(frozen=True)
+class AlertWrite:
+    """一条预警记录的持久化记录。"""
+
+    alert_id: str
+    alert_type: str
+    subject_type: str
+    subject_id: str
+    subject_label: str
+    severity: str
+    message: str
+    risk_amount: float
+    status: str
+    created_at: str
+    related_id: str
+
+
+@dataclass(frozen=True)
+class NotificationWrite:
+    """一条通知留痕记录（本期仅站内）。"""
+
+    notification_id: str
+    notify_type: str
+    subject_id: str
+    subject_label: str
+    message: str
+    channel: str
+    status: str
+    created_at: str
+
+
 TABLE_SPECS: dict[str, TableSpec] = {
     "sales": TableSpec(
         filename="销售流水.csv",
@@ -738,6 +824,102 @@ class CaseStore:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS health_scores (
+                id VARCHAR PRIMARY KEY,
+                subject_type VARCHAR NOT NULL,
+                subject_id VARCHAR NOT NULL,
+                subject_label VARCHAR NOT NULL,
+                score DOUBLE NOT NULL,
+                grade VARCHAR NOT NULL,
+                dimension_json VARCHAR NOT NULL,
+                drivers_json VARCHAR NOT NULL,
+                trend_json VARCHAR NOT NULL,
+                computed_at TIMESTAMP NOT NULL,
+                data_snapshot_id VARCHAR NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS list_recommendations (
+                recommendation_id VARCHAR PRIMARY KEY,
+                subject_type VARCHAR NOT NULL,
+                subject_id VARCHAR NOT NULL,
+                subject_label VARCHAR NOT NULL,
+                current_list VARCHAR NOT NULL,
+                target_list VARCHAR NOT NULL,
+                reason VARCHAR NOT NULL,
+                trigger_rule VARCHAR NOT NULL,
+                evidence_json VARCHAR NOT NULL,
+                health_change VARCHAR NOT NULL,
+                risk_amount DOUBLE NOT NULL,
+                review_due_date VARCHAR NOT NULL,
+                status VARCHAR NOT NULL,
+                reviewer VARCHAR NOT NULL DEFAULT '',
+                review_reason VARCHAR NOT NULL DEFAULT '',
+                review_at VARCHAR NOT NULL DEFAULT '',
+                created_at TIMESTAMP NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS list_changes (
+                change_id VARCHAR PRIMARY KEY,
+                subject_id VARCHAR NOT NULL,
+                subject_label VARCHAR NOT NULL,
+                from_list VARCHAR NOT NULL,
+                to_list VARCHAR NOT NULL,
+                approver VARCHAR NOT NULL,
+                reason VARCHAR NOT NULL,
+                recommendation_id VARCHAR NOT NULL DEFAULT '',
+                changed_at TIMESTAMP NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS alerts (
+                alert_id VARCHAR PRIMARY KEY,
+                alert_type VARCHAR NOT NULL,
+                subject_type VARCHAR NOT NULL,
+                subject_id VARCHAR NOT NULL,
+                subject_label VARCHAR NOT NULL,
+                severity VARCHAR NOT NULL,
+                message VARCHAR NOT NULL,
+                risk_amount DOUBLE NOT NULL,
+                status VARCHAR NOT NULL,
+                created_at TIMESTAMP NOT NULL,
+                related_id VARCHAR NOT NULL DEFAULT ''
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS notifications (
+                notification_id VARCHAR PRIMARY KEY,
+                notify_type VARCHAR NOT NULL,
+                subject_id VARCHAR NOT NULL,
+                subject_label VARCHAR NOT NULL,
+                message VARCHAR NOT NULL,
+                channel VARCHAR NOT NULL DEFAULT 'IN_APP',
+                status VARCHAR NOT NULL DEFAULT 'SENT',
+                created_at TIMESTAMP NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sentiment_verifications (
+                sentiment_id VARCHAR PRIMARY KEY,
+                decision VARCHAR NOT NULL,
+                verifier VARCHAR NOT NULL,
+                verified_at TIMESTAMP NOT NULL
+            )
+            """
+        )
 
     def ensure_ready(self) -> None:
         """创建案件库及固定表。"""
@@ -990,6 +1172,401 @@ class CaseStore:
             )
             """
         )
+
+    # ------------------------------------------------------------------
+    # 阶段 A：健康度 / 名单建议 / 预警 / 通知（独立于业务库）
+    # ------------------------------------------------------------------
+
+    def upsert_health_score(self, record: HealthScoreWrite) -> None:
+        """写入或覆盖一条健康度评分（按 id）。"""
+
+        self.ensure_ready()
+        try:
+            with duckdb.connect(str(self.database_path)) as connection:
+                connection.execute(
+                    """
+                    INSERT INTO health_scores VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (id) DO UPDATE SET
+                        subject_type = excluded.subject_type,
+                        subject_id = excluded.subject_id,
+                        subject_label = excluded.subject_label,
+                        score = excluded.score,
+                        grade = excluded.grade,
+                        dimension_json = excluded.dimension_json,
+                        drivers_json = excluded.drivers_json,
+                        trend_json = excluded.trend_json,
+                        computed_at = excluded.computed_at,
+                        data_snapshot_id = excluded.data_snapshot_id
+                    """,
+                    [
+                        record.id,
+                        record.subject_type,
+                        record.subject_id,
+                        record.subject_label,
+                        record.score,
+                        record.grade,
+                        record.dimension_json,
+                        record.drivers_json,
+                        record.trend_json,
+                        record.computed_at,
+                        record.data_snapshot_id,
+                    ],
+                )
+        except duckdb.Error as exc:
+            raise DataAccessError("健康度无法写入案件数据库。") from exc
+
+    def save_health_scores(self, records: Sequence[HealthScoreWrite]) -> int:
+        """批量保存健康度；同 subject 已有记录时先删除再写入，保证每主体一条最新。"""
+
+        if not records:
+            return 0
+        self.ensure_ready()
+        try:
+            with duckdb.connect(str(self.database_path)) as connection:
+                connection.begin()
+                connection.execute("DELETE FROM health_scores")
+                for record in records:
+                    connection.execute(
+                        "INSERT INTO health_scores VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        [
+                            record.id,
+                            record.subject_type,
+                            record.subject_id,
+                            record.subject_label,
+                            record.score,
+                            record.grade,
+                            record.dimension_json,
+                            record.drivers_json,
+                            record.trend_json,
+                            record.computed_at,
+                            record.data_snapshot_id,
+                        ],
+                    )
+                connection.commit()
+                return len(records)
+        except duckdb.Error as exc:
+            raise DataAccessError("健康度无法写入案件数据库。") from exc
+
+    def fetch_health_scores(
+        self,
+        *,
+        subject_type: str | None = None,
+        grade: str | None = None,
+        limit: int = 200,
+    ) -> QueryResult:
+        """返回健康度列表。"""
+
+        clauses: list[str] = []
+        parameters: list[object] = []
+        if subject_type is not None:
+            clauses.append("subject_type = ?")
+            parameters.append(subject_type)
+        if grade is not None:
+            clauses.append("grade = ?")
+            parameters.append(grade)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        parameters.append(limit)
+        return self._fetch(
+            f"""
+            SELECT id, subject_type, subject_id, subject_label, score, grade,
+                   dimension_json, drivers_json, trend_json, computed_at, data_snapshot_id
+            FROM health_scores
+            {where}
+            ORDER BY score ASC, subject_label ASC
+            LIMIT ?
+            """,
+            parameters,
+        )
+
+    def fetch_health_score(self, score_id: str) -> QueryResult:
+        """返回一条健康度详情。"""
+
+        return self._fetch(
+            """
+            SELECT id, subject_type, subject_id, subject_label, score, grade,
+                   dimension_json, drivers_json, trend_json, computed_at, data_snapshot_id
+            FROM health_scores WHERE id = ?
+            """,
+            [score_id],
+        )
+
+    def save_list_recommendation(self, record: ListRecommendationWrite) -> None:
+        """写入一条名单建议（幂等：同 subject 已存在 PENDING 时不重复）。"""
+
+        self.ensure_ready()
+        try:
+            with duckdb.connect(str(self.database_path)) as connection:
+                existing = connection.execute(
+                    "SELECT COUNT(*) FROM list_recommendations "
+                    "WHERE subject_id = ? AND status = 'PENDING'",
+                    [record.subject_id],
+                ).fetchone()
+                if existing is not None and int(existing[0]) > 0:
+                    return
+                connection.execute(
+                    "INSERT INTO list_recommendations VALUES "
+                    "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        record.recommendation_id,
+                        record.subject_type,
+                        record.subject_id,
+                        record.subject_label,
+                        record.current_list,
+                        record.target_list,
+                        record.reason,
+                        record.trigger_rule,
+                        record.evidence_json,
+                        record.health_change,
+                        record.risk_amount,
+                        record.review_due_date,
+                        record.status,
+                        record.reviewer,
+                        record.review_reason,
+                        record.review_at,
+                        record.created_at,
+                    ],
+                )
+        except duckdb.Error as exc:
+            raise DataAccessError("名单建议无法写入案件数据库。") from exc
+
+    def fetch_list_recommendations(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 200,
+    ) -> QueryResult:
+        """返回名单建议列表。"""
+
+        clauses: list[str] = []
+        parameters: list[object] = []
+        if status is not None:
+            clauses.append("status = ?")
+            parameters.append(status)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        parameters.append(limit)
+        return self._fetch(
+            f"""
+            SELECT recommendation_id, subject_type, subject_id, subject_label,
+                   current_list, target_list, reason, trigger_rule, evidence_json,
+                   health_change, risk_amount, review_due_date, status,
+                   reviewer, review_reason, review_at, created_at
+            FROM list_recommendations
+            {where}
+            ORDER BY status ASC, risk_amount DESC, created_at DESC
+            LIMIT ?
+            """,
+            parameters,
+        )
+
+    def review_list_recommendation(
+        self,
+        recommendation_id: str,
+        *,
+        decision: str,
+        reviewer: str,
+        reason: str,
+        now: str,
+    ) -> str | None:
+        """审批名单建议；返回 subject_id（未找到或已处理返回 None）。"""
+
+        self.ensure_ready()
+        try:
+            with duckdb.connect(str(self.database_path)) as connection:
+                row = connection.execute(
+                    """
+                    UPDATE list_recommendations
+                    SET status = ?, reviewer = ?, review_reason = ?, review_at = ?
+                    WHERE recommendation_id = ? AND status = 'PENDING'
+                    RETURNING subject_id
+                    """,
+                    [decision, reviewer, reason, now, recommendation_id],
+                ).fetchone()
+                return str(row[0]) if row is not None else None
+        except duckdb.Error as exc:
+            raise DataAccessError("名单建议无法审批。") from exc
+
+    def insert_list_change(self, record: ListChangeWrite) -> None:
+        """写入一条名单变更审计。"""
+
+        self.ensure_ready()
+        try:
+            with duckdb.connect(str(self.database_path)) as connection:
+                connection.execute(
+                    "INSERT INTO list_changes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        record.change_id,
+                        record.subject_id,
+                        record.subject_label,
+                        record.from_list,
+                        record.to_list,
+                        record.approver,
+                        record.reason,
+                        record.recommendation_id,
+                        record.changed_at,
+                    ],
+                )
+        except duckdb.Error as exc:
+            raise DataAccessError("名单变更无法写入案件数据库。") from exc
+
+    def save_alert(self, record: AlertWrite) -> None:
+        """写入一条预警（幂等：同 alert_id 已存在时不重复写入）。"""
+
+        self.ensure_ready()
+        try:
+            with duckdb.connect(str(self.database_path)) as connection:
+                connection.execute(
+                    "INSERT INTO alerts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT (alert_id) DO NOTHING",
+                    [
+                        record.alert_id,
+                        record.alert_type,
+                        record.subject_type,
+                        record.subject_id,
+                        record.subject_label,
+                        record.severity,
+                        record.message,
+                        record.risk_amount,
+                        record.status,
+                        record.created_at,
+                        record.related_id,
+                    ],
+                )
+        except duckdb.Error as exc:
+            raise DataAccessError("预警无法写入案件数据库。") from exc
+
+    def save_alerts(self, records: Sequence[AlertWrite]) -> int:
+        """批量保存预警。"""
+
+        if not records:
+            return 0
+        self.ensure_ready()
+        try:
+            with duckdb.connect(str(self.database_path)) as connection:
+                connection.begin()
+                for record in records:
+                    connection.execute(
+                        "INSERT INTO alerts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        [
+                            record.alert_id,
+                            record.alert_type,
+                            record.subject_type,
+                            record.subject_id,
+                            record.subject_label,
+                            record.severity,
+                            record.message,
+                            record.risk_amount,
+                            record.status,
+                            record.created_at,
+                            record.related_id,
+                        ],
+                    )
+                connection.commit()
+                return len(records)
+        except duckdb.Error as exc:
+            raise DataAccessError("预警无法写入案件数据库。") from exc
+
+    def fetch_alerts(
+        self,
+        *,
+        status: str | None = None,
+        severity: str | None = None,
+        limit: int = 200,
+    ) -> QueryResult:
+        """返回预警列表。"""
+
+        clauses: list[str] = []
+        parameters: list[object] = []
+        if status is not None:
+            clauses.append("status = ?")
+            parameters.append(status)
+        if severity is not None:
+            clauses.append("severity = ?")
+            parameters.append(severity)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        parameters.append(limit)
+        return self._fetch(
+            f"""
+            SELECT alert_id, alert_type, subject_type, subject_id, subject_label,
+                   severity, message, risk_amount, status, created_at, related_id
+            FROM alerts
+            {where}
+            ORDER BY
+                CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2
+                              WHEN 'MEDIUM' THEN 3 ELSE 4 END,
+                created_at DESC
+            LIMIT ?
+            """,
+            parameters,
+        )
+
+    def acknowledge_alert(self, alert_id: str, now: str) -> bool:
+        """确认一条 OPEN 预警。"""
+
+        self.ensure_ready()
+        try:
+            with duckdb.connect(str(self.database_path)) as connection:
+                row = connection.execute(
+                    """
+                    UPDATE alerts SET status = 'ACKNOWLEDGED'
+                    WHERE alert_id = ? AND status = 'OPEN'
+                    RETURNING alert_id
+                    """,
+                    [alert_id],
+                ).fetchone()
+                return row is not None
+        except duckdb.Error as exc:
+            raise DataAccessError("预警状态无法更新。") from exc
+
+    def save_notification(self, record: NotificationWrite) -> None:
+        """写入一条通知留痕（幂等：同 notification_id 已存在时不重复写入）。"""
+
+        self.ensure_ready()
+        try:
+            with duckdb.connect(str(self.database_path)) as connection:
+                connection.execute(
+                    "INSERT INTO notifications VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT (notification_id) DO NOTHING",
+                    [
+                        record.notification_id,
+                        record.notify_type,
+                        record.subject_id,
+                        record.subject_label,
+                        record.message,
+                        record.channel,
+                        record.status,
+                        record.created_at,
+                    ],
+                )
+        except duckdb.Error as exc:
+            raise DataAccessError("通知无法写入案件数据库。") from exc
+
+    def fetch_sentiment_verification(self, sentiment_id: str) -> QueryResult:
+        """返回一条舆情核验记录（sentiment_id 主键）。"""
+
+        return self._fetch(
+            "SELECT sentiment_id, decision, verifier, verified_at "
+            "FROM sentiment_verifications WHERE sentiment_id = ?",
+            [sentiment_id],
+        )
+
+    def save_sentiment_verification(
+        self, sentiment_id: str, decision: str, verifier: str, verified_at: str
+    ) -> None:
+        """写入舆情核验记录（幂等：同 sentiment_id 已存在时更新为最新核验）。"""
+
+        self.ensure_ready()
+        try:
+            with duckdb.connect(str(self.database_path)) as connection:
+                connection.execute(
+                    "INSERT INTO sentiment_verifications VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT (sentiment_id) DO UPDATE SET "
+                    "decision = excluded.decision, "
+                    "verifier = excluded.verifier, "
+                    "verified_at = excluded.verified_at",
+                    [sentiment_id, decision, verifier, verified_at],
+                )
+        except duckdb.Error as exc:
+            raise DataAccessError("舆情核验无法写入案件数据库。") from exc
 
     def save_investigation(self, record: InvestigationWrite) -> None:
         """保存调查并将案件推进到待审核。"""

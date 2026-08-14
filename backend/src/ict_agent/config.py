@@ -29,6 +29,7 @@ class Settings(BaseModel):
     data_dir: Path
     database_path: Path
     case_database_path: Path
+    simulated_data_dir: Path
 
 
 def _resolve_path(raw_path: str) -> Path:
@@ -71,6 +72,7 @@ def load_settings(
     case_database_path = _resolve_path(
         values.get("ICT_CASE_DATABASE_PATH", "data/processed/ict_agent_cases.duckdb")
     )
+    simulated_data_dir = _resolve_path(values.get("ICT_SIMULATED_DATA_DIR", "data/simulated"))
 
     if require_api_key and not api_key:
         raise ConfigurationError("缺少 DEEPSEEK_API_KEY，请在项目 .env 中填写后重试。")
@@ -90,4 +92,5 @@ def load_settings(
         data_dir=data_dir,
         database_path=database_path,
         case_database_path=case_database_path,
+        simulated_data_dir=simulated_data_dir,
     )

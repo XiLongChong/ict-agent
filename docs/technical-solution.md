@@ -9,7 +9,7 @@
 ```mermaid
 flowchart LR
     CSV["7 张比赛 CSV"] --> DB["业务 DuckDB（原子重建 + 快照身份）"]
-    DB --> RULE["5 条确定性规则"]
+    DB --> RULE["23 条确定性规则"]
     RULE --> CASE["独立案件库"]
     CASE --> CATALOG["真实探测证据能力"]
     CATALOG --> GATEWAY["发现 / 搜索 / 查询网关"]
@@ -146,6 +146,20 @@ trace 保存工具完成和报告校验轨迹，供刷新后回放。页面以�
 | `GET /api/v1/cases/{case_id}` | 规则、最新调查和审核历史 |
 | `POST /api/v1/cases/{case_id}/investigations` | NDJSON 调查事件流 |
 | `POST /api/v1/cases/{case_id}/reviews` | 人工审核和状态推进 |
+| `GET /api/v1/health-scores` | 健康度列表（可按类型/等级筛选） |
+| `GET /api/v1/health-scores/{score_id}` | 单条健康度详情（维度拆解/趋势） |
+| `POST /api/v1/health-scores/recalculate` | 重算全部健康度并生成名单建议（确定性，不耗模型） |
+| `GET /api/v1/list-recommendations` | 名单建议列表 |
+| `POST /api/v1/list-recommendations/{id}/reviews` | 名单建议审批/驳回（404 不存在 / 409 已处理） |
+| `GET /api/v1/alerts` | 预警列表 |
+| `POST /api/v1/alerts/{id}/acknowledge` | 确认预警 |
+| `GET /api/v1/sentiments` | 模拟舆情列表 |
+| `POST /api/v1/sentiments/{id}/verify` | 舆情核验（确认/排除，404 不存在 / 409 已核验） |
+| `GET /api/v1/projects` | 项目类视图（存量合同 + 模拟新项目，金额万元） |
+| `POST /api/v1/projects/{id}/pre-assessment/run` | 模拟新项目事前评估（黑名单/金额档位/历史超期/担保人） |
+| `GET /api/v1/warning/overview` | 预警总览聚合 |
+
+阶段 A（风险预警）说明：健康度由确定性指标计算（六维加权，可配置），不消耗模型额度；模拟数据（担保人/项目阶段/舆情/新项目）位于 `data/simulated/`，页面必须标注“模拟”；名单变更保留人工审批并写审计。
 
 通用 `/api/v1/chat` 已删除。
 

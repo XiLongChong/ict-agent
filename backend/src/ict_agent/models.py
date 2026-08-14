@@ -428,3 +428,160 @@ class RiskOverviewResponse(BaseModel):
     high_priority_cases: int
     exposure_amount: float
     cases_by_type: dict[str, int]
+
+
+# ---------------------------------------------------------------------------
+# 阶段 A：风险预警系统（健康度 / 名单建议 / 预警 / 舆情 / 项目）
+# ---------------------------------------------------------------------------
+
+
+class HealthDimension(BaseModel):
+    """健康度的一个维度分数。"""
+
+    key: str
+    name: str
+    score: float
+    weight: float
+    missing: bool = False
+
+
+class HealthTrendPoint(BaseModel):
+    """健康度趋势中的一个时点。"""
+
+    period: str
+    score: float
+
+
+class HealthScoreResponse(BaseModel):
+    """一条健康度评分。"""
+
+    id: str
+    subject_type: str
+    subject_id: str
+    subject_label: str
+    score: float
+    grade: str
+    dimensions: list[HealthDimension] = []
+    drivers: dict[str, list[str]] = {}
+    trend: list[HealthTrendPoint] = []
+    computed_at: str
+    data_snapshot_id: str = ""
+
+
+class ListRecommendationResponse(BaseModel):
+    """一条名单调整建议。"""
+
+    recommendation_id: str
+    subject_type: str
+    subject_id: str
+    subject_label: str
+    current_list: str
+    target_list: str
+    reason: str
+    trigger_rule: str
+    evidence: list[dict[str, str]] = []
+    health_change: str
+    risk_amount: float
+    review_due_date: str
+    status: str
+    reviewer: str = ""
+    review_reason: str = ""
+    review_at: str = ""
+    created_at: str
+
+
+class ListRecommendationReviewRequest(BaseModel):
+    """名单建议审批请求。"""
+
+    decision: Literal["APPROVED", "REJECTED"]
+    reviewer: str = Field(min_length=1, max_length=100)
+    reason: str = Field(min_length=2, max_length=1000)
+
+
+class AlertResponse(BaseModel):
+    """一条预警。"""
+
+    alert_id: str
+    alert_type: str
+    subject_type: str
+    subject_id: str
+    subject_label: str
+    severity: str
+    message: str
+    risk_amount: float
+    status: str
+    created_at: str
+    related_id: str = ""
+
+
+class SentimentResponse(BaseModel):
+    """一条模拟舆情。"""
+
+    sentiment_id: str
+    title: str
+    source: str
+    published_at: str
+    subject_type: str
+    subject: str
+    event_type: str
+    severity: str
+    impact_amount_wan: float
+    verify_status: str
+    verify_label: str
+    related_project: str
+    process_status: str
+    simulated: bool = True
+
+
+class SentimentVerifyRequest(BaseModel):
+    """舆情核验请求。"""
+
+    decision: Literal["CONFIRMED", "EXCLUDED"]
+    verifier: str = Field(min_length=1, max_length=100)
+
+
+class ProjectViewResponse(BaseModel):
+    """项目类视图（合同 + 模拟阶段/担保人）。"""
+
+    project_id: str
+    name: str
+    customer: str
+    amount_wan: float
+    amount_tier: str
+    stage: str = ""
+    planned_payment_date: str = ""
+    milestone_progress: int = 0
+    guarantor: str = ""
+    risk_note: str = ""
+    credit_amount_wan: float | None = None
+    simulated: bool = False
+
+
+class PreAssessmentResponse(BaseModel):
+    """事前评估结论。"""
+
+    project_id: str
+    name: str
+    customer: str
+    amount_wan: float
+    amount_tier: str
+    conclusion: str
+    reasons: list[str]
+    force_review: bool
+    evaluated_at: str
+    simulated: bool = True
+
+
+class WarningOverviewResponse(BaseModel):
+    """预警总览聚合（阶段 A 前端顶栏）。"""
+
+    pre_assessment_pending: int
+    in_process_alerts: int
+    health_drop_count: int
+    pending_list_recommendations: int
+    open_sentiments: int
+    high_risk_count: int
+    risk_exposure: float
+    grade_distribution: dict[str, int]
+    pending_recommendations: list[ListRecommendationResponse] = []
+    open_alerts: list[AlertResponse] = []

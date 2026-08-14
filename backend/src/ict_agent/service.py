@@ -24,18 +24,31 @@ from ict_agent.data import (
     DataAccessError,
     DatabaseScalar,
     DuckDBStore,
+    HealthScoreWrite,
     InvestigationWrite,
     ReviewWrite,
 )
+from ict_agent.health import compute_health_scores
+from ict_agent.listmgmt import (
+    build_recommendations,
+    current_list_from_credit,
+    review_recommendation,
+)
 from ict_agent.models import (
+    AlertResponse,
     CaseStatus,
     CaseType,
     DashboardResponse,
     DataSnapshotResponse,
     DataSourceSnapshot,
+    HealthScoreResponse,
     InvestigationCaseInput,
     InvestigationRecord,
     InvestigationStreamEvent,
+    ListRecommendationResponse,
+    ListRecommendationReviewRequest,
+    PreAssessmentResponse,
+    ProjectViewResponse,
     ReviewDecision,
     ReviewRecord,
     ReviewRequest,
@@ -45,8 +58,14 @@ from ict_agent.models import (
     RiskPriority,
     RuleHit,
     RuleRunResponse,
+    SentimentResponse,
+    SentimentVerifyRequest,
+    WarningOverviewResponse,
 )
+from ict_agent.project import list_new_projects, list_projects, run_pre_assessment
 from ict_agent.rules import build_rule_scan
+from ict_agent.sentiment import list_sentiments, verify_sentiment
+from ict_agent.simdata import SimulatedData, load_simulated_data
 from ict_agent.tools import (
     get_ar_trend,
     get_business_overview,
@@ -516,5 +535,424 @@ def review_case(
         )
     except ServiceError:
         raise
+    except (ConfigurationError, DataAccessError) as exc:
+        raise ServiceError(str(exc), request_id, 503) from exc
+
+
+# ---------------------------------------------------------------------------
+# 阶段 A：风险预警系统服务
+# ---------------------------------------------------------------------------
+
+
+def _simulated_data(settings: Settings) -> SimulatedData:
+    return load_simulated_data(settings.simulated_data_dir)
+
+
+def _health_score_response(row: tuple[DatabaseScalar, ...]) -> HealthScoreResponse:
+    return HealthScoreResponse(
+        id=str(row[0]),
+        subject_type=str(row[1]),
+        subject_id=str(row[2]),
+        subject_label=str(row[3]),
+        score=_as_float(row[4]),
+        grade=str(row[5]),
+        dimensions=json.loads(str(row[6])),
+        drivers=json.loads(str(row[7])),
+        trend=json.loads(str(row[8])),
+        computed_at=str(row[9]),
+        data_snapshot_id=str(row[10]),
+    )
+
+
+def list_health_scores(
+    *,
+    subject_type: str | None = None,
+    grade: str | None = None,
+    settings: Settings | None = None,
+) -> list[HealthScoreResponse]:
+    """返回健康度列表。"""
+
+    request_id = uuid4().hex
+    try:
+        runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
+        result = CaseStore(runtime_settings.case_database_path).fetch_health_scores(
+            subject_type=subject_type, grade=grade
+        )
+        return [_health_score_response(tuple(row)) for row in result.rows]
+    except (ConfigurationError, DataAccessError) as exc:
+        raise ServiceError(str(exc), request_id, 503) from exc
+
+
+def get_health_score(
+    score_id: str,
+    *,
+    settings: Settings | None = None,
+) -> HealthScoreResponse:
+    """返回一条健康度详情。"""
+
+    request_id = uuid4().hex
+    try:
+        runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
+        result = CaseStore(runtime_settings.case_database_path).fetch_health_score(score_id)
+        if not result.rows:
+            raise ServiceError("未找到指定健康度记录。", request_id, 404)
+        return _health_score_response(tuple(result.rows[0]))
+    except ServiceError:
+        raise
+    except (ConfigurationError, DataAccessError) as exc:
+        raise ServiceError(str(exc), request_id, 503) from exc
+
+
+def recalculate_health_scores(
+    *,
+    settings: Settings | None = None,
+) -> dict[str, int]:
+    """重算全部健康度（确定性，不耗模型）。"""
+
+    request_id = uuid4().hex
+    try:
+        runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
+        business_store = DuckDBStore(runtime_settings.database_path)
+        business_store.ensure_ready()
+        sim = _simulated_data(runtime_settings)
+        scores = compute_health_scores(business_store, sim)
+        snapshot_id = ""
+        try:
+            snapshot_id = business_store.get_snapshot().snapshot_id
+        except DataAccessError:
+            snapshot_id = ""
+        computed_at = datetime.now(UTC).isoformat()
+        records = [
+            HealthScoreWrite(
+                id=f"HS_{item['subject_type']}_{item['subject_id']}",
+                subject_type=str(item["subject_type"]),
+                subject_id=str(item["subject_id"]),
+                subject_label=str(item["subject_label"]),
+                score=float(item["score"]),
+                grade=str(item["grade"]),
+                dimension_json=json.dumps(item.get("dimensions", []), ensure_ascii=False),
+                drivers_json=json.dumps(item.get("drivers", {}), ensure_ascii=False),
+                trend_json=json.dumps(item.get("trend", []), ensure_ascii=False),
+                computed_at=computed_at,
+                data_snapshot_id=snapshot_id,
+            )
+            for item in scores
+        ]
+        case_store = CaseStore(runtime_settings.case_database_path)
+        count = case_store.save_health_scores(records)
+
+        # 基于最新健康度生成名单建议
+        health_items = [
+            {
+                "subject_type": r.subject_type,
+                "subject_id": r.subject_id,
+                "subject_label": r.subject_label,
+                "score": r.score,
+                "grade": r.grade,
+                "drivers": json.loads(r.drivers_json),
+                "trend": json.loads(r.trend_json),
+            }
+            for r in records
+            if r.subject_type == "CUSTOMER"
+        ]
+        current_map = current_list_from_credit(business_store)
+        build_recommendations(
+            case_store, health_items, current_list_map=current_map, now=computed_at
+        )
+        return {"count": count}
+    except (ConfigurationError, DataAccessError) as exc:
+        raise ServiceError(str(exc), request_id, 503) from exc
+    except Exception as exc:
+        raise ServiceError("健康度计算失败，请检查数据后重试。", request_id, 500) from exc
+
+
+def _list_recommendation_response(row: tuple[DatabaseScalar, ...]) -> ListRecommendationResponse:
+    return ListRecommendationResponse(
+        recommendation_id=str(row[0]),
+        subject_type=str(row[1]),
+        subject_id=str(row[2]),
+        subject_label=str(row[3]),
+        current_list=str(row[4]),
+        target_list=str(row[5]),
+        reason=str(row[6]),
+        trigger_rule=str(row[7]),
+        evidence=json.loads(str(row[8])),
+        health_change=str(row[9]),
+        risk_amount=_as_float(row[10]),
+        review_due_date=str(row[11]),
+        status=str(row[12]),
+        reviewer=str(row[13]),
+        review_reason=str(row[14]),
+        review_at=str(row[15]),
+        created_at=str(row[16]),
+    )
+
+
+def list_recommendations(
+    *,
+    status: str | None = None,
+    settings: Settings | None = None,
+) -> list[ListRecommendationResponse]:
+    """返回名单建议列表。"""
+
+    request_id = uuid4().hex
+    try:
+        runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
+        result = CaseStore(runtime_settings.case_database_path).fetch_list_recommendations(
+            status=status
+        )
+        return [_list_recommendation_response(tuple(row)) for row in result.rows]
+    except (ConfigurationError, DataAccessError) as exc:
+        raise ServiceError(str(exc), request_id, 503) from exc
+
+
+def review_list_recommendation(
+    recommendation_id: str,
+    request: ListRecommendationReviewRequest,
+    *,
+    settings: Settings | None = None,
+) -> dict[str, object]:
+    """审批/驳回名单建议。"""
+
+    request_id = uuid4().hex
+    try:
+        runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
+        now = datetime.now(UTC).isoformat()
+        return review_recommendation(
+            CaseStore(runtime_settings.case_database_path),
+            recommendation_id,
+            decision=request.decision,
+            reviewer=request.reviewer,
+            reason=request.reason,
+            now=now,
+        )
+    except KeyError as exc:
+        raise ServiceError(str(exc), request_id, 404) from exc
+    except ValueError as exc:
+        raise ServiceError(str(exc), request_id, 409) from exc
+    except (ConfigurationError, DataAccessError) as exc:
+        raise ServiceError(str(exc), request_id, 503) from exc
+
+
+def _alert_response(row: tuple[DatabaseScalar, ...]) -> AlertResponse:
+    return AlertResponse(
+        alert_id=str(row[0]),
+        alert_type=str(row[1]),
+        subject_type=str(row[2]),
+        subject_id=str(row[3]),
+        subject_label=str(row[4]),
+        severity=str(row[5]),
+        message=str(row[6]),
+        risk_amount=_as_float(row[7]),
+        status=str(row[8]),
+        created_at=str(row[9]),
+        related_id=str(row[10]),
+    )
+
+
+def list_alerts(
+    *,
+    status: str | None = None,
+    severity: str | None = None,
+    settings: Settings | None = None,
+) -> list[AlertResponse]:
+    """返回预警列表。"""
+
+    request_id = uuid4().hex
+    try:
+        runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
+        result = CaseStore(runtime_settings.case_database_path).fetch_alerts(
+            status=status, severity=severity
+        )
+        return [_alert_response(tuple(row)) for row in result.rows]
+    except (ConfigurationError, DataAccessError) as exc:
+        raise ServiceError(str(exc), request_id, 503) from exc
+
+
+def acknowledge_alert(
+    alert_id: str,
+    *,
+    settings: Settings | None = None,
+) -> dict[str, object]:
+    """确认一条预警。"""
+
+    request_id = uuid4().hex
+    try:
+        runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
+        ok = CaseStore(runtime_settings.case_database_path).acknowledge_alert(
+            alert_id, datetime.now(UTC).isoformat()
+        )
+        if not ok:
+            raise ServiceError("预警不存在或已处理。", request_id, 404)
+        return {"ok": True}
+    except ServiceError:
+        raise
+    except (ConfigurationError, DataAccessError) as exc:
+        raise ServiceError(str(exc), request_id, 503) from exc
+
+
+def list_sentiments_service(
+    *,
+    settings: Settings | None = None,
+) -> list[SentimentResponse]:
+    """返回模拟舆情列表。"""
+
+    request_id = uuid4().hex
+    try:
+        runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
+        sim = _simulated_data(runtime_settings)
+        return [SentimentResponse.model_validate(item) for item in list_sentiments(sim)]
+    except (ConfigurationError, DataAccessError) as exc:
+        raise ServiceError(str(exc), request_id, 503) from exc
+
+
+def verify_sentiment_service(
+    sentiment_id: str,
+    request: SentimentVerifyRequest,
+    *,
+    settings: Settings | None = None,
+) -> SentimentResponse:
+    """核验舆情并写留痕（通知/预警）。"""
+
+    request_id = uuid4().hex
+    try:
+        runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
+        sim = _simulated_data(runtime_settings)
+        store = CaseStore(runtime_settings.case_database_path)
+        now = datetime.now(UTC).isoformat()
+        item = verify_sentiment(
+            sim,
+            sentiment_id,
+            decision=request.decision,
+            verifier=request.verifier,
+            now=now,
+            store=store,
+        )
+        return SentimentResponse.model_validate(item)
+    except KeyError as exc:
+        raise ServiceError(str(exc), request_id, 404) from exc
+    except ValueError as exc:
+        raise ServiceError(str(exc), request_id, 409) from exc
+    except (ConfigurationError, DataAccessError) as exc:
+        raise ServiceError(str(exc), request_id, 503) from exc
+
+
+def list_projects_service(
+    *,
+    settings: Settings | None = None,
+) -> list[ProjectViewResponse]:
+    """返回项目类视图：存量合同（真实） + 模拟新项目（P2026-，事前评估入口）。"""
+
+    request_id = uuid4().hex
+    try:
+        runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
+        business_store = DuckDBStore(runtime_settings.database_path)
+        business_store.ensure_ready()
+        sim = _simulated_data(runtime_settings)
+        existing = [
+            ProjectViewResponse.model_validate(item) for item in list_projects(business_store, sim)
+        ]
+        new_items = [
+            ProjectViewResponse(
+                project_id=str(item["project_id"]),
+                name=str(item["project_name"]),
+                customer=str(item["customer_name"]),
+                amount_wan=float(str(item["project_amount_wan"])),
+                amount_tier=str(item["amount_tier"]),
+                stage="立项",
+                planned_payment_date=str(item["planned_payment_date"]),
+                milestone_progress=0,
+                guarantor=str(item["guarantor"]),
+                risk_note=str(item["note"]),
+                credit_amount_wan=float(str(item["credit_amount_wan"])),
+                simulated=True,
+            )
+            for item in list_new_projects(sim)
+        ]
+        return [*existing, *new_items]
+    except (ConfigurationError, DataAccessError) as exc:
+        raise ServiceError(str(exc), request_id, 503) from exc
+
+
+def run_pre_assessment_service(
+    project_id: str,
+    *,
+    settings: Settings | None = None,
+) -> PreAssessmentResponse:
+    """对模拟新项目执行事前评估。"""
+
+    request_id = uuid4().hex
+    try:
+        runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
+        business_store = DuckDBStore(runtime_settings.database_path)
+        business_store.ensure_ready()
+        sim = _simulated_data(runtime_settings)
+        item = run_pre_assessment(business_store, sim, project_id)
+        return PreAssessmentResponse.model_validate(item)
+    except ValueError as exc:
+        raise ServiceError(str(exc), request_id, 404) from exc
+    except (ConfigurationError, DataAccessError) as exc:
+        raise ServiceError(str(exc), request_id, 503) from exc
+
+
+def warning_overview(
+    *,
+    settings: Settings | None = None,
+) -> WarningOverviewResponse:
+    """预警总览聚合。"""
+
+    request_id = uuid4().hex
+    try:
+        runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
+        case_store = CaseStore(runtime_settings.case_database_path)
+        health_rows = case_store.fetch_health_scores().rows
+        recommendation_rows = case_store.fetch_list_recommendations().rows
+        alert_rows = case_store.fetch_alerts().rows
+        sim = _simulated_data(runtime_settings)
+
+        grade_distribution: dict[str, int] = {
+            "HEALTHY": 0,
+            "WATCH": 0,
+            "WARNING": 0,
+            "HIGH_RISK": 0,
+        }
+        health_drop_count = 0
+        for row in health_rows:
+            grade = str(row[5])
+            grade_distribution[grade] = grade_distribution.get(grade, 0) + 1
+            trend = json.loads(str(row[8]))
+            if len(trend) >= 2:
+                try:
+                    if float(trend[-1]["score"]) < float(trend[-2]["score"]):
+                        health_drop_count += 1
+                except (KeyError, TypeError, ValueError):
+                    pass
+
+        pending_recommendations = [
+            _list_recommendation_response(tuple(row))
+            for row in recommendation_rows
+            if str(row[12]) == "PENDING"
+        ]
+        open_alerts = [_alert_response(tuple(row)) for row in alert_rows if str(row[8]) == "OPEN"]
+        sentiments = list_sentiments(sim)
+        open_sentiments = sum(
+            1 for item in sentiments if item.get("verify_status") in ("PENDING", "CONFIRMED")
+        )
+        risk_exposure = sum(_as_float(row[7]) for row in alert_rows if str(row[8]) != "RESOLVED")
+
+        return WarningOverviewResponse(
+            pre_assessment_pending=len(sim.new_projects),
+            in_process_alerts=sum(
+                1 for row in alert_rows if str(row[1]) == "IN_PROCESS" and str(row[8]) == "OPEN"
+            ),
+            health_drop_count=health_drop_count,
+            pending_list_recommendations=len(pending_recommendations),
+            open_sentiments=open_sentiments,
+            high_risk_count=grade_distribution.get("HIGH_RISK", 0),
+            risk_exposure=risk_exposure,
+            grade_distribution=grade_distribution,
+            pending_recommendations=pending_recommendations,
+            open_alerts=open_alerts,
+        )
     except (ConfigurationError, DataAccessError) as exc:
         raise ServiceError(str(exc), request_id, 503) from exc

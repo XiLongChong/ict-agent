@@ -1,4 +1,23 @@
 export const labels = {
+  grade: { HEALTHY: "健康", WATCH: "关注", WARNING: "预警", HIGH_RISK: "高风险" },
+  list: { WHITE: "白名单", WATCH: "观察中", BLACK: "黑名单", GENERAL: "一般" },
+  severity: { LOW: "低", MEDIUM: "中", HIGH: "高", CRITICAL: "重大" },
+  alertType: {
+    PRE_ASSESSMENT: "事前评估",
+    IN_PROCESS: "事中预警",
+    HEALTH_DROP: "健康度下降",
+    LIST_RECOMMENDATION: "名单建议",
+    SENTIMENT: "舆情",
+    HIGH_AMOUNT: "高金额",
+  },
+  verifyStatus: { PENDING: "待核验", CONFIRMED: "已确认", EXCLUDED: "已排除" },
+  recommendationStatus: { PENDING: "待审批", APPROVED: "已采纳", REJECTED: "已驳回" },
+  preAssessmentConclusion: {
+    APPROVED: "通过",
+    REJECTED: "不通过",
+    CONDITIONAL: "有条件通过",
+    PENDING_REVIEW: "需人工复核",
+  },
   status: {
     PENDING_AGENT_REVIEW: "待调查",
     PENDING_HUMAN_REVIEW: "待复核",
@@ -35,6 +54,19 @@ export const labels = {
 
 export const priorityColor = (value) => ({ HIGH: "danger", MEDIUM: "warning", LOW: "neutral" }[value] || "neutral");
 export const statusColor = (value) => ({ PENDING_AGENT_REVIEW: "brand", PENDING_HUMAN_REVIEW: "warning", ACTION_IN_PROGRESS: "danger", CLOSED: "success" }[value] || "brand");
+export const gradeColor = (value) => ({ HEALTHY: "success", WATCH: "warning", WARNING: "orange", HIGH_RISK: "danger" }[value] || "neutral");
+export const listColor = (value) => ({ WHITE: "success", WATCH: "warning", BLACK: "danger", GENERAL: "neutral" }[value] || "neutral");
+export const severityColor = (value) => ({ LOW: "neutral", MEDIUM: "warning", HIGH: "danger", CRITICAL: "danger" }[value] || "neutral");
+export const verifyStatusColor = (value) => ({ PENDING: "warning", CONFIRMED: "success", EXCLUDED: "neutral" }[value] || "neutral");
+export const recommendationStatusColor = (value) => ({ PENDING: "warning", APPROVED: "success", REJECTED: "neutral" }[value] || "neutral");
+export const alertTypeColor = (value) => ({
+  PRE_ASSESSMENT: "brand",
+  IN_PROCESS: "danger",
+  HEALTH_DROP: "warning",
+  LIST_RECOMMENDATION: "brand",
+  SENTIMENT: "warning",
+  HIGH_AMOUNT: "danger",
+}[value] || "neutral");
 export const stageColor = (value) => ({ DETERIORATING: "danger", EARLY_WARNING: "warning", LIMITED: "neutral" }[value] || "neutral");
 export const hypothesisColor = (value) => ({ SUPPORTED: "success", WEAKENED: "neutral", UNRESOLVED: "warning" }[value] || "neutral");
 
@@ -46,6 +78,33 @@ export function formatMoney(value) {
 }
 
 export const formatPercent = (value) => value == null ? "—" : `${(Number(value) * 100).toFixed(1)}%`;
+
+export function formatMoneyWan(value) {
+  if (value == null || value === "") return "—";
+  return `${Number(value)} 万元`;
+}
+
+export function formatAmountTier(value) {
+  if (value == null || value === "") return "—";
+  const text = String(value);
+  return text.includes("万") ? text : `${text} 万`;
+}
+
+export function formatDateTime(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+export function formatDate(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
 export const metricMap = (result) => Object.fromEntries(result.rows.map(([name, value]) => [name, value]));
 
 export function openCaseWorkspace(caseId, sourcePath) {

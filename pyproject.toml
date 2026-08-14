@@ -36,7 +36,10 @@ addopts = "--basetemp=.pytest-tmp"
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-extend-exclude = ["docs/deep-research-report.md"]
+extend-exclude = [
+    "docs/deep-research-report.md",
+    "data/simulated/",  # 演示数据生成工具目录，不属于受管源码
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
