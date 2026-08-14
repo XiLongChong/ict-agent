@@ -6,7 +6,7 @@
 口径（与 docs/metric-contract.md 冻结一致）：
 - 项目类订单 = 信产项目N / 信产项目S（企业级项目：数据中心/算力/数通/能源，一单一议）
 - 分销类订单 = 其余全部订单类型（消费电子分销：手机/电脑/配件，走量账期滚动）
-- 客户按金额主导归类：项目订单金额 > 分销订单金额 → PROJECT，否则 DISTRIBUTION
+- 客户按金额主导归类：存在正的项目订单金额且项目 > 分销 → PROJECT，否则 DISTRIBUTION
 - 服务/云/智能 等尾类订单，货物构成仍为分销类（消费产品/设备），归入分销
 """
 
@@ -49,8 +49,12 @@ def customer_business_types(store: DuckDBStore) -> dict[str, BusinessType]:
     for row in result.rows:
         project_amount = float(row[1] or 0.0)
         distribution_amount = float(row[2] or 0.0)
+        # 只有存在正的项目订单金额时才可能是项目类；否则（含分销净额为负的
+        # 退货/冲销客户）一律归分销，避免 0 > 负数 的误判。
         business[str(row[0])] = (
-            "PROJECT" if project_amount > distribution_amount else "DISTRIBUTION"
+            "PROJECT"
+            if project_amount > 0 and project_amount > distribution_amount
+            else "DISTRIBUTION"
         )
     return business
 

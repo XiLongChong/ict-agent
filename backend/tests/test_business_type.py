@@ -21,6 +21,8 @@ SALES = (
     # 混合客户 C004：分销金额大 → DISTRIBUTION
     "2026-07-01,C004,混合客户丁,X5,S5,W1,M1,1,销售出库,正常销售,200,160,信产项目N\n"
     "2026-07-01,C004,混合客户丁,X6,S6,W1,M1,1,销售出库,正常销售,1000,800,哆啦有货常规销售订单\n"
+    # 边界客户 C006：纯分销但净额为负（退货冲销）→ 应判 DISTRIBUTION 而非 PROJECT
+    "2026-07-01,C006,负分销客户己,X7,S7,W1,M1,1,销售出库,正常销售,-5000,-4000,信产常规销售订单\n"
 )
 
 CUSTOMER_CREDIT = (
@@ -31,6 +33,7 @@ CUSTOMER_CREDIT = (
     "C003,混合客户丙,1000,0,,2025-01-01,一般,3000,100,N\n"
     "C004,混合客户丁,1000,0,,2025-01-01,一般,3000,100,N\n"
     "C005,无销售客户戊,1000,0,,2025-01-01,一般,3000,100,N\n"
+    "C006,负分销客户己,1000,0,,2025-01-01,一般,3000,100,N\n"
 )
 
 PAYMENTS = (
@@ -99,8 +102,15 @@ def test_customer_business_types_amount_dominant(store: DuckDBStore) -> None:
     assert result["C004"] == "DISTRIBUTION"  # 分销 1000 > 项目 200
 
 
+def test_negative_distribution_amount_not_project(store: DuckDBStore) -> None:
+    result = customer_business_types(store)
+
+    # C006 无项目订单，分销净额为负（退货冲销）→ 不能因 0 > 负数 误判为项目类
+    assert result["C006"] == "DISTRIBUTION"
+
+
 def test_customer_without_sales_excluded(store: DuckDBStore) -> None:
     result = customer_business_types(store)
 
     assert "C005" not in result
-    assert set(result) == {"C001", "C002", "C003", "C004"}
+    assert set(result) == {"C001", "C002", "C003", "C004", "C006"}
