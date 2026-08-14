@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 from urllib.parse import quote
 
-from lark_oapi import LogLevel  # type: ignore[import-untyped]
+from lark_oapi import Client, LogLevel  # type: ignore[import-untyped]
+from lark_oapi.api.im.v1 import (  # type: ignore[import-untyped]
+    CreateMessageRequest,
+    CreateMessageRequestBody,
+)
 from lark_oapi.channel import Events, FeishuChannel  # type: ignore[import-untyped]
 from lark_oapi.channel.types import InboundMessage  # type: ignore[import-untyped]
 
@@ -245,44 +250,6 @@ class FeishuBot:
             await asyncio.sleep(0.1)
         self._connected = False
 
-    async def send_test_card(self) -> str:
-        """向已绑定群发送一张测试卡片并返回消息编号。"""
-
-        chat_id = self._store.get_integration_setting(NOTIFICATION_CHAT_KEY)
-        if not chat_id:
-            raise FeishuIntegrationError(f"尚未绑定通知群，请先在群里 @{BIND_COMMAND}。")
-        result = await self._channel.send(chat_id, {"card": build_test_card()})
-        if not result.success:
-            raise FeishuIntegrationError("飞书测试消息发送失败，请检查应用版本和机器人权限。")
-        return result.message_id or ""
-
-    async def send_case_notification(self, notification: CaseNotification) -> str:
-        """向已绑定群发送一张案件通知卡片。"""
-
-        chat_id = self._store.get_integration_setting(NOTIFICATION_CHAT_KEY)
-        if not chat_id:
-            raise FeishuIntegrationError(f"尚未绑定通知群，请先在群里 @{BIND_COMMAND}。")
-        result = await self._channel.send(
-            chat_id, {"card": build_case_notification_card(notification)}
-        )
-        if not result.success:
-            raise FeishuIntegrationError("飞书案件通知发送失败，请检查应用版本和机器人权限。")
-        return result.message_id or ""
-
-    async def send_rule_scan_notification(self, notification: RuleScanNotification) -> str:
-        """向已绑定群发送一张规则扫描聚合卡片。"""
-
-        chat_id = self._store.get_integration_setting(NOTIFICATION_CHAT_KEY)
-        if not chat_id:
-            raise FeishuIntegrationError(f"尚未绑定通知群，请先在群里 @{BIND_COMMAND}。")
-        result = await self._channel.send(
-            chat_id,
-            {"card": build_rule_scan_notification_card(notification)},
-        )
-        if not result.success:
-            raise FeishuIntegrationError("飞书扫描通知发送失败，请检查应用版本和机器人权限。")
-        return result.message_id or ""
-
     async def _handle_message(self, message: InboundMessage) -> None:
         if message.chat_type != "group":
             await self._channel.send(
@@ -308,12 +275,14 @@ class FeishuBot:
 
 
 _bot: FeishuBot | None = None
+_bot_settings: Settings | None = None
 
 
 async def start_feishu_bot(settings: Settings) -> None:
     """配置完整时启动全局机器人；失败不阻断核心调查服务。"""
 
-    global _bot
+    global _bot, _bot_settings
+    _bot_settings = settings
     if settings.feishu_app_id is None or settings.feishu_app_secret is None:
         logger.info("未配置飞书机器人，跳过长连接")
         return
@@ -328,10 +297,11 @@ async def start_feishu_bot(settings: Settings) -> None:
 async def stop_feishu_bot() -> None:
     """停止全局机器人。"""
 
-    global _bot
+    global _bot, _bot_settings
     if _bot is not None:
         await _bot.stop()
     _bot = None
+    _bot_settings = None
 
 
 def get_feishu_status(settings: Settings) -> FeishuStatus:
@@ -349,24 +319,72 @@ def get_feishu_status(settings: Settings) -> FeishuStatus:
 
 
 async def send_feishu_test_card() -> str:
-    """通过全局机器人发送测试卡片。"""
+    """通过开放平台消息 API 发送测试卡片。"""
 
-    if _bot is None or not _bot.connected:
-        raise FeishuIntegrationError("飞书机器人长连接尚未就绪。")
-    return await _bot.send_test_card()
+    return await _send_card(build_test_card(), "飞书测试消息发送失败")
 
 
 async def send_feishu_case_notification(notification: CaseNotification) -> str:
-    """通过全局机器人发送案件通知卡片。"""
+    """通过开放平台消息 API 发送案件通知卡片。"""
 
-    if _bot is None or not _bot.connected:
-        raise FeishuIntegrationError("飞书机器人长连接尚未就绪。")
-    return await _bot.send_case_notification(notification)
+    return await _send_card(
+        build_case_notification_card(notification),
+        "飞书案件通知发送失败",
+    )
 
 
 async def send_feishu_rule_scan_notification(notification: RuleScanNotification) -> str:
-    """通过全局机器人发送规则扫描聚合卡片。"""
+    """通过开放平台消息 API 发送规则扫描聚合卡片。"""
 
-    if _bot is None or not _bot.connected:
-        raise FeishuIntegrationError("飞书机器人长连接尚未就绪。")
-    return await _bot.send_rule_scan_notification(notification)
+    return await _send_card(
+        build_rule_scan_notification_card(notification),
+        "飞书扫描通知发送失败",
+    )
+
+
+async def _send_card(card: dict[str, object], error_message: str) -> str:
+    """发送交互卡片；出站通知不依赖接收群消息的长连接状态。"""
+
+    if _bot_settings is None:
+        raise FeishuIntegrationError("飞书机器人尚未配置或初始化。")
+    settings = _bot_settings
+    if settings.feishu_app_id is None or settings.feishu_app_secret is None:
+        raise FeishuIntegrationError("飞书机器人尚未配置。")
+    chat_id = CaseStore(settings.case_database_path).get_integration_setting(NOTIFICATION_CHAT_KEY)
+    if not chat_id:
+        raise FeishuIntegrationError(f"尚未绑定通知群，请先在群里 @{BIND_COMMAND}。")
+
+    client = (
+        Client.builder()
+        .app_id(settings.feishu_app_id)
+        .app_secret(settings.feishu_app_secret.get_secret_value())
+        .log_level(LogLevel.CRITICAL)
+        .build()
+    )
+    request = (
+        CreateMessageRequest.builder()
+        .receive_id_type("chat_id")
+        .request_body(
+            CreateMessageRequestBody.builder()
+            .receive_id(chat_id)
+            .msg_type("interactive")
+            .content(json.dumps(card, ensure_ascii=False, separators=(",", ":")))
+            .build()
+        )
+        .build()
+    )
+    try:
+        response = await client.im.v1.message.acreate(request)
+    except Exception as exc:
+        logger.warning("飞书消息 API 调用异常：%s", type(exc).__name__)
+        raise FeishuIntegrationError(f"{error_message}，请检查网络和应用配置。") from exc
+    if not response.success():
+        logger.warning(
+            "飞书消息 API 拒绝请求：code=%s log_id=%s",
+            response.code,
+            response.get_log_id(),
+        )
+        raise FeishuIntegrationError(f"{error_message}，请检查机器人发消息权限和应用版本。")
+    if response.data is None or not response.data.message_id:
+        raise FeishuIntegrationError(f"{error_message}，飞书未返回消息编号。")
+    return str(response.data.message_id)
