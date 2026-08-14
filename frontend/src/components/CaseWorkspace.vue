@@ -8,6 +8,7 @@ import {
   CodeXml,
   FileText,
   LoaderCircle,
+  Layers3,
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
@@ -61,7 +62,9 @@ const canSubmit = computed(
 );
 const sourcePath = computed(() => {
   const value = typeof route.query.from === "string" ? route.query.from : "";
-  return value.startsWith("/risk") || value.startsWith("/cases") ? value : "/cases";
+  return value.startsWith("/risk") || value.startsWith("/cases") || value.startsWith("/pre-transaction")
+    ? value
+    : "/cases";
 });
 const sections = [
   { value: "overview", label: "案件概况", icon: FileText },
@@ -71,6 +74,18 @@ const sections = [
 const currentSectionLabel = computed(
   () => sections.find((item) => item.value === section.value)?.label || "案件处理"
 );
+const businessScopeLabel = computed(() => {
+  if (!caseItem.value) return "—";
+  if (caseItem.value.business_type) {
+    return labels.businessType[caseItem.value.business_type] || caseItem.value.business_type;
+  }
+  const availableTypes = String(caseItem.value.entity_context?.available_business_types || "")
+    .split(",")
+    .filter(Boolean)
+    .map((type) => labels.businessType[type] || type)
+    .join("、");
+  return availableTypes || labels.caseType[caseItem.value.case_type] || "客户整体";
+});
 const facts = computed(() =>
   caseItem.value
     ? [
@@ -81,6 +96,12 @@ const facts = computed(() =>
           value: formatMoney(caseItem.value.exposure_amount),
         },
         {
+          icon: Layers3,
+          tone: "text-muted bg-gray-100",
+          label: "业务范围",
+          value: businessScopeLabel.value,
+        },
+        {
           icon: CalendarDays,
           tone: "text-muted bg-gray-100",
           label: "数据截至",
@@ -89,8 +110,8 @@ const facts = computed(() =>
         {
           icon: CodeXml,
           tone: "text-muted bg-gray-100",
-          label: "规则版本",
-          value: caseItem.value.rule_set_version,
+          label: "信号源版本",
+          value: caseItem.value.source_set_version || caseItem.value.source_snapshot_id || "—",
         },
       ]
     : []
@@ -308,7 +329,8 @@ function toggleNavigation() {
               <div class="leading-tight">
                 <h2 class="text-xl font-bold text-ink">{{ caseItem.entity_label }}</h2>
                 <span class="block text-sm text-muted">
-                  {{ labels.caseType[caseItem.case_type] }}风险案件
+                  {{ businessScopeLabel }} ·
+                  {{ labels.discoverySource[caseItem.discovery_source] }}
                 </span>
               </div>
               <div class="flex-1"></div>
@@ -337,7 +359,7 @@ function toggleNavigation() {
               <div class="p-5">
                 <div>
                   <h3 class="text-[0.9375rem] font-bold text-ink">风险概况</h3>
-                  <p class="mt-1 text-sm leading-6 text-muted">{{ caseItem.risk_overview }}</p>
+                  <p class="mt-1 text-sm leading-6 text-muted">{{ caseItem.signal_overview }}</p>
                 </div>
 
                 <div class="mt-5 border-t border-border pt-4">
@@ -347,19 +369,19 @@ function toggleNavigation() {
                   </div>
                   <div class="mt-2 divide-y divide-border">
                     <article
-                      v-for="hit in caseItem.rule_hits"
-                      :key="hit.rule_hit_id"
+                      v-for="hit in (caseItem.signals || [])"
+                      :key="hit.signal_id"
                       class="py-4 first:pt-2"
                     >
                       <div class="flex flex-wrap items-start gap-2">
-                        <strong class="text-[0.9375rem] text-ink">{{ hit.rule_name }}</strong>
+                        <strong class="text-[0.9375rem] text-ink">{{ hit.signal_name }}</strong>
                         <Badge :tone="priorityColor(hit.severity)">
                           {{ labels.priority[hit.severity] }}
                         </Badge>
                       </div>
                       <p class="mt-1 text-[0.8125rem] leading-6 text-muted">{{ hit.reason }}</p>
                       <span class="mt-1 block text-sm text-muted">
-                        数据来源：{{ hit.sources.map((source) => labels.source[source] || "业务数据").join("、") }}
+                        来源：{{ hit.sources?.map((source) => labels.source[source] || source).join("、") || "业务数据" }}
                         · 观察期：{{ hit.period }}
                       </span>
                     </article>

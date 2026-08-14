@@ -1,23 +1,5 @@
 export const labels = {
-  grade: { HEALTHY: "健康", WATCH: "关注", WARNING: "预警", HIGH_RISK: "高危" },
   businessType: { DISTRIBUTION: "分销", PROJECT: "项目", SERVICE_CLOUD: "服务云" },
-  list: { WHITE: "白名单", WATCH: "观察中", BLACK: "黑名单", GENERAL: "一般" },
-  severity: { LOW: "低", MEDIUM: "中", HIGH: "高", CRITICAL: "重大" },
-  alertType: {
-    PRE_ASSESSMENT: "事前评估",
-    IN_PROCESS: "事中预警",
-    HEALTH_DROP: "健康度下降",
-    LIST_RECOMMENDATION: "名单建议",
-    SENTIMENT: "舆情",
-    HIGH_AMOUNT: "高金额",
-  },
-  recommendationStatus: { PENDING: "待审批", APPROVED: "已采纳", REJECTED: "已驳回" },
-  preAssessmentConclusion: {
-    APPROVED: "通过",
-    REJECTED: "不通过",
-    CONDITIONAL: "有条件通过",
-    PENDING_REVIEW: "需人工复核",
-  },
   status: {
     PENDING_AGENT_REVIEW: "待调查",
     PENDING_HUMAN_REVIEW: "待复核",
@@ -25,7 +7,17 @@ export const labels = {
     CLOSED: "已关闭",
   },
   priority: { LOW: "低", MEDIUM: "一般", HIGH: "高" },
-  caseType: { ACCOUNTS_RECEIVABLE: "应收", INVENTORY: "库存" },
+  caseType: {
+    ACCOUNTS_RECEIVABLE: "应收",
+    INVENTORY: "库存",
+    PRE_TRANSACTION: "事前交易",
+  },
+  discoverySource: {
+    RULE: "规则扫描",
+    EXTERNAL_ALERT: "外部预警",
+    PRE_TRANSACTION: "事前交易",
+    MANUAL: "人工发起",
+  },
   source: {
     ar_snapshots: "应收快照",
     customer_credit: "客户授信",
@@ -54,18 +46,6 @@ export const labels = {
 
 export const priorityColor = (value) => ({ HIGH: "danger", MEDIUM: "warning", LOW: "neutral" }[value] || "neutral");
 export const statusColor = (value) => ({ PENDING_AGENT_REVIEW: "brand", PENDING_HUMAN_REVIEW: "warning", ACTION_IN_PROGRESS: "danger", CLOSED: "success" }[value] || "brand");
-export const gradeColor = (value) => ({ HEALTHY: "success", WATCH: "warning", WARNING: "orange", HIGH_RISK: "danger" }[value] || "neutral");
-export const listColor = (value) => ({ WHITE: "success", WATCH: "warning", BLACK: "danger", GENERAL: "neutral" }[value] || "neutral");
-export const severityColor = (value) => ({ LOW: "neutral", MEDIUM: "warning", HIGH: "danger", CRITICAL: "danger" }[value] || "neutral");
-export const recommendationStatusColor = (value) => ({ PENDING: "warning", APPROVED: "success", REJECTED: "neutral" }[value] || "neutral");
-export const alertTypeColor = (value) => ({
-  PRE_ASSESSMENT: "brand",
-  IN_PROCESS: "danger",
-  HEALTH_DROP: "warning",
-  LIST_RECOMMENDATION: "brand",
-  SENTIMENT: "warning",
-  HIGH_AMOUNT: "danger",
-}[value] || "neutral");
 export const stageColor = (value) => ({ DETERIORATING: "danger", EARLY_WARNING: "warning", LIMITED: "neutral" }[value] || "neutral");
 export const hypothesisColor = (value) => ({ SUPPORTED: "success", WEAKENED: "neutral", UNRESOLVED: "warning" }[value] || "neutral");
 
@@ -77,17 +57,6 @@ export function formatMoney(value) {
 }
 
 export const formatPercent = (value) => value == null ? "—" : `${(Number(value) * 100).toFixed(1)}%`;
-
-export function formatMoneyWan(value) {
-  if (value == null || value === "") return "—";
-  return `${Number(value)} 万元`;
-}
-
-export function formatAmountTier(value) {
-  if (value == null || value === "") return "—";
-  const text = String(value);
-  return text.includes("万") ? text : `${text} 万`;
-}
 
 export function formatDateTime(value) {
   if (!value) return "—";

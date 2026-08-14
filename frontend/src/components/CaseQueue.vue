@@ -20,6 +20,7 @@ const typeOptions = [
   { title: "全部类型", value: "" },
   { title: "应收", value: "ACCOUNTS_RECEIVABLE" },
   { title: "库存", value: "INVENTORY" },
+  { title: "事前交易", value: "PRE_TRANSACTION" },
 ];
 const statusOptions = [{ title: "全部状态", value: "" }, ...Object.entries(labels.status).map(([value, title]) => ({ title, value }))];
 const priorityOptions = [
@@ -40,10 +41,12 @@ const filtered = computed(() => {
     const searchable = [
       item.case_id,
       item.entity_label,
-      item.risk_overview,
+      item.signal_overview,
       labels.caseType[item.case_type],
       labels.status[item.status],
       labels.priority[item.priority],
+      labels.discoverySource[item.discovery_source],
+      labels.businessType[item.business_type],
     ]
       .filter(Boolean)
       .join(" ")
@@ -119,7 +122,7 @@ async function scan() {
         <table class="table-base table-fixed min-w-[1120px]">
           <colgroup>
             <col class="w-[28%]" />
-            <col class="w-[10%]" />
+            <col class="w-[14%]" />
             <col class="w-[27%]" />
             <col class="w-[10%]" />
             <col class="w-[14%]" />
@@ -128,7 +131,7 @@ async function scan() {
           <thead>
             <tr>
               <th>主体</th>
-              <th>案件类型</th>
+              <th>来源/业务</th>
               <th>风险概况</th>
               <th>风险等级</th>
               <th>风险敞口</th>
@@ -147,8 +150,13 @@ async function scan() {
               <td>
                 <strong class="block truncate text-[0.8125rem] text-ink" :title="item.entity_label">{{ item.entity_label }}</strong>
               </td>
-              <td><span class="text-sm text-muted">{{ labels.caseType[item.case_type] }}</span></td>
-              <td><span class="block truncate text-sm font-medium text-ink" :title="item.risk_overview">{{ item.risk_overview }}</span></td>
+              <td>
+                <Badge tone="neutral">{{ labels.discoverySource[item.discovery_source] || item.discovery_source }}</Badge>
+                <span class="mt-1 block text-xs text-muted">
+                  {{ labels.businessType[item.business_type] || labels.caseType[item.case_type] }}
+                </span>
+              </td>
+              <td><span class="block truncate text-sm font-medium text-ink" :title="item.signal_overview">{{ item.signal_overview }}</span></td>
               <td><Badge :tone="priorityColor(item.priority)">{{ labels.priority[item.priority] }}</Badge></td>
               <td class="money-cell">{{ formatMoney(item.exposure_amount) }}</td>
               <td class="sticky right-0 border-l border-border bg-surface group-hover:bg-canvas">
