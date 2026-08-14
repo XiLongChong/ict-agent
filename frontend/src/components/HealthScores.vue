@@ -8,7 +8,7 @@ import TrendSpark from "./TrendSpark.vue";
 import { formatDateTime, gradeColor, labels } from "../lib";
 import { recalcHealth, workspace } from "../store";
 
-const subjectType = ref("");
+const businessType = ref("");
 const grade = ref("");
 const query = ref("");
 const pageSize = ref("10");
@@ -16,10 +16,11 @@ const currentPage = ref(1);
 const pageJump = ref("1");
 const recalculating = ref(false);
 
-const subjectOptions = [
+const businessOptions = [
   { title: "全部类型", value: "" },
-  { title: "客户", value: "CUSTOMER" },
-  { title: "项目合同", value: "CONTRACT" },
+  { title: "分销", value: "DISTRIBUTION" },
+  { title: "项目", value: "PROJECT" },
+  { title: "服务云", value: "SERVICE_CLOUD" },
 ];
 const gradeOptions = [
   { title: "全部等级", value: "" },
@@ -35,13 +36,12 @@ const filtered = computed(() => {
   const keyword = String(query.value ?? "").trim().toLocaleLowerCase();
   return items.filter((item) => {
     const matchesFilters =
-      (!subjectType.value || item.subject_type === subjectType.value) &&
+      (!businessType.value || item.business_type === businessType.value) &&
       (!grade.value || item.grade === grade.value);
     if (!matchesFilters || !keyword) return matchesFilters;
     const searchable = [
       item.subject_id,
       item.subject_label,
-      item.subject_type === "CUSTOMER" ? "客户" : "项目合同",
       labels.businessType[item.business_type],
       labels.grade[item.grade],
     ]
@@ -67,7 +67,7 @@ const pageNumbers = computed(() => {
 const rangeStart = computed(() => (filtered.value.length ? (currentPage.value - 1) * pageSizeValue.value + 1 : 0));
 const rangeEnd = computed(() => Math.min(currentPage.value * pageSizeValue.value, filtered.value.length));
 
-watch([subjectType, grade, query, pageSize], () => goToPage(1));
+watch([businessType, grade, query, pageSize], () => goToPage(1));
 watch(totalPages, (total) => {
   if (currentPage.value > total) goToPage(total);
 });
@@ -115,7 +115,7 @@ function jumpToPage() {
   <div class="space-y-5">
     <section class="card overflow-hidden">
       <div class="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
-        <SelectInput v-model="subjectType" :options="subjectOptions" class="w-[180px]" />
+        <SelectInput v-model="businessType" :options="businessOptions" class="w-[180px]" />
         <SelectInput v-model="grade" :options="gradeOptions" class="w-[180px]" />
         <TextInput v-model="query" search clearable class="w-[320px] max-w-full" placeholder="搜索客户、合同或等级" aria-label="搜索客户、合同或等级" @clear="query = ''" />
         <span class="ml-auto text-sm text-muted">共 {{ filtered.length }} 个主体</span>
@@ -158,12 +158,13 @@ function jumpToPage() {
                 <strong class="block truncate text-[0.8125rem] text-ink" :title="`${item.subject_id} ${item.subject_label}`">{{ item.subject_id }} {{ item.subject_label }}</strong>
               </td>
               <td>
-                <div class="flex flex-wrap items-center gap-1.5">
-                  <Badge tone="neutral">{{ item.subject_type === "CUSTOMER" ? "客户" : "项目合同" }}</Badge>
-                  <Badge v-if="item.business_type" :tone="businessTypeTone[item.business_type] || 'neutral'">
-                    {{ labels.businessType[item.business_type] || item.business_type }}
-                  </Badge>
-                </div>
+                <Badge
+                  v-if="item.business_type"
+                  :tone="businessTypeTone[item.business_type] || 'neutral'"
+                >
+                  {{ labels.businessType[item.business_type] || item.business_type }}
+                </Badge>
+                <Badge v-else tone="neutral">—</Badge>
               </td>
               <td>
                 <div class="flex items-center gap-2">
