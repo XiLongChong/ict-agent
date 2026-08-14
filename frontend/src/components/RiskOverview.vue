@@ -3,28 +3,23 @@ import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import VueApexCharts from "vue3-apexcharts";
 import {
-  Activity,
   ArrowRight,
-  CircleDollarSign,
   ClipboardCheck,
   FileWarning,
   ListChecks,
+  ListTodo,
   Newspaper,
   ShieldAlert,
 } from "lucide-vue-next";
 import Badge from "./ui/Badge.vue";
 import {
   formatMoney,
-  formatMoneyWan,
-  gradeColor,
   labels,
   listColor,
   openCaseWorkspace,
   priorityColor,
   recommendationStatusColor,
-  severityColor,
   statusColor,
-  verifyStatusColor,
 } from "../lib";
 import { workspace } from "../store";
 import { useResponsiveChart } from "../composables/useResponsiveChart";
@@ -60,15 +55,60 @@ const gradeDistribution = computed(() => warning.value.grade_distribution || {})
 const pendingRecommendations = computed(() => warning.value.pending_recommendations || []);
 const openAlerts = computed(() => warning.value.open_alerts || []);
 
+// 待办事项合并（名单建议 + 预警），只展示前 5 条与右侧健康度分布平齐；剩余跳转名单管理
+const TODO_LIMIT = 5;
+const todoItems = computed(() => {
+  const items = [
+    ...pendingRecommendations.value.map((item) => ({
+      key: `rec_${item.recommendation_id}`,
+      kind: "recommendation",
+      label: item.subject_label,
+      sub: [
+        labels.list[item.current_list] || item.current_list,
+        "→",
+        labels.list[item.target_list] || item.target_list,
+        item.health_change,
+      ].join(" "),
+      badgeText: labels.recommendationStatus[item.status] || item.status,
+      badgeTone: recommendationStatusColor(item.status),
+      barTone: "bg-danger",
+      amountText: "",
+    })),
+    ...openAlerts.value.map((alert) => ({
+      key: `alert_${alert.alert_id}`,
+      kind: "alert",
+      label: alert.subject_label,
+      sub: [
+        labels.severity[alert.severity] || alert.severity,
+        labels.alertType[alert.alert_type] || alert.alert_type,
+        alert.message,
+      ].join(" · "),
+      badgeText: "",
+      badgeTone: "",
+      barTone: alert.severity === "CRITICAL" || alert.severity === "HIGH" ? "bg-danger" : "bg-warning",
+      amountText: formatMoney(alert.risk_amount),
+    })),
+  ];
+  return { visible: items.slice(0, TODO_LIMIT), total: items.length };
+});
+
 const metrics = computed(() => [
   { label: "待事前评估", value: warning.value.pre_assessment_pending ?? "—", tone: "brand", icon: ClipboardCheck },
-  { label: "事中预警", value: warning.value.in_process_alerts ?? "—", tone: "warning", icon: Activity },
+  { label: "待处理案件", value: pendingCases.value, tone: "warning", icon: ListTodo },
   { label: "健康度下降", value: warning.value.health_drop_count ?? "—", tone: "orange", icon: FileWarning },
   { label: "待审批名单", value: warning.value.pending_list_recommendations ?? "—", tone: "danger", icon: ListChecks },
   { label: "未处理舆情", value: warning.value.open_sentiments ?? "—", tone: "warning", icon: Newspaper },
-  { label: "高风险客户", value: warning.value.high_risk_count ?? "—", tone: "danger", icon: ShieldAlert },
-  { label: "风险敞口", value: warning.value.risk_exposure != null ? formatMoneyWan(warning.value.risk_exposure) : "—", tone: "danger", icon: CircleDollarSign, compact: true },
+  { label: "健康度高危", value: warning.value.high_risk_count ?? "—", tone: "danger", icon: ShieldAlert },
 ]);
+
+// 待处理案件 = 案件队列中未关闭的案件数（待调查 + 待复核 + 处理中）
+const pendingCases = computed(() => {
+  const o = workspace.overview;
+  if (!o) return "—";
+  const total = o.total_cases ?? 0;
+  const closed = o.closed_cases ?? 0;
+  return total - closed;
+});
 const toneIcon = {
   danger: "bg-danger-wash text-danger",
   brand: "bg-brand-wash text-brand-deep",
@@ -85,7 +125,7 @@ const gradeSeries = computed(() => [
 ]);
 const donutOptions = computed(() => ({
   chart: { type: "donut", animations: { enabled: false }, redrawOnParentResize: false, redrawOnWindowResize: false },
-  labels: ["健康", "关注", "预警", "高风险"],
+  labels: ["健康", "关注", "预警", "高危"],
   colors: ["#039855", "#f79009", "#f97316", "#d92d20"],
   stroke: { width: 0 },
   dataLabels: { enabled: false },
@@ -121,7 +161,7 @@ function go(path) {
 
 <template>
   <div class="space-y-5">
-    <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
+    <div class="grid grid-cols-2 gap-4 xl:grid-cols-3">
       <section v-for="m in metrics" :key="m.label" class="card min-h-[132px] p-5">
         <span class="mb-3 grid h-10 w-10 place-items-center rounded-lg" :class="toneIcon[m.tone]">
           <component :is="m.icon" :size="20" />
@@ -132,7 +172,7 @@ function go(path) {
     </div>
 
     <div class="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,0.75fr)]">
-      <!-- 待办列表：待审批名单 + 未处理预警 -->
+      <!-- 待办列表：待审批名单 + 未处理预警（限 5 条，与健康度分布平齐） -->
       <section class="card">
         <div class="panel-head">
           <h3>待办事项</h3>
@@ -141,40 +181,31 @@ function go(path) {
           </button>
         </div>
         <div class="px-2.5 py-2">
-          <div v-for="item in pendingRecommendations" :key="item.recommendation_id" class="grid grid-cols-[3px_minmax(0,1fr)_auto] items-center gap-3 rounded-md px-2 py-3">
-            <span class="h-full w-[3px] rounded bg-danger"></span>
-            <span>
-              <strong class="block text-[13px] text-ink">{{ item.subject_label }}</strong>
+          <div v-for="item in todoItems.visible" :key="item.key" class="grid grid-cols-[3px_minmax(0,1fr)_auto] items-center gap-3 rounded-md px-2 py-2.5">
+            <span class="h-full w-[3px] rounded" :class="item.barTone"></span>
+            <span class="min-w-0">
+              <strong class="block truncate text-[13px] text-ink">{{ item.label }}</strong>
               <span class="mt-1 flex flex-wrap items-center gap-1.5 text-[12px] text-muted">
-                <Badge :tone="listColor(item.current_list)">{{ labels.list[item.current_list] }}</Badge>
-                <span>→</span>
-                <Badge :tone="listColor(item.target_list)">{{ labels.list[item.target_list] }}</Badge>
-                <span class="ml-1">{{ item.health_change }}</span>
+                <Badge v-if="item.kind === 'recommendation'" :tone="listColor(item.current_list)">{{ labels.list[item.current_list] }}</Badge>
+                <span class="truncate">{{ item.sub }}</span>
               </span>
             </span>
-            <Badge :tone="recommendationStatusColor(item.status)">{{ labels.recommendationStatus[item.status] }}</Badge>
+            <Badge v-if="item.badgeText" :tone="item.badgeTone">{{ item.badgeText }}</Badge>
+            <span v-else class="text-right text-[13px] text-ink">{{ item.amountText }}</span>
           </div>
 
-          <div v-for="alert in openAlerts" :key="alert.alert_id" class="grid grid-cols-[3px_minmax(0,1fr)_auto] items-center gap-3 rounded-md px-2 py-3">
-            <span class="h-full w-[3px] rounded" :class="alert.severity === 'CRITICAL' || alert.severity === 'HIGH' ? 'bg-danger' : 'bg-warning'"></span>
-            <span>
-              <strong class="block text-[13px] text-ink">{{ alert.subject_label }}</strong>
-              <span class="mt-1 flex flex-wrap items-center gap-1.5 text-[12px] text-muted">
-                <Badge :tone="severityColor(alert.severity)">{{ labels.severity[alert.severity] || alert.severity }}</Badge>
-                <Badge tone="neutral">{{ labels.alertType[alert.alert_type] || alert.alert_type }}</Badge>
-                <span class="truncate">{{ alert.message }}</span>
-              </span>
-            </span>
-            <span class="text-right text-[13px] text-ink">{{ formatMoney(alert.risk_amount) }}</span>
+          <div v-if="todoItems.total > TODO_LIMIT" class="mt-1 border-t border-border/60 px-2 py-2 text-[12px] text-muted">
+            还有 {{ todoItems.total - TODO_LIMIT }} 条待办，前往名单管理查看全部
           </div>
 
-          <div v-if="!loading && !pendingRecommendations.length && !openAlerts.length" class="empty-state">暂无待办事项</div>
+          <div v-if="!loading && !todoItems.total" class="empty-state">暂无待办事项</div>
         </div>
       </section>
 
       <!-- 健康度分布 -->
       <section class="card pb-4">
         <div class="panel-head"><h3>健康度分布</h3></div>
+        <p class="px-5 pb-1 text-[12px] text-muted">健康度等级由六维指标综合评分得出</p>
         <div ref="donutHostRef" class="px-5 pt-3">
           <VueApexCharts ref="donutChartRef" type="donut" height="210" :options="donutOptions" :series="gradeSeries" />
         </div>
@@ -195,6 +226,7 @@ function go(path) {
           查看全部 <ArrowRight :size="15" />
         </button>
       </div>
+      <p class="px-5 pb-1 text-[12px] text-muted">案件优先级来自规则引擎（高风险信号优先调查），与健康度等级相互独立</p>
       <div class="px-2.5 py-2">
         <button
           v-for="item in priorityCases"
