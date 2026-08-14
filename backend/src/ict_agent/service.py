@@ -641,8 +641,7 @@ def recalculate_health_scores(
         runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
         business_store = DuckDBStore(runtime_settings.database_path)
         business_store.ensure_ready()
-        sim = _simulated_data(runtime_settings)
-        scores = compute_health_scores(business_store, sim)
+        scores = compute_health_scores(business_store)
         snapshot_id = ""
         try:
             snapshot_id = business_store.get_snapshot().snapshot_id

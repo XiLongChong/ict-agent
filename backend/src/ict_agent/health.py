@@ -1,72 +1,94 @@
 """确定性健康度计算引擎（阶段 A：项目风险预警系统）。
 
-为名单建议与预警提供客户级与项目级（合同级）健康度输入。
-健康度全部由确定性指标计算（复用业务库只读查询与模拟数据），
-绝不调用模型生成分数；返回纯 dict/list，不依赖 Pydantic。
+按业务类型分支计算健康度，全部由真实业务库只读推导，不调用模型、不依赖模拟数据。
+
+主体两类：
+- CUSTOMER：`customer_credit` 中的每个授信客户，按业务类型（项目 / 分销 / 软件服务云）
+  选择维度权重；混合客户按项目金额分量插值权重。
+- CONTRACT：`contracts` 中带真实项目名称的项目合同（按合同号聚合），用合同级指标。
+
+核心设计：
+- 超期维度用「账龄梯度」而非单一超期率，对应管控手段（1-30 催款 / 31-60 发函 /
+  61-120 停货 / >120 诉讼）。
+- 缺数据的维度不记中性分，而是从总分中剔除并对其余可用维度重新归一化，
+  避免「无授信但有大额应收」被中性分掩盖。
 """
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from typing import Any
 
+from ict_agent.business_type import customer_business_profiles
 from ict_agent.data import DuckDBStore
-from ict_agent.simdata import SimulatedData, SimulatedProjectStage
 
-# 客户健康度五维权重（合计 100%，舆情维度已随舆情模块移除）
-HEALTH_WEIGHTS: dict[str, float] = {
-    "payment": 33.33,  # 回款节奏
-    "progress": 22.22,  # 项目进度
-    "receivable": 16.67,  # 应收超期
-    "credit": 16.67,  # 合同授信/名单
-    "guarantor": 11.11,  # 客户担保人
+# 分销 / 服务云客户五维权重（合计 100%）
+CUSTOMER_DISTRIBUTION_WEIGHTS: dict[str, float] = {
+    "payment": 30.0,  # 回款节奏
+    "overdue": 25.0,  # 应收超期（账龄梯度）
+    "credit": 20.0,  # 授信占用
+    "list": 15.0,  # 名单资质
+    "activity": 10.0,  # 销售活跃度
+}
+
+# 项目客户五维权重（合计 100%）：项目金额大、超期损失重，超期权重更高、授信更低
+CUSTOMER_PROJECT_WEIGHTS: dict[str, float] = {
+    "overdue": 30.0,
+    "payment": 25.0,
+    "list": 20.0,
+    "credit": 15.0,
+    "activity": 10.0,
 }
 
 CUSTOMER_DIMENSION_NAMES: dict[str, str] = {
     "payment": "回款节奏",
-    "progress": "项目进度",
-    "receivable": "应收超期",
-    "credit": "合同授信",
-    "guarantor": "客户担保人",
+    "overdue": "应收超期",
+    "credit": "授信占用",
+    "list": "名单资质",
+    "activity": "销售活跃度",
 }
 
-# 合同（项目）健康度四维权重（合计 100%，舆情维度已随舆情模块移除）
-CONTRACT_HEALTH_WEIGHTS: dict[str, float] = {
-    "progress": 44.44,  # 项目进度（阶段 + 里程碑）
-    "payment": 27.78,  # 计划回款
-    "contract": 16.67,  # 合同毛利
-    "guarantor": 11.11,  # 担保人
+# 项目合同四维权重（合计 100%）
+CONTRACT_WEIGHTS: dict[str, float] = {
+    "overdue": 30.0,  # 应收超期率
+    "payment": 25.0,  # 回款进度
+    "margin": 20.0,  # 合同毛利
+    "term_gap": 15.0,  # 账期偏差
+    "concentration": 10.0,  # 敞口集中度
 }
 
 CONTRACT_DIMENSION_NAMES: dict[str, str] = {
-    "progress": "项目进度",
-    "payment": "计划回款",
-    "contract": "合同毛利",
-    "guarantor": "担保人",
-}
-
-# 项目阶段基础分
-_STAGE_BASE_SCORES: dict[str, float] = {
-    "立项": 80.0,
-    "执行": 60.0,
-    "验收": 40.0,
-    "回款": 30.0,
-    "结束": 100.0,
+    "overdue": "应收超期",
+    "payment": "回款进度",
+    "margin": "合同毛利",
+    "term_gap": "账期偏差",
+    "concentration": "敞口集中度",
 }
 
 # 黑白名单状态编码（customer_credit.黑白名单状态）
-_LIST_STATUS_LABELS: dict[int, str] = {0: "GENERAL", 1: "WHITE", 2: "BLACK", 3: "WATCH"}
 _LIST_STATUS_SCORES: dict[int, float] = {0: 80.0, 1: 100.0, 2: 10.0, 3: 40.0}
 
-# 担保人异常状态集合（sim_guarantors.担保人状态）
-_ABNORMAL_GUARANTOR_STATUS: frozenset[str] = frozenset(
-    {"经营异常", "失联待核验", "待核验", "失信", "注销", "逾期"}
+# 账龄梯度：每桶对应管控手段与得分
+# (超期天数上限, 得分, 处置) —— 未超期 100 / 1-30 催款 70 / 31-60 发函 40 /
+# 61-120 停货 15 / >120 诉讼 0
+_AGING_BUCKETS: tuple[tuple[int | None, float], ...] = (
+    (0, 100.0),
+    (30, 70.0),
+    (60, 40.0),
+    (120, 15.0),
+    (None, 0.0),
 )
 
-# 缺数据维度的中性分
+# 缺数据维度的中性分（仅当全部维度都缺失时兜底）
 _MISSING_NEUTRAL = 60.0
 # 应收超期率达到该比例记 0 分
 _RECEIVABLE_RATE_AT_ZERO = 0.6
+# 授信利用率达到该比例记 0 分（>1 即超额占用）
+_UTILIZATION_AT_ZERO = 1.0
+# 敞口集中度达到该比例记 0 分（单合同占客户应收过半）
+_CONCENTRATION_AT_ZERO = 0.5
+# 账期偏差达到该天数记 0 分
+_TERM_GAP_AT_ZERO = 60.0
 
 
 def grade_of(score: float) -> str:
@@ -84,22 +106,33 @@ def grade_of(score: float) -> str:
     return "HIGH_RISK"
 
 
-def compute_customer_health(store: DuckDBStore, sim: SimulatedData) -> list[dict[str, Any]]:
-    """对 customer_credit 中的每个客户计算六维健康度。"""
+def compute_customer_health(store: DuckDBStore) -> list[dict[str, Any]]:
+    """对 customer_credit 中的每个客户按业务类型分支计算健康度。"""
 
-    return [_compute_customer(store, sim, row) for row in _fetch_customer_rows(store)]
-
-
-def compute_contract_health(store: DuckDBStore, sim: SimulatedData) -> list[dict[str, Any]]:
-    """对 sim.project_stages 中的真实合同计算项目健康度。"""
-
-    return [_compute_contract(store, sim, stage) for stage in sim.project_stages]
+    profiles = customer_business_profiles(store)
+    return [
+        _compute_customer(store, row, profiles.get(str(row["customer_id"])))
+        for row in _fetch_customer_rows(store)
+    ]
 
 
-def compute_health_scores(store: DuckDBStore, sim: SimulatedData) -> list[dict[str, Any]]:
+def compute_contract_health(store: DuckDBStore) -> list[dict[str, Any]]:
+    """对 contracts 中带真实项目名称的项目合同计算健康度。"""
+
+    contracts = _fetch_project_contracts(store)
+    ar_by_contract = _fetch_contract_ar(store)
+    payment_by_contract = _fetch_contract_payment(store)
+    customer_ar = _fetch_customer_total_ar(store)
+    return [
+        _compute_contract(store, row, ar_by_contract, payment_by_contract, customer_ar)
+        for row in contracts
+    ]
+
+
+def compute_health_scores(store: DuckDBStore) -> list[dict[str, Any]]:
     """合并客户与合同健康度，供批量保存。"""
 
-    return [*compute_customer_health(store, sim), *compute_contract_health(store, sim)]
+    return [*compute_customer_health(store), *compute_contract_health(store)]
 
 
 # ---------------------------------------------------------------------------
@@ -139,15 +172,7 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def _today() -> date:
-    """当前日期，供计划回款临近/逾期判定；测试可替换。"""
-
-    return datetime.now(UTC).date()
-
-
-def _first_row(
-    result: Any,
-) -> tuple[object, ...] | None:
+def _first_row(result: Any) -> tuple[object, ...] | None:
     """取查询结果第一行；无数据返回 None。"""
 
     if result is None or not result.rows:
@@ -157,6 +182,19 @@ def _first_row(
 
 def _period_str(value: object) -> str:
     return str(value).split("T", maxsplit=1)[0] if value is not None else ""
+
+
+def _weighted_total(dimensions: list[dict[str, Any]]) -> float:
+    """按可用（非缺失）维度重新归一化求总分；全部缺失时返回中性分。"""
+
+    available = [dim for dim in dimensions if not dim["missing"]]
+    if not available:
+        return _MISSING_NEUTRAL
+    total_weight = sum(float(dim["weight"]) for dim in available)
+    if total_weight <= 0:
+        return _MISSING_NEUTRAL
+    weighted = sum(float(dim["score"]) * float(dim["weight"]) for dim in available)
+    return round(weighted / total_weight, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -175,44 +213,46 @@ def _fetch_customer_rows(store: DuckDBStore) -> list[dict[str, object]]:
         ORDER BY "客户编号_中台"
         """
     )
-    rows: list[dict[str, object]] = []
-    for row in result.rows:
-        rows.append(
-            {
-                "customer_id": row[0],
-                "customer_name": row[1],
-                "credit_limit": row[2],
-                "list_status": row[3],
-            }
-        )
-    return rows
+    return [
+        {
+            "customer_id": row[0],
+            "customer_name": row[1],
+            "credit_limit": row[2],
+            "list_status": row[3],
+        }
+        for row in result.rows
+    ]
 
 
-def _fetch_latest_ar(store: DuckDBStore, customer_id: str) -> dict[str, object] | None:
+def _fetch_customer_aging(store: DuckDBStore, customer_id: str) -> dict[str, float] | None:
+    """按账龄桶聚合最新应收，返回各桶金额（元）；无应收记录返回 None。"""
+
     result = store.fetch(
         """
-        WITH latest AS (
-            SELECT MAX("快照时间") AS p FROM ar_snapshots WHERE "客户编号" = ?
+        WITH latest AS (SELECT MAX("快照时间") AS d FROM ar_snapshots),
+        aged AS (
+            SELECT a."应收金额" AS amt, a."超期天数" AS days
+            FROM ar_snapshots a JOIN latest l ON a."快照时间" = l.d
+            WHERE a."客户编号" = ?
         )
-        SELECT l.p AS period,
-               COALESCE(SUM(a."应收金额"), 0) AS ar_amount,
-               COALESCE(SUM(a."超期应收金额"), 0) AS overdue_amount,
-               COALESCE(SUM(a."超期60天以上金额"), 0) AS overdue_60_amount
-        FROM ar_snapshots a
-        JOIN latest l ON a."快照时间" = l.p
-        WHERE a."客户编号" = ?
-        GROUP BY l.p
+        SELECT COALESCE(SUM(amt) FILTER (WHERE days <= 0), 0) AS current_amount,
+               COALESCE(SUM(amt) FILTER (WHERE days BETWEEN 1 AND 30), 0) AS d1_30,
+               COALESCE(SUM(amt) FILTER (WHERE days BETWEEN 31 AND 60), 0) AS d31_60,
+               COALESCE(SUM(amt) FILTER (WHERE days BETWEEN 61 AND 120), 0) AS d61_120,
+               COALESCE(SUM(amt) FILTER (WHERE days > 120), 0) AS d120p
+        FROM aged
         """,
-        [customer_id, customer_id],
+        [customer_id],
     )
     row = _first_row(result)
     if row is None:
         return None
     return {
-        "period": _period_str(row[0]),
-        "ar_amount": _as_float(row[1]),
-        "overdue_amount": _as_float(row[2]),
-        "overdue_60_amount": _as_float(row[3]),
+        "current": _as_float(row[0]),
+        "d1_30": _as_float(row[1]),
+        "d31_60": _as_float(row[2]),
+        "d61_120": _as_float(row[3]),
+        "d120p": _as_float(row[4]),
     }
 
 
@@ -246,20 +286,202 @@ def _fetch_flow_3m(store: DuckDBStore, customer_id: str) -> dict[str, float] | N
     return {"sales_3m": _as_float(row[0]), "payments_3m": _as_float(row[1])}
 
 
-def _fetch_customer_margin(store: DuckDBStore, customer_name: str) -> float | None:
-    result = store.fetch(
-        """
-        SELECT SUM("销售金额" * "实际净毛利率_不含税") / NULLIF(SUM("销售金额"), 0)
-            AS margin_rate
-        FROM contracts
-        WHERE "客户名称" = ?
-        """,
-        [customer_name],
+def _customer_weights(profile: dict[str, object] | None) -> dict[str, float]:
+    """按业务画像决定客户维度权重；混合客户按项目金额分量插值。
+
+    项目分量用项目权重，分销 + 服务云分量用分销权重。无画像（无销售记录）时
+    兜底分销权重。
+    """
+
+    if profile is None:
+        return dict(CUSTOMER_DISTRIBUTION_WEIGHTS)
+    project_amount = _as_float(profile["project_amount"])
+    distribution_amount = _as_float(profile["distribution_amount"])
+    service_cloud_amount = _as_float(profile["service_cloud_amount"])
+    total = project_amount + distribution_amount + service_cloud_amount
+    if total <= 0:
+        return dict(CUSTOMER_DISTRIBUTION_WEIGHTS)
+    project_ratio = max(0.0, project_amount) / total
+    distribution_ratio = 1.0 - project_ratio
+    return {
+        key: CUSTOMER_PROJECT_WEIGHTS[key] * project_ratio
+        + CUSTOMER_DISTRIBUTION_WEIGHTS[key] * distribution_ratio
+        for key in CUSTOMER_DISTRIBUTION_WEIGHTS
+    }
+
+
+def _aging_score(buckets: dict[str, float] | None) -> tuple[float, bool]:
+    """账龄梯度维度：按各桶应收金额加权平均，映射管控手段得分。"""
+
+    if buckets is None:
+        return _MISSING_NEUTRAL, True
+    total = sum(buckets.values())
+    if total <= 0:
+        return _MISSING_NEUTRAL, True
+    weighted = (
+        buckets["current"] * 100.0
+        + buckets["d1_30"] * 70.0
+        + buckets["d31_60"] * 40.0
+        + buckets["d61_120"] * 15.0
+        + buckets["d120p"] * 0.0
     )
-    row = _first_row(result)
-    if row is None or row[0] is None:
-        return None
-    return _as_float(row[0])
+    return round(_clamp(weighted / total), 1), False
+
+
+def _payment_score(flow: dict[str, float] | None) -> tuple[float, bool]:
+    """回款节奏：近 3 月回款/销售 >=0.9 记 100，线性下降；无数据记缺失。"""
+
+    if flow is None or (flow["sales_3m"] <= 0 and flow["payments_3m"] <= 0):
+        return _MISSING_NEUTRAL, True
+    if flow["sales_3m"] <= 0:
+        return 100.0, False  # 无新增销售仍有回款视为回款良好
+    ratio = flow["payments_3m"] / flow["sales_3m"]
+    return round(_clamp(ratio / 0.9 * 100.0), 1), False
+
+
+def _credit_utilization_score(ar_amount: float, credit_limit_wan: float) -> tuple[float, bool]:
+    """授信占用：应收/授信额度 <=0.5 记 100，1.0 记 0；无授信记缺失。"""
+
+    if credit_limit_wan <= 0:
+        return _MISSING_NEUTRAL, True
+    utilization = ar_amount / (credit_limit_wan * 10000.0)
+    if utilization <= 0.5:
+        return 100.0, False
+    return round(
+        _clamp(100.0 - (utilization - 0.5) / (_UTILIZATION_AT_ZERO - 0.5) * 100.0), 1
+    ), False
+
+
+def _list_score(list_status: int | None) -> tuple[float, bool]:
+    """名单资质：白名单 100 / 一般 80 / 观察 40 / 黑名单 10；无状态记缺失。"""
+
+    if list_status is None:
+        return _MISSING_NEUTRAL, True
+    return _LIST_STATUS_SCORES.get(list_status, _MISSING_NEUTRAL), False
+
+
+def _activity_score(flow: dict[str, float] | None, ar_amount: float) -> tuple[float, bool]:
+    """销售活跃度：近 3 月有销售记 100，停购但仍欠款记 0，无应收且停购记缺失。"""
+
+    if flow is not None and flow["sales_3m"] > 0:
+        return 100.0, False
+    if ar_amount > 0:
+        return 0.0, False  # 停购却仍有应收 → 跑路信号
+    return _MISSING_NEUTRAL, True
+
+
+def _compute_customer(
+    store: DuckDBStore, credit_row: dict[str, object], profile: dict[str, object] | None
+) -> dict[str, Any]:
+    customer_id = str(credit_row["customer_id"])
+    customer_name = str(credit_row["customer_name"])
+    credit_limit_wan = _as_float(credit_row["credit_limit"])
+    list_status = _as_int(credit_row["list_status"])
+
+    buckets = _fetch_customer_aging(store, customer_id)
+    flow = _fetch_flow_3m(store, customer_id)
+    ar_amount = sum(buckets.values()) if buckets else 0.0
+
+    weights = _customer_weights(profile)
+    overdue_score, overdue_missing = _aging_score(buckets)
+    payment_score, payment_missing = _payment_score(flow)
+    credit_score, credit_missing = _credit_utilization_score(ar_amount, credit_limit_wan)
+    list_score, list_missing = _list_score(list_status)
+    activity_score, activity_missing = _activity_score(flow, ar_amount)
+
+    dimensions: list[dict[str, Any]] = [
+        {
+            "key": "payment",
+            "name": CUSTOMER_DIMENSION_NAMES["payment"],
+            "score": payment_score,
+            "weight": round(weights["payment"], 2),
+            "missing": payment_missing,
+        },
+        {
+            "key": "overdue",
+            "name": CUSTOMER_DIMENSION_NAMES["overdue"],
+            "score": overdue_score,
+            "weight": round(weights["overdue"], 2),
+            "missing": overdue_missing,
+        },
+        {
+            "key": "credit",
+            "name": CUSTOMER_DIMENSION_NAMES["credit"],
+            "score": credit_score,
+            "weight": round(weights["credit"], 2),
+            "missing": credit_missing,
+        },
+        {
+            "key": "list",
+            "name": CUSTOMER_DIMENSION_NAMES["list"],
+            "score": list_score,
+            "weight": round(weights["list"], 2),
+            "missing": list_missing,
+        },
+        {
+            "key": "activity",
+            "name": CUSTOMER_DIMENSION_NAMES["activity"],
+            "score": activity_score,
+            "weight": round(weights["activity"], 2),
+            "missing": activity_missing,
+        },
+    ]
+    total = _weighted_total(dimensions)
+    business_type = str(profile["business_type"]) if profile else "DISTRIBUTION"
+
+    return {
+        "subject_type": "CUSTOMER",
+        "subject_id": customer_id,
+        "subject_label": customer_name,
+        "business_type": business_type,
+        "score": total,
+        "grade": grade_of(total),
+        "dimensions": dimensions,
+        "drivers": _customer_drivers(buckets, flow, list_status, credit_limit_wan, ar_amount),
+        "trend": _fetch_customer_trend(store, customer_id),
+        "computed_at": _now_iso(),
+    }
+
+
+def _customer_drivers(
+    buckets: dict[str, float] | None,
+    flow: dict[str, float] | None,
+    list_status: int | None,
+    credit_limit_wan: float,
+    ar_amount: float,
+) -> dict[str, list[str]]:
+    down: list[str] = []
+    up: list[str] = []
+    if buckets is not None:
+        overdue_amount = sum(buckets.values()) - buckets["current"]
+        total = sum(buckets.values())
+        if total > 0:
+            overdue_rate = overdue_amount / total
+            if overdue_rate > 0.5:
+                down.append(f"应收超期率偏高（{overdue_rate:.1%}）")
+            elif overdue_rate <= 0.1:
+                up.append(f"应收超期率低（{overdue_rate:.1%}）")
+        if buckets["d120p"] > 0:
+            down.append(f"存在 {buckets['d120p'] / 10000:.0f} 万元超期 120 天以上应收")
+    if flow is not None and flow["sales_3m"] > 0:
+        ratio = flow["payments_3m"] / flow["sales_3m"]
+        if ratio < 0.5:
+            down.append(f"近 3 月回款节奏偏慢（回款/销售 {ratio:.1%}）")
+        elif ratio >= 0.9:
+            up.append(f"近 3 月回款节奏良好（回款/销售 {ratio:.1%}）")
+    if flow is not None and flow["sales_3m"] <= 0 and ar_amount > 0:
+        down.append("近 3 月无新增销售但仍持有应收")
+    if list_status == 2:
+        down.append("处于黑名单")
+    elif list_status == 3:
+        down.append("处于观察名单")
+    elif list_status == 1:
+        up.append("处于白名单")
+    if credit_limit_wan > 0 and ar_amount > 0:
+        utilization = ar_amount / (credit_limit_wan * 10000.0)
+        if utilization > 1.0:
+            down.append(f"授信占用超标（{utilization:.0%}）")
+    return {"down": down, "up": up}
 
 
 def _fetch_customer_trend(store: DuckDBStore, customer_id: str) -> list[dict[str, object]]:
@@ -279,105 +501,14 @@ def _fetch_customer_trend(store: DuckDBStore, customer_id: str) -> list[dict[str
         [customer_id, 12],
     )
     points: list[dict[str, object]] = []
-    receivable_weight = HEALTH_WEIGHTS["receivable"]
-    neutral = (100.0 - receivable_weight) * _MISSING_NEUTRAL
     for row in reversed(result.rows):
         rate = _ratio(_as_float(row[2]), _as_float(row[1]))
-        rec_score, _ = _receivable_score(rate)
-        overall = (receivable_weight * rec_score + neutral) / 100.0
-        points.append({"period": _period_str(row[0]), "score": round(overall, 1)})
+        score, _ = _receivable_rate_score(rate)
+        points.append({"period": _period_str(row[0]), "score": round(score, 1)})
     return points
 
 
-def _compute_customer(
-    store: DuckDBStore, sim: SimulatedData, credit_row: dict[str, object]
-) -> dict[str, Any]:
-    customer_id = str(credit_row["customer_id"])
-    customer_name = str(credit_row["customer_name"])
-    credit_limit_wan = _as_float(credit_row["credit_limit"])
-    list_status = _as_int(credit_row["list_status"])
-
-    latest_ar = _fetch_latest_ar(store, customer_id)
-    flow = _fetch_flow_3m(store, customer_id)
-    margin_rate = _fetch_customer_margin(store, customer_name)
-    guarantor_status = _worst_guarantor_status(_guarantors_of(sim, customer_id, customer_name))
-    stages = [s for s in sim.project_stages if s.customer_name == customer_name]
-
-    ar_amount = _as_float(latest_ar["ar_amount"]) if latest_ar else 0.0
-    overdue_rate = _ratio(_as_float(latest_ar["overdue_amount"]), ar_amount) if latest_ar else None
-    collection_ratio = (
-        _ratio(flow["payments_3m"], flow["sales_3m"])
-        if flow is not None and flow["sales_3m"] > 0
-        else None
-    )
-    utilization = _ratio(ar_amount, credit_limit_wan * 10000.0) if credit_limit_wan > 0 else None
-
-    receivable_score, receivable_missing = _receivable_score(overdue_rate)
-    payment_score, payment_missing = _payment_score(flow)
-    credit_score, credit_missing = _credit_score(utilization, list_status, margin_rate)
-    guarantor_score, guarantor_missing = _guarantor_score(guarantor_status)
-    progress_score, progress_missing = _progress_score(stages)
-
-    dimensions: list[dict[str, Any]] = [
-        {
-            "key": "payment",
-            "name": CUSTOMER_DIMENSION_NAMES["payment"],
-            "score": payment_score,
-            "weight": HEALTH_WEIGHTS["payment"],
-            "missing": payment_missing,
-        },
-        {
-            "key": "progress",
-            "name": CUSTOMER_DIMENSION_NAMES["progress"],
-            "score": progress_score,
-            "weight": HEALTH_WEIGHTS["progress"],
-            "missing": progress_missing,
-        },
-        {
-            "key": "receivable",
-            "name": CUSTOMER_DIMENSION_NAMES["receivable"],
-            "score": receivable_score,
-            "weight": HEALTH_WEIGHTS["receivable"],
-            "missing": receivable_missing,
-        },
-        {
-            "key": "credit",
-            "name": CUSTOMER_DIMENSION_NAMES["credit"],
-            "score": credit_score,
-            "weight": HEALTH_WEIGHTS["credit"],
-            "missing": credit_missing,
-        },
-        {
-            "key": "guarantor",
-            "name": CUSTOMER_DIMENSION_NAMES["guarantor"],
-            "score": guarantor_score,
-            "weight": HEALTH_WEIGHTS["guarantor"],
-            "missing": guarantor_missing,
-        },
-    ]
-    total = round(sum(d["score"] * d["weight"] for d in dimensions) / 100.0, 1)
-
-    return {
-        "subject_type": "CUSTOMER",
-        "subject_id": customer_id,
-        "subject_label": customer_name,
-        "score": total,
-        "grade": grade_of(total),
-        "dimensions": dimensions,
-        "drivers": _customer_drivers(
-            overdue_rate,
-            collection_ratio,
-            list_status,
-            margin_rate,
-            guarantor_status,
-            stages,
-        ),
-        "trend": _fetch_customer_trend(store, customer_id),
-        "computed_at": _now_iso(),
-    }
-
-
-def _receivable_score(overdue_rate: float | None) -> tuple[float, bool]:
+def _receivable_rate_score(overdue_rate: float | None) -> tuple[float, bool]:
     """应收超期率：0% 记 100，达到 60% 记 0。"""
 
     if overdue_rate is None:
@@ -385,241 +516,246 @@ def _receivable_score(overdue_rate: float | None) -> tuple[float, bool]:
     return round(_clamp(100.0 - overdue_rate / _RECEIVABLE_RATE_AT_ZERO * 100.0), 1), False
 
 
-def _payment_score(flow: dict[str, float] | None) -> tuple[float, bool]:
-    """近 3 月回款节奏：回款/销售 >=1 记 100，否则线性；无数据记中性。"""
-
-    if flow is None or (flow["sales_3m"] <= 0 and flow["payments_3m"] <= 0):
-        return _MISSING_NEUTRAL, True
-    if flow["sales_3m"] <= 0:
-        # 无新增销售仍有回款视为回款良好
-        return 100.0, False
-    ratio = flow["payments_3m"] / flow["sales_3m"]
-    return round(_clamp(ratio * 100.0), 1), False
-
-
-def _credit_score(
-    utilization: float | None, list_status: int | None, margin_rate: float | None
-) -> tuple[float, bool]:
-    """合同授信维度 = 授信利用率 + 名单状态 + 合同毛利 的可用子分均值。"""
-
-    parts: list[float] = []
-    if utilization is not None:
-        if utilization <= 0.5:
-            parts.append(100.0)
-        else:
-            parts.append(max(0.0, 100.0 - (utilization - 0.5) * 200.0))
-    if list_status is not None:
-        parts.append(_LIST_STATUS_SCORES.get(list_status, _MISSING_NEUTRAL))
-    if margin_rate is not None:
-        parts.append(round(_clamp(_MISSING_NEUTRAL + margin_rate * 200.0), 1))
-    if not parts:
-        return _MISSING_NEUTRAL, True
-    return round(sum(parts) / len(parts), 1), False
-
-
-def _guarantor_score(worst_status: str | None) -> tuple[float, bool]:
-    """担保人维度：无担保人记中性，状态异常记 30，正常记 100。"""
-
-    if worst_status is None:
-        return _MISSING_NEUTRAL, True
-    if worst_status == "正常":
-        return 100.0, False
-    if worst_status in _ABNORMAL_GUARANTOR_STATUS:
-        return 30.0, False
-    return 60.0, False
-
-
-def _progress_score(stages: list[SimulatedProjectStage]) -> tuple[float, bool]:
-    """项目进度维度：按客户名下项目里程碑进度均值。"""
-
-    if not stages:
-        return _MISSING_NEUTRAL, True
-    average = sum(stage.milestone_progress for stage in stages) / len(stages)
-    return round(_clamp(average), 1), False
-
-
-def _guarantors_of(sim: SimulatedData, customer_id: str, customer_name: str) -> list[Any]:
-    return [
-        g
-        for g in sim.guarantors
-        if g.customer_id == customer_id or g.customer_name == customer_name
-    ]
-
-
-def _worst_guarantor_status(guarantors: list[Any]) -> str | None:
-    if not guarantors:
-        return None
-    statuses = [str(g.guarantor_status) for g in guarantors]
-    if any(status == "正常" for status in statuses) and all(
-        status == "正常" for status in statuses
-    ):
-        return "正常"
-    for status in ("经营异常", "失联待核验", "待核验", "失信", "注销", "逾期"):
-        if status in statuses:
-            return status
-    return statuses[0]
-
-
-def _customer_drivers(
-    overdue_rate: float | None,
-    collection_ratio: float | None,
-    list_status: int | None,
-    margin_rate: float | None,
-    guarantor_status: str | None,
-    stages: list[SimulatedProjectStage],
-) -> dict[str, list[str]]:
-    down: list[str] = []
-    up: list[str] = []
-    if overdue_rate is not None and overdue_rate > 0.5:
-        down.append(f"应收超期率偏高（{overdue_rate:.1%}）")
-    elif overdue_rate is not None and overdue_rate <= 0.1:
-        up.append(f"应收超期率低（{overdue_rate:.1%}）")
-    if collection_ratio is not None and collection_ratio < 0.5:
-        down.append(f"近 3 月回款节奏偏慢（回款/销售 {collection_ratio:.1%}）")
-    elif collection_ratio is not None and collection_ratio >= 0.9:
-        up.append(f"近 3 月回款节奏良好（回款/销售 {collection_ratio:.1%}）")
-    if list_status == 2:
-        down.append("处于黑名单")
-    elif list_status == 3:
-        down.append("处于观察名单")
-    elif list_status == 1:
-        up.append("处于白名单")
-    if margin_rate is not None and margin_rate < 0:
-        down.append(f"合同毛利为负（{margin_rate:.1%}）")
-    if guarantor_status is not None and guarantor_status != "正常":
-        down.append(f"担保人状态异常（{guarantor_status}）")
-    elif guarantor_status == "正常":
-        up.append("担保人状态正常")
-    if stages:
-        average = sum(stage.milestone_progress for stage in stages) / len(stages)
-        if average >= 80:
-            up.append("项目进度正常推进")
-        elif average < 30:
-            down.append("项目进度滞后")
-    return {"down": down, "up": up}
-
-
 # ---------------------------------------------------------------------------
 # 合同（项目）健康度
 # ---------------------------------------------------------------------------
 
 
-def _fetch_contract_margin(store: DuckDBStore, contract_no: str) -> float | None:
+def _fetch_project_contracts(store: DuckDBStore) -> list[dict[str, object]]:
+    """带真实项目名称的项目合同，按合同号聚合金额/毛利/账期。"""
+
     result = store.fetch(
-        'SELECT AVG("实际净毛利率_不含税") AS margin_rate FROM contracts WHERE "合同编号" = ?',
-        [contract_no],
+        """
+        SELECT "合同编号" AS contract_no,
+               "项目名称" AS project_name,
+               "客户名称" AS customer_name,
+               COALESCE(SUM("销售金额"), 0) AS amount,
+               SUM("销售金额" * "实际净毛利率_不含税") / NULLIF(SUM("销售金额"), 0) AS margin_rate,
+               MAX(COALESCE("实际账期", 0) - COALESCE("合同文本账期", 0)) AS term_gap
+        FROM contracts
+        WHERE "项目名称" IS NOT NULL AND "项目名称" <> ''
+        GROUP BY 1, 2, 3
+        ORDER BY 1
+        """
     )
-    row = _first_row(result)
-    if row is None or row[0] is None:
-        return None
-    return _as_float(row[0])
+    return [
+        {
+            "contract_no": row[0],
+            "project_name": row[1],
+            "customer_name": row[2],
+            "amount": _as_float(row[3]),
+            "margin_rate": _as_float(row[4]) if row[4] is not None else None,
+            "term_gap": _as_float(row[5]) if row[5] is not None else None,
+        }
+        for row in result.rows
+    ]
+
+
+def _fetch_contract_ar(store: DuckDBStore) -> dict[str, dict[str, float]]:
+    """按合同号聚合最新期末应收与超期。"""
+
+    result = store.fetch(
+        """
+        WITH latest AS (SELECT MAX("快照时间") AS d FROM ar_snapshots)
+        SELECT a."合同号",
+               COALESCE(SUM(a."应收金额"), 0),
+               COALESCE(SUM(a."超期应收金额"), 0)
+        FROM ar_snapshots a JOIN latest l ON a."快照时间" = l.d
+        JOIN contracts c ON a."合同号" = c."合同编号"
+        WHERE c."项目名称" IS NOT NULL AND c."项目名称" <> ''
+        GROUP BY 1
+        """
+    )
+    return {
+        str(row[0]): {"ar": _as_float(row[1]), "overdue": _as_float(row[2])} for row in result.rows
+    }
+
+
+def _fetch_contract_payment(store: DuckDBStore) -> dict[str, float]:
+    """按合同号聚合回款金额（元）。"""
+
+    result = store.fetch(
+        """
+        SELECT p."合同号", COALESCE(SUM(p."回款金额"), 0)
+        FROM payments p
+        JOIN contracts c ON p."合同号" = c."合同编号"
+        WHERE c."项目名称" IS NOT NULL AND c."项目名称" <> ''
+        GROUP BY 1
+        """
+    )
+    return {str(row[0]): _as_float(row[1]) for row in result.rows}
+
+
+def _fetch_customer_total_ar(store: DuckDBStore) -> dict[str, float]:
+    """按客户名称聚合最新期末应收总额，供敞口集中度使用。"""
+
+    result = store.fetch(
+        """
+        WITH latest AS (SELECT MAX("快照时间") AS d FROM ar_snapshots)
+        SELECT a."客户名称", COALESCE(SUM(a."应收金额"), 0)
+        FROM ar_snapshots a JOIN latest l ON a."快照时间" = l.d
+        WHERE a."客户名称" IS NOT NULL AND a."客户名称" <> ''
+        GROUP BY 1
+        """
+    )
+    return {str(row[0]): _as_float(row[1]) for row in result.rows}
+
+
+def _contract_overdue_score(ar: dict[str, float] | None) -> tuple[float, bool]:
+    """合同级应收超期率。"""
+
+    if ar is None or ar["ar"] <= 0:
+        return _MISSING_NEUTRAL, True
+    return _receivable_rate_score(ar["overdue"] / ar["ar"])
+
+
+def _contract_payment_score(amount: float, paid: float) -> tuple[float, bool]:
+    """回款进度：已回款/合同金额，>=0.9 记 100 线性下降。"""
+
+    if amount <= 0:
+        return _MISSING_NEUTRAL, True
+    ratio = min(paid / amount, 1.0)
+    return round(_clamp(ratio / 0.9 * 100.0), 1), False
+
+
+def _margin_score(margin_rate: float | None) -> tuple[float, bool]:
+    """合同毛利：60 分中性，正毛利加分、负毛利扣分。"""
+
+    if margin_rate is None:
+        return _MISSING_NEUTRAL, True
+    return round(_clamp(_MISSING_NEUTRAL + margin_rate * 200.0), 1), False
+
+
+def _term_gap_score(term_gap: float | None) -> tuple[float, bool]:
+    """账期偏差：实际账期 vs 合同文本账期，超期 60 天记 0。"""
+
+    if term_gap is None:
+        return _MISSING_NEUTRAL, True
+    if term_gap <= 0:
+        return 100.0, False
+    return round(_clamp(100.0 - term_gap / _TERM_GAP_AT_ZERO * 100.0), 1), False
+
+
+def _concentration_score(amount: float, customer_ar: float) -> tuple[float, bool]:
+    """敞口集中度：单合同金额占客户应收比重，>=0.5 记 0。"""
+
+    if customer_ar <= 0:
+        return _MISSING_NEUTRAL, True
+    concentration = amount / customer_ar
+    return round(_clamp(100.0 - concentration / _CONCENTRATION_AT_ZERO * 100.0), 1), False
 
 
 def _compute_contract(
-    store: DuckDBStore, sim: SimulatedData, stage: SimulatedProjectStage
+    store: DuckDBStore,
+    row: dict[str, object],
+    ar_by_contract: dict[str, dict[str, float]],
+    payment_by_contract: dict[str, float],
+    customer_ar: dict[str, float],
 ) -> dict[str, Any]:
-    base = _STAGE_BASE_SCORES.get(stage.stage, _MISSING_NEUTRAL)
-    adjustment = _clamp((stage.milestone_progress - 50.0) * 0.4, -15.0, 15.0)
-    progress_score = round(_clamp(base + adjustment), 1)
+    contract_no = str(row["contract_no"])
+    project_name = str(row["project_name"])
+    customer_name = str(row["customer_name"])
+    amount = _as_float(row["amount"])
+    margin_rate = _as_float(row["margin_rate"]) if row["margin_rate"] is not None else None
+    term_gap = _as_float(row["term_gap"]) if row["term_gap"] is not None else None
 
-    payment_score, payment_missing = _planned_payment_score(stage.planned_payment_date, _today())
-    margin_rate = _fetch_contract_margin(store, stage.contract_no)
-    margin_score = (
-        round(_clamp(_MISSING_NEUTRAL + margin_rate * 200.0), 1)
-        if margin_rate is not None
-        else _MISSING_NEUTRAL
-    )
-    margin_missing = margin_rate is None
-    worst_guarantor = _worst_guarantor_status(
-        [g for g in sim.guarantors if g.related_project == stage.project_name]
-        or _guarantors_of(sim, "", stage.customer_name)
-    )
-    guarantor_score, guarantor_missing = _guarantor_score(worst_guarantor)
+    ar = ar_by_contract.get(contract_no)
+    paid = payment_by_contract.get(contract_no, 0.0)
+    total_ar = customer_ar.get(customer_name, 0.0)
+
+    overdue_score, overdue_missing = _contract_overdue_score(ar)
+    payment_score, payment_missing = _contract_payment_score(amount, paid)
+    margin_score, margin_missing = _margin_score(margin_rate)
+    term_score, term_missing = _term_gap_score(term_gap)
+    concentration_score, concentration_missing = _concentration_score(amount, total_ar)
 
     dimensions: list[dict[str, Any]] = [
         {
-            "key": "progress",
-            "name": CONTRACT_DIMENSION_NAMES["progress"],
-            "score": progress_score,
-            "weight": CONTRACT_HEALTH_WEIGHTS["progress"],
-            "missing": False,
+            "key": "overdue",
+            "name": CONTRACT_DIMENSION_NAMES["overdue"],
+            "score": overdue_score,
+            "weight": CONTRACT_WEIGHTS["overdue"],
+            "missing": overdue_missing,
         },
         {
             "key": "payment",
             "name": CONTRACT_DIMENSION_NAMES["payment"],
             "score": payment_score,
-            "weight": CONTRACT_HEALTH_WEIGHTS["payment"],
+            "weight": CONTRACT_WEIGHTS["payment"],
             "missing": payment_missing,
         },
         {
-            "key": "contract",
-            "name": CONTRACT_DIMENSION_NAMES["contract"],
+            "key": "margin",
+            "name": CONTRACT_DIMENSION_NAMES["margin"],
             "score": margin_score,
-            "weight": CONTRACT_HEALTH_WEIGHTS["contract"],
+            "weight": CONTRACT_WEIGHTS["margin"],
             "missing": margin_missing,
         },
         {
-            "key": "guarantor",
-            "name": CONTRACT_DIMENSION_NAMES["guarantor"],
-            "score": guarantor_score,
-            "weight": CONTRACT_HEALTH_WEIGHTS["guarantor"],
-            "missing": guarantor_missing,
+            "key": "term_gap",
+            "name": CONTRACT_DIMENSION_NAMES["term_gap"],
+            "score": term_score,
+            "weight": CONTRACT_WEIGHTS["term_gap"],
+            "missing": term_missing,
+        },
+        {
+            "key": "concentration",
+            "name": CONTRACT_DIMENSION_NAMES["concentration"],
+            "score": concentration_score,
+            "weight": CONTRACT_WEIGHTS["concentration"],
+            "missing": concentration_missing,
         },
     ]
-    total = round(sum(d["score"] * d["weight"] for d in dimensions) / 100.0, 1)
+    total = _weighted_total(dimensions)
 
     return {
         "subject_type": "CONTRACT",
-        "subject_id": stage.contract_no,
-        "subject_label": stage.project_name,
+        "subject_id": contract_no,
+        "subject_label": project_name,
+        "business_type": "PROJECT",
         "score": total,
         "grade": grade_of(total),
         "dimensions": dimensions,
-        "drivers": _contract_drivers(stage, payment_score, margin_rate, worst_guarantor),
+        "drivers": _contract_drivers(ar, payment_score, margin_rate, term_gap, concentration_score),
         "trend": [],
         "computed_at": _now_iso(),
     }
 
 
-def _planned_payment_score(planned_date: str | None, today: date) -> tuple[float, bool]:
-    """计划回款：已逾期记 10~60 线性，临近（30 天内）记 70，90 天内记 85，否则 100。"""
-
-    if not planned_date:
-        return _MISSING_NEUTRAL, True
-    try:
-        planned = date.fromisoformat(planned_date[:10])
-    except ValueError:
-        return _MISSING_NEUTRAL, True
-    days = (planned - today).days
-    if days < 0:
-        return round(max(10.0, 60.0 + days * 1.5), 1), False
-    if days <= 30:
-        return 70.0, False
-    if days <= 90:
-        return 85.0, False
-    return 100.0, False
-
-
 def _contract_drivers(
-    stage: SimulatedProjectStage,
+    ar: dict[str, float] | None,
     payment_score: float,
     margin_rate: float | None,
-    worst_guarantor: str | None,
+    term_gap: float | None,
+    concentration_score: float,
 ) -> dict[str, list[str]]:
     down: list[str] = []
     up: list[str] = []
-    if stage.stage in ("回款", "验收"):
-        down.append(f"项目处于{stage.stage}阶段")
-    if stage.milestone_progress < 30:
-        down.append(f"里程碑进度滞后（{stage.milestone_progress}%）")
-    elif stage.milestone_progress >= 80:
-        up.append(f"里程碑进度良好（{stage.milestone_progress}%）")
-    if payment_score < 60:
-        down.append("计划回款已逾期或临近")
-    else:
-        up.append("计划回款未逾期")
+    if ar is not None and ar["ar"] > 0:
+        rate = ar["overdue"] / ar["ar"]
+        if rate > 0.5:
+            down.append(f"应收超期率偏高（{rate:.1%}）")
+        elif rate <= 0.1:
+            up.append(f"应收超期率低（{rate:.1%}）")
+    if payment_score < 50:
+        down.append("回款进度明显不足")
+    elif payment_score >= 90:
+        up.append("回款进度良好")
     if margin_rate is not None and margin_rate < 0:
         down.append(f"合同毛利为负（{margin_rate:.1%}）")
-    if worst_guarantor is not None and worst_guarantor != "正常":
-        down.append(f"担保人状态异常（{worst_guarantor}）")
+    if term_gap is not None and term_gap >= 60:
+        down.append(f"账期偏差 {term_gap:.0f} 天")
+    if concentration_score <= 20:
+        down.append("单合同敞口集中度过高")
     return {"down": down, "up": up}
+
+
+__all__ = [
+    "CONTRACT_WEIGHTS",
+    "CUSTOMER_DISTRIBUTION_WEIGHTS",
+    "CUSTOMER_PROJECT_WEIGHTS",
+    "compute_contract_health",
+    "compute_customer_health",
+    "compute_health_scores",
+    "grade_of",
+]

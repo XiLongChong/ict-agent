@@ -1,101 +1,75 @@
-"""健康度计算引擎测试（阶段 A）。"""
+"""健康度计算引擎测试（按业务类型分支）。"""
 
 from __future__ import annotations
 
-from datetime import date
 from pathlib import Path
 
 import pytest
 from ict_agent.data import DuckDBStore, rebuild_database
 from ict_agent.health import (
-    CONTRACT_HEALTH_WEIGHTS,
-    HEALTH_WEIGHTS,
     compute_contract_health,
     compute_customer_health,
     compute_health_scores,
     grade_of,
 )
-from ict_agent.simdata import load_simulated_data
+
+SALES = (
+    "出库日期,客户编号,客户名称,合同号,销售订单号,库存组织名称,物料编码,"
+    "数量,出库类型,事务处理类型名称,销售金额_折扣后_含税,出库成本金额,订单类型,核算大类名称\n"
+    # 纯分销客户 C001：1-30 天超期
+    "2026-07-01,C001,分销客户甲,X1,S1,W1,M1,1,销售出库,正常销售,1000,800,信产常规销售订单,IPHONE\n"
+    # 纯项目客户 C002：未超期
+    "2026-07-01,C002,项目客户乙,P001,S2,W1,M1,1,销售出库,正常销售,5000,4000,信产项目N,IT-存储\n"
+    # 混合客户 C003：项目 3000 + 分销 1000
+    "2026-07-01,C003,混合客户丙,P002,S3,W1,M1,1,销售出库,正常销售,3000,2400,信产项目S,IT-存储\n"
+    "2026-07-01,C003,混合客户丙,X3,S4,W1,M1,1,销售出库,正常销售,1000,800,信息科技常规销售订单,IPHONE\n"
+    # 无授信客户 C004：黑名单，61-120 天超期
+    "2026-07-01,C004,无授信客户丁,X4,S5,W1,M1,1,销售出库,正常销售,800,640,信产常规销售订单,IPHONE\n"
+)
 
 CUSTOMER_CREDIT = (
     "客户编号_中台,客户名称,授信额度,黑白名单状态,黑白名单原因,"
     "黑白名单创建时间,失信分级,净资产,净利润,信用保险\n"
-    "C001,测试客户甲,1000,0,,2025-01-01,一般,3000,100,N\n"
-    "C002,测试客户乙,2000,1,核心客户,2025-01-01,低,5000,300,Y\n"
-    "C003,测试客户丙,0,2,黑名单,2025-01-01,高,100,10,N\n"
-    "C004,测试客户丁,500,3,观察,2025-01-01,中,800,50,N\n"
-    "C005,测试客户戊,300,0,,2025-01-01,一般,200,20,N\n"
+    "C001,分销客户甲,1000,0,,2025-01-01,一般,3000,100,N\n"
+    "C002,项目客户乙,2000,1,核心客户,2025-01-01,低,5000,300,Y\n"
+    "C003,混合客户丙,1000,0,,2025-01-01,一般,3000,100,N\n"
+    "C004,无授信客户丁,0,2,黑名单,2025-01-01,高,100,10,N\n"
+)
+
+PAYMENTS = (
+    "回款日期,客户编号,合同号,销售订单号,回款金额,超期利息金额,"
+    "最终承诺还款日期,是否超期,超期天数,物料编码\n"
+    "2026-07-15,C001,X1,S1,800,0,2026-07-15,N,0,M1\n"
+    "2026-07-20,C002,P001,S2,3000,0,2026-07-20,N,0,M1\n"
+    "2026-07-18,C003,X3,S4,600,0,2026-07-18,N,0,M1\n"
+)
+
+CONTRACTS = (
+    "申请日期,合同编号,合同状态,客户名称,项目名称,销售金额,实际净毛利率_不含税,"
+    "合同文本账期,实际账期,开票金额1\n"
+    "2026-05-01,P001,流程结束,项目客户乙,项目P001,5000,0.15,60,60,4000\n"
 )
 
 AR_SNAPSHOTS = (
     "快照时间,合同号,客户编号,客户名称,销售订单号,应收金额,超期应收金额,"
     "超期30天以上金额,超期60天以上金额,最终承诺还款日期,是否展期,超期天数,物料编码\n"
-    "2026-06-30,X1,C001,测试客户甲,S1,900,100,50,20,2026-06-15,N,30,M1\n"
-    "2026-07-31,X1,C001,测试客户甲,S1,1000,100,50,20,2026-07-15,N,30,M1\n"
-    "2026-06-30,X2,C002,测试客户乙,S2,800,0,0,0,2026-06-30,N,0,M1\n"
-    "2026-07-31,X2,C002,测试客户乙,S2,500,0,0,0,2026-07-15,N,0,M1\n"
-    "2026-07-31,X3,C003,测试客户丙,S3,1000,700,600,500,2026-07-01,Y,120,M1\n"
-    "2026-07-31,X4,C004,测试客户丁,S4,2000,500,300,100,2026-07-20,N,45,M1\n"
-)
-
-SALES = (
-    "出库日期,客户编号,客户名称,合同号,销售订单号,库存组织名称,物料编码,"
-    "数量,出库类型,事务处理类型名称,销售金额_折扣后_含税,出库成本金额\n"
-    "2026-07-01,C001,测试客户甲,X1,S1,W1,M1,1,销售出库,正常销售,1000,800\n"
-    "2026-06-05,C001,测试客户甲,X1,S1,W1,M1,1,销售出库,正常销售,500,400\n"
-    "2026-07-10,C002,测试客户乙,X2,S2,W1,M1,1,销售出库,正常销售,600,500\n"
-    "2026-07-12,C003,测试客户丙,X3,S3,W1,M1,1,销售出库,正常销售,800,700\n"
-    "2026-07-15,C004,测试客户丁,X4,S4,W1,M1,1,销售出库,正常销售,2000,1800\n"
-)
-
-PAYMENTS = (
-    "回款日期,客户编号,合同号,销售订单号,回款金额,超期利息金额,最终承诺还款日期,"
-    "是否超期,超期天数,回款账龄,物料编码\n"
-    "2026-07-20,C001,X1,S1,900,0,2026-07-15,N,0,15,M1\n"
-    "2026-07-25,C002,X2,S2,500,0,2026-07-20,N,0,10,M1\n"
-    "2026-07-30,C004,X4,S4,1000,0,2026-07-25,N,0,20,M1\n"
-)
-
-CONTRACTS = (
-    "申请日期,合同编号,合同状态,客户名称,销售金额,实估毛利率_不含税,"
-    "实际净毛利率_不含税,合同文本账期,实际账期,开票金额1\n"
-    "2026-03-01,C1,流程结束,测试客户乙,1000,0.2,0.15,60,60,800\n"
-    "2026-04-01,C2,流程结束,测试客户丙,800,0.05,-0.1,60,90,600\n"
-    "2026-06-01,C5,流程结束,测试客户戊,300,0.1,0.08,60,60,200\n"
+    # C001 分销：应收 1000，超期 15 天（1-30 桶）
+    "2026-07-31,X1,C001,分销客户甲,S1,1000,200,0,0,2026-07-15,N,15,M1\n"
+    # C002 项目：应收 5000，未超期
+    "2026-07-31,P001,C002,项目客户乙,S2,5000,0,0,0,2026-07-20,N,0,M1\n"
+    # C003 混合：应收 4000，超期 90 天（61-120 桶）
+    "2026-07-31,P002,C003,混合客户丙,S3,4000,3000,2000,1000,2026-05-01,Y,90,M1\n"
+    # C004 无授信：应收 800，超期 200 天（>120 桶）
+    "2026-07-31,X4,C004,无授信客户丁,S5,800,800,800,800,2026-01-01,Y,200,M1\n"
 )
 
 INVENTORY = (
-    "快照日期,物料编码,库存组织名称,数量,库龄,含税总价,是否超期,超期天数\n"
-    "2026-06-30,M1,W1,1,10,100,N,0\n"
+    "快照日期,物料编码,库存组织名称,数量,库龄,含税总价,是否超期\n2026-06-30,M1,W1,5,10,500,N\n"
 )
 
 EXTENSIONS = (
-    "快照时间,合同号,客户编号,销售订单号,物料编码,最终承诺还款日期,是否展期,"
-    "超期天数,gkey\n"
-    "2026-05-01,X3,C003,S3,M1,2026-07-01,Y,120,g1\n"
-)
-
-PROJECT_STAGES = (
-    "合同编号,项目名称,客户名称,项目金额_万元,项目阶段,计划回款日期,"
-    "里程碑进度_%,计划交付日期\n"
-    "C1,项目P001,测试客户乙,800,执行,2026-09-30,60,2026-08-31\n"
-    "C2,项目P002,测试客户丙,500,回款,2026-07-01,90,2026-06-30\n"
-    "C3,项目P003,测试客户乙,300,结束,2026-07-31,100,2026-06-30\n"
-    "C4,项目P004,测试客户丁,400,验收,2026-12-31,70,2026-11-30\n"
-)
-
-GUARANTORS = (
-    "担保人ID,客户编号,客户名称,担保人名称,担保类型,担保金额_万元,担保人状态,"
-    "关联合同或项目,备注\n"
-    "G1,C002,测试客户乙,担保公司甲,公司,1000,正常,项目P001,存量项目担保\n"
-    "G2,C003,测试客户丙,担保公司乙,公司,500,经营异常,项目P002,存量项目担保\n"
-    "G3,C004,测试客户丁,个人担保丙,个人,200,待核验,项目P004,存量项目担保\n"
-    "G4,C001,测试客户甲,担保公司丁,公司,800,正常,项目P005,存量项目担保\n"
-)
-
-NEW_PROJECTS = (
-    "项目编号,项目名称,客户编号,客户名称,客户名单,项目金额_万元,授信金额_万元,"
-    "担保人,申请日期,计划回款日期,备注\n"
+    "快照时间,合同号,客户编号,销售订单号,物料编码,最终承诺还款日期,是否展期,超期天数,gkey\n"
+    "2026-05-01,X1,C001,S1,M1,2026-06-30,Y,0,g1\n"
 )
 
 
@@ -108,31 +82,21 @@ def _write_csv(path: Path, content: str) -> None:
 def store(tmp_path: Path) -> DuckDBStore:
     raw_dir = tmp_path / "raw"
     raw_dir.mkdir()
-    _write_csv(raw_dir / "客户授信.csv", CUSTOMER_CREDIT)
-    _write_csv(raw_dir / "应收快照_月末24期.csv", AR_SNAPSHOTS)
     _write_csv(raw_dir / "销售流水.csv", SALES)
     _write_csv(raw_dir / "业务回款明细.csv", PAYMENTS)
     _write_csv(raw_dir / "增值合同签约明细.csv", CONTRACTS)
+    _write_csv(raw_dir / "应收快照_月末24期.csv", AR_SNAPSHOTS)
     _write_csv(raw_dir / "库龄快照_季末8期.csv", INVENTORY)
     _write_csv(raw_dir / "展期记录.csv", EXTENSIONS)
+    _write_csv(raw_dir / "客户授信.csv", CUSTOMER_CREDIT)
     database_path = tmp_path / "processed" / "test.duckdb"
     rebuild_database(raw_dir, database_path)
     return DuckDBStore(database_path)
 
 
-@pytest.fixture
-def sim(tmp_path: Path):
-    simulated_dir = tmp_path / "simulated"
-    simulated_dir.mkdir()
-    _write_csv(simulated_dir / "sim_project_stages.csv", PROJECT_STAGES)
-    _write_csv(simulated_dir / "sim_guarantors.csv", GUARANTORS)
-    _write_csv(simulated_dir / "sim_new_projects.csv", NEW_PROJECTS)
-    return load_simulated_data(simulated_dir)
-
-
 def _customer_by_id(results: list[dict], customer_id: str) -> dict:
     for item in results:
-        if item["subject_id"] == customer_id:
+        if item["subject_type"] == "CUSTOMER" and item["subject_id"] == customer_id:
             return item
     raise AssertionError(f"缺少客户 {customer_id} 的健康度结果")
 
@@ -167,27 +131,19 @@ def test_grade_of_boundaries(score: float, expected: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 权重
+# 客户健康度：结构 / 业务类型权重 / 维度分 / 缺数据
 # ---------------------------------------------------------------------------
 
 
-def test_health_weights_sum() -> None:
-    assert sum(HEALTH_WEIGHTS.values()) == pytest.approx(100.0)
-    assert sum(CONTRACT_HEALTH_WEIGHTS.values()) == pytest.approx(100.0)
+def test_customer_health_output_structure(store: DuckDBStore) -> None:
+    results = compute_customer_health(store)
 
-
-# ---------------------------------------------------------------------------
-# 客户健康度：结构 / 缺失中性分 / 维度分 / 趋势
-# ---------------------------------------------------------------------------
-
-
-def test_customer_health_output_structure(store: DuckDBStore, sim) -> None:
-    results = compute_customer_health(store, sim)
-    assert len(results) == 5
+    assert len(results) == 4
     for item in results:
         assert item["subject_type"] == "CUSTOMER"
         assert item["subject_id"]
         assert item["subject_label"]
+        assert item["business_type"] in ("PROJECT", "DISTRIBUTION", "SERVICE_CLOUD")
         assert isinstance(item["score"], float)
         assert item["grade"] in {"HEALTHY", "WATCH", "WARNING", "HIGH_RISK"}
         assert len(item["dimensions"]) == 5
@@ -195,100 +151,79 @@ def test_customer_health_output_structure(store: DuckDBStore, sim) -> None:
             assert set(dim) == {"key", "name", "score", "weight", "missing"}
             assert isinstance(dim["missing"], bool)
         assert set(item["drivers"]) == {"down", "up"}
-        assert isinstance(item["drivers"]["down"], list)
-        assert isinstance(item["drivers"]["up"], list)
         assert isinstance(item["trend"], list)
         assert item["computed_at"]
 
 
-def test_customer_health_dimension_weights(store: DuckDBStore, sim) -> None:
-    results = compute_customer_health(store, sim)
-    for item in results:
-        total_weight = sum(dim["weight"] for dim in item["dimensions"])
-        assert total_weight == pytest.approx(100.0)
+def test_business_type_drives_weights(store: DuckDBStore) -> None:
+    results = compute_customer_health(store)
+
+    # 纯分销 C001：逾期维度权重 = 25
+    assert _dimension(_customer_by_id(results, "C001"), "overdue")["weight"] == pytest.approx(25.0)
+    # 纯项目 C002：逾期维度权重 = 30
+    assert _dimension(_customer_by_id(results, "C002"), "overdue")["weight"] == pytest.approx(30.0)
+    # 混合 C003：项目 3000 / (3000+1000) = 0.75 → overdue 权重 = 30*0.75 + 25*0.25
+    assert _dimension(_customer_by_id(results, "C003"), "overdue")["weight"] == pytest.approx(28.75)
 
 
-def test_missing_dimensions_neutral(store: DuckDBStore, sim) -> None:
-    results = compute_customer_health(store, sim)
-    customer = _customer_by_id(results, "C005")
-    # C005 无应收、无销售/回款、无担保人、无项目阶段
-    for key in ("payment", "progress", "receivable", "guarantor"):
-        dim = _dimension(customer, key)
-        assert dim["missing"] is True
-        assert dim["score"] == pytest.approx(60.0)
-    # 授信维度仍可来自名单 + 合同毛利，不缺失
-    assert _dimension(customer, "credit")["missing"] is False
+def test_aging_bucket_scores(store: DuckDBStore) -> None:
+    results = compute_customer_health(store)
+
+    # C001 全部应收在 1-30 天桶 → 超期维度 70
+    assert _dimension(_customer_by_id(results, "C001"), "overdue")["score"] == pytest.approx(70.0)
+    # C002 未超期 → 超期维度 100
+    assert _dimension(_customer_by_id(results, "C002"), "overdue")["score"] == pytest.approx(100.0)
+    # C003 全部在 61-120 天桶 → 超期维度 15
+    assert _dimension(_customer_by_id(results, "C003"), "overdue")["score"] == pytest.approx(15.0)
+    # C004 全部 >120 天 → 超期维度 0
+    assert _dimension(_customer_by_id(results, "C004"), "overdue")["score"] == pytest.approx(0.0)
 
 
-def test_customer_dimension_scores(store: DuckDBStore, sim) -> None:
-    results = compute_customer_health(store, sim)
-    customer = _customer_by_id(results, "C003")
-    # C003：黑名单 + 高应收超期率 + 无回款 + 担保人异常
-    assert _dimension(customer, "receivable")["score"] == pytest.approx(0.0)
-    assert _dimension(customer, "payment")["score"] == pytest.approx(0.0)
-    assert _dimension(customer, "credit")["score"] == pytest.approx(25.0)
-    assert _dimension(customer, "guarantor")["score"] == pytest.approx(30.0)
-    assert _dimension(customer, "progress")["score"] == pytest.approx(90.0)
-    assert customer["grade"] == "HIGH_RISK"
+def test_missing_credit_and_blacklist(store: DuckDBStore) -> None:
+    results = compute_customer_health(store)
+
+    # C004 授信额度为 0 → 授信占用维度缺失
+    credit_dim = _dimension(_customer_by_id(results, "C004"), "credit")
+    assert credit_dim["missing"] is True
+    # C004 黑名单 → 名单资质 10 分
+    assert _dimension(_customer_by_id(results, "C004"), "list")["score"] == pytest.approx(10.0)
+    # C002 白名单 → 名单资质 100 分
+    assert _dimension(_customer_by_id(results, "C002"), "list")["score"] == pytest.approx(100.0)
 
 
-def test_customer_trend_from_ar_snapshots(store: DuckDBStore, sim) -> None:
-    results = compute_customer_health(store, sim)
-    c001 = _customer_by_id(results, "C001")
-    assert len(c001["trend"]) == 2
-    # 按时间升序
-    assert [point["period"] for point in c001["trend"]] == ["2026-06-30", "2026-07-31"]
-    for point in c001["trend"]:
-        assert set(point) == {"period", "score"}
-        assert isinstance(point["score"], float)
+def test_blacklist_customer_high_risk(store: DuckDBStore) -> None:
+    results = compute_customer_health(store)
 
-
-def test_customer_drivers_present(store: DuckDBStore, sim) -> None:
-    results = compute_customer_health(store, sim)
-    c003 = _customer_by_id(results, "C003")
-    joined = "，".join(c003["drivers"]["down"])
-    assert "黑名单" in joined
-    assert "担保人状态异常" in joined
+    # C004 黑名单 + 超期 200 天 + 无授信，应判高危
+    assert _customer_by_id(results, "C004")["grade"] == "HIGH_RISK"
 
 
 # ---------------------------------------------------------------------------
-# 合同健康度
+# 合同（项目）健康度
 # ---------------------------------------------------------------------------
 
 
-def test_contract_health(store: DuckDBStore, sim, monkeypatch) -> None:
-    import ict_agent.health as health
+def test_contract_health(store: DuckDBStore) -> None:
+    results = compute_contract_health(store)
 
-    monkeypatch.setattr(health, "_today", lambda: date(2026, 8, 13))
-    results = compute_contract_health(store, sim)
-    assert len(results) == 4
-    for item in results:
-        assert item["subject_type"] == "CONTRACT"
-        assert item["subject_id"]
-        assert item["subject_label"]
-        assert len(item["dimensions"]) == 4
-        assert set(item["drivers"]) == {"down", "up"}
-        assert item["trend"] == []
+    assert len(results) == 1
+    item = results[0]
+    assert item["subject_type"] == "CONTRACT"
+    assert item["subject_id"] == "P001"
+    assert item["subject_label"] == "项目P001"
+    assert item["business_type"] == "PROJECT"
+    assert len(item["dimensions"]) == 5
+    assert set(item["drivers"]) == {"down", "up"}
+    assert item["trend"] == []
 
-    by_id = {item["subject_id"]: item for item in results}
-
-    # C1 项目P001：执行阶段、里程碑 60、计划回款 2026-09-30（48 天后）
-    c1 = by_id["C1"]
-    assert _dimension(c1, "progress")["score"] == pytest.approx(64.0)
-    assert _dimension(c1, "payment")["score"] == pytest.approx(85.0)
-    assert _dimension(c1, "contract")["score"] == pytest.approx(90.0)
-    assert _dimension(c1, "guarantor")["score"] == pytest.approx(100.0)
-    assert c1["score"] == pytest.approx(78.17, abs=0.06)
-    assert c1["grade"] == "WATCH"
-
-    # C2 项目P002：回款阶段、里程碑 90、计划回款已逾期 43 天、担保人经营异常
-    c2 = by_id["C2"]
-    assert _dimension(c2, "progress")["score"] == pytest.approx(45.0)
-    assert _dimension(c2, "payment")["score"] == pytest.approx(10.0)
-    assert _dimension(c2, "contract")["score"] == pytest.approx(40.0)
-    assert _dimension(c2, "guarantor")["score"] == pytest.approx(30.0)
-    assert c2["score"] == pytest.approx(32.78, abs=0.06)
-    assert c2["grade"] == "HIGH_RISK"
+    # P001 未超期 → 超期维度 100
+    assert _dimension(item, "overdue")["score"] == pytest.approx(100.0)
+    # 毛利 0.15 → 60 + 0.15*200 = 90
+    assert _dimension(item, "margin")["score"] == pytest.approx(90.0)
+    # 账期偏差 0 → 100
+    assert _dimension(item, "term_gap")["score"] == pytest.approx(100.0)
+    # 回款 3000 / 5000 = 0.6 → 0.6/0.9*100 ≈ 66.7
+    assert _dimension(item, "payment")["score"] == pytest.approx(66.7, abs=0.1)
 
 
 # ---------------------------------------------------------------------------
@@ -296,9 +231,10 @@ def test_contract_health(store: DuckDBStore, sim, monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_compute_health_scores_merges(store: DuckDBStore, sim) -> None:
-    merged = compute_health_scores(store, sim)
-    customer_count = len(compute_customer_health(store, sim))
-    contract_count = len(compute_contract_health(store, sim))
+def test_compute_health_scores_merges(store: DuckDBStore) -> None:
+    merged = compute_health_scores(store)
+    customer_count = len(compute_customer_health(store))
+    contract_count = len(compute_contract_health(store))
+
     assert len(merged) == customer_count + contract_count
     assert {item["subject_type"] for item in merged} == {"CUSTOMER", "CONTRACT"}
