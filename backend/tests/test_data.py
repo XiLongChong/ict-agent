@@ -4,7 +4,14 @@ from pathlib import Path
 
 import pytest
 from ict_agent import data as data_module
-from ict_agent.data import TABLE_SPECS, DataAccessError, DuckDBStore, rebuild_database
+from ict_agent.data import (
+    TABLE_SPECS,
+    CaseStore,
+    DataAccessError,
+    DuckDBStore,
+    HealthScoreWrite,
+    rebuild_database,
+)
 
 
 def test_rebuild_imports_all_tables(raw_data_dir: Path, tmp_path: Path) -> None:
@@ -61,3 +68,28 @@ def test_rebuild_rejects_source_changed_during_import(
 
     with pytest.raises(DataAccessError, match="在导入期间发生变化"):
         rebuild_database(raw_data_dir, tmp_path / "drifting.duckdb")
+
+
+def test_health_score_list_is_not_silently_truncated(tmp_path: Path) -> None:
+    store = CaseStore(tmp_path / "cases.duckdb")
+    records = [
+        HealthScoreWrite(
+            id=f"HS_CUSTOMER_C{index:03d}",
+            subject_type="CUSTOMER",
+            subject_id=f"C{index:03d}",
+            subject_label=f"客户 {index:03d}",
+            score=80.0,
+            grade="HEALTHY",
+            dimension_json="[]",
+            drivers_json='{"down": [], "up": []}',
+            trend_json="[]",
+            computed_at="2026-08-14T00:00:00+00:00",
+            data_snapshot_id="snapshot",
+            business_type="DISTRIBUTION",
+        )
+        for index in range(205)
+    ]
+
+    assert store.save_health_scores(records) == 205
+    assert len(store.fetch_health_scores().rows) == 205
+    assert len(store.fetch_health_scores(limit=20).rows) == 20

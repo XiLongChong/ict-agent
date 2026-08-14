@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 from ict_agent.data import DuckDBStore, rebuild_database
 from ict_agent.health import (
+    CUSTOMER_SERVICE_CLOUD_WEIGHTS,
+    _concentration_score,
     compute_contract_health,
     compute_customer_health,
     compute_health_scores,
@@ -25,6 +27,8 @@ SALES = (
     "2026-07-01,C003,混合客户丙,X3,S4,W1,M1,1,销售出库,正常销售,1000,800,信息科技常规销售订单,IPHONE\n"
     # 无授信客户 C004：黑名单，61-120 天超期
     "2026-07-01,C004,无授信客户丁,X4,S5,W1,M1,1,销售出库,正常销售,800,640,信产常规销售订单,IPHONE\n"
+    # 服务云客户 C005
+    "2026-07-01,C005,服务云客户戊,SVC1,S6,W1,M1,1,销售出库,正常销售,2000,1200,云服务常规销售订单,微软Azure\n"
 )
 
 CUSTOMER_CREDIT = (
@@ -34,6 +38,7 @@ CUSTOMER_CREDIT = (
     "C002,项目客户乙,2000,1,核心客户,2025-01-01,低,5000,300,Y\n"
     "C003,混合客户丙,1000,0,,2025-01-01,一般,3000,100,N\n"
     "C004,无授信客户丁,0,2,黑名单,2025-01-01,高,100,10,N\n"
+    "C005,服务云客户戊,500,0,,2025-01-01,一般,2000,80,N\n"
 )
 
 PAYMENTS = (
@@ -48,6 +53,8 @@ CONTRACTS = (
     "申请日期,合同编号,合同状态,客户名称,项目名称,销售金额,实际净毛利率_不含税,"
     "合同文本账期,实际账期,开票金额1\n"
     "2026-05-01,P001,流程结束,项目客户乙,项目P001,5000,0.15,60,60,4000\n"
+    # 项目名称非空但对应销售是分销，不能进入项目合同健康度
+    "2026-05-01,X1,流程结束,分销客户甲,渠道合同X1,1000,0.10,30,30,1000\n"
 )
 
 AR_SNAPSHOTS = (
@@ -138,7 +145,7 @@ def test_grade_of_boundaries(score: float, expected: str) -> None:
 def test_customer_health_output_structure(store: DuckDBStore) -> None:
     results = compute_customer_health(store)
 
-    assert len(results) == 4
+    assert len(results) == 5
     for item in results:
         assert item["subject_type"] == "CUSTOMER"
         assert item["subject_id"]
@@ -164,6 +171,12 @@ def test_business_type_drives_weights(store: DuckDBStore) -> None:
     assert _dimension(_customer_by_id(results, "C002"), "overdue")["weight"] == pytest.approx(30.0)
     # 混合 C003：项目 3000 / (3000+1000) = 0.75 → overdue 权重 = 30*0.75 + 25*0.25
     assert _dimension(_customer_by_id(results, "C003"), "overdue")["weight"] == pytest.approx(28.75)
+    # 服务云 C005 使用独立权重，不复用分销权重
+    service = _customer_by_id(results, "C005")
+    assert service["business_type"] == "SERVICE_CLOUD"
+    assert _dimension(service, "payment")["weight"] == pytest.approx(
+        CUSTOMER_SERVICE_CLOUD_WEIGHTS["payment"]
+    )
 
 
 def test_aging_bucket_scores(store: DuckDBStore) -> None:
@@ -224,6 +237,20 @@ def test_contract_health(store: DuckDBStore) -> None:
     assert _dimension(item, "term_gap")["score"] == pytest.approx(100.0)
     # 回款 3000 / 5000 = 0.6 → 0.6/0.9*100 ≈ 66.7
     assert _dimension(item, "payment")["score"] == pytest.approx(66.7, abs=0.1)
+
+
+def test_named_non_project_contract_is_excluded(store: DuckDBStore) -> None:
+    """项目合同入口必须复用订单业务分类，不能只看合同项目名称。"""
+
+    assert {item["subject_id"] for item in compute_contract_health(store)} == {"P001"}
+
+
+def test_contract_concentration_requires_contract_receivable() -> None:
+    """客户有应收但当前合同无应收时，不能把集中度误记为健康满分。"""
+
+    score, missing = _concentration_score(0.0, 1000.0)
+    assert score == pytest.approx(60.0)
+    assert missing is True
 
 
 # ---------------------------------------------------------------------------

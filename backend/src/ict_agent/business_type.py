@@ -21,8 +21,8 @@ from ict_agent.data import DuckDBStore
 BusinessType = Literal["PROJECT", "DISTRIBUTION", "SERVICE_CLOUD"]
 
 # 项目类订单类型（企业级项目，一单一议）
-_PROJECT_ORDER_TYPES: frozenset[str] = frozenset({"信产项目N", "信产项目S"})
-_PROJECT_ORDER_LIST = ", ".join(f"'{name}'" for name in sorted(_PROJECT_ORDER_TYPES))
+PROJECT_ORDER_TYPES: tuple[str, ...] = ("信产项目N", "信产项目S")
+_PROJECT_ORDER_LIST = ", ".join(f"'{name}'" for name in PROJECT_ORDER_TYPES)
 
 # 软件/云/服务核算大类：订阅与服务交付，非实体货物
 _SERVICE_CLOUD_CATEGORY_KEYWORDS: tuple[str, ...] = ("软件", "服务")
@@ -51,7 +51,7 @@ def _is_service_cloud_category(category: str) -> bool:
 def order_business_type(order_type: str, category: str = "") -> BusinessType:
     """单个订单 → 业务类型（PROJECT / DISTRIBUTION / SERVICE_CLOUD）。"""
 
-    if order_type in _PROJECT_ORDER_TYPES:
+    if order_type in PROJECT_ORDER_TYPES:
         return "PROJECT"
     if _is_service_cloud_category(category):
         return "SERVICE_CLOUD"
@@ -136,6 +136,7 @@ def customer_business_profiles(store: DuckDBStore) -> dict[str, dict[str, object
 
 __all__ = [
     "BusinessType",
+    "PROJECT_ORDER_TYPES",
     "customer_business_profiles",
     "order_business_type",
 ]

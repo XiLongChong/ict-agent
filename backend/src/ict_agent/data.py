@@ -1261,9 +1261,9 @@ class CaseStore:
         *,
         subject_type: str | None = None,
         grade: str | None = None,
-        limit: int = 200,
+        limit: int | None = None,
     ) -> QueryResult:
-        """返回健康度列表。"""
+        """返回健康度列表；limit 为空时返回全部。"""
 
         clauses: list[str] = []
         parameters: list[object] = []
@@ -1274,7 +1274,10 @@ class CaseStore:
             clauses.append("grade = ?")
             parameters.append(grade)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        parameters.append(limit)
+        limit_clause = ""
+        if limit is not None:
+            limit_clause = "LIMIT ?"
+            parameters.append(limit)
         return self._fetch(
             f"""
             SELECT id, subject_type, subject_id, subject_label, score, grade,
@@ -1283,7 +1286,7 @@ class CaseStore:
             FROM health_scores
             {where}
             ORDER BY score ASC, subject_label ASC
-            LIMIT ?
+            {limit_clause}
             """,
             parameters,
         )

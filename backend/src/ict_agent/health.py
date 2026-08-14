@@ -19,10 +19,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from ict_agent.business_type import customer_business_profiles
+from ict_agent.business_type import PROJECT_ORDER_TYPES, customer_business_profiles
 from ict_agent.data import DuckDBStore
 
-# 分销 / 服务云客户五维权重（合计 100%）
+# 分销客户五维权重（合计 100%）
 CUSTOMER_DISTRIBUTION_WEIGHTS: dict[str, float] = {
     "payment": 30.0,  # 回款节奏
     "overdue": 25.0,  # 应收超期（账龄梯度）
@@ -38,6 +38,16 @@ CUSTOMER_PROJECT_WEIGHTS: dict[str, float] = {
     "list": 20.0,
     "credit": 15.0,
     "activity": 10.0,
+}
+
+# 软件服务云客户：更看重持续回款，弱化实体销售是否活跃这一信号。
+# 当前七表没有续费率、服务可用性等专属字段，不能虚构这些维度。
+CUSTOMER_SERVICE_CLOUD_WEIGHTS: dict[str, float] = {
+    "payment": 35.0,
+    "overdue": 25.0,
+    "credit": 20.0,
+    "list": 15.0,
+    "activity": 5.0,
 }
 
 CUSTOMER_DIMENSION_NAMES: dict[str, str] = {
@@ -289,23 +299,27 @@ def _fetch_flow_3m(store: DuckDBStore, customer_id: str) -> dict[str, float] | N
 def _customer_weights(profile: dict[str, object] | None) -> dict[str, float]:
     """按业务画像决定客户维度权重；混合客户按项目金额分量插值。
 
-    项目分量用项目权重，分销 + 服务云分量用分销权重。无画像（无销售记录）时
-    兜底分销权重。
+    项目、分销、服务云分别使用独立权重；混合客户按各类正向销售金额占比插值。
+    退货等负金额不作为权重分母，避免净额为负时产生负权重。无画像时兜底分销权重。
     """
 
     if profile is None:
         return dict(CUSTOMER_DISTRIBUTION_WEIGHTS)
-    project_amount = _as_float(profile["project_amount"])
-    distribution_amount = _as_float(profile["distribution_amount"])
-    service_cloud_amount = _as_float(profile["service_cloud_amount"])
+    project_amount = max(0.0, _as_float(profile["project_amount"]))
+    distribution_amount = max(0.0, _as_float(profile["distribution_amount"]))
+    service_cloud_amount = max(0.0, _as_float(profile["service_cloud_amount"]))
     total = project_amount + distribution_amount + service_cloud_amount
     if total <= 0:
         return dict(CUSTOMER_DISTRIBUTION_WEIGHTS)
-    project_ratio = max(0.0, project_amount) / total
-    distribution_ratio = 1.0 - project_ratio
+    ratios = {
+        "project": project_amount / total,
+        "distribution": distribution_amount / total,
+        "service_cloud": service_cloud_amount / total,
+    }
     return {
-        key: CUSTOMER_PROJECT_WEIGHTS[key] * project_ratio
-        + CUSTOMER_DISTRIBUTION_WEIGHTS[key] * distribution_ratio
+        key: CUSTOMER_PROJECT_WEIGHTS[key] * ratios["project"]
+        + CUSTOMER_DISTRIBUTION_WEIGHTS[key] * ratios["distribution"]
+        + CUSTOMER_SERVICE_CLOUD_WEIGHTS[key] * ratios["service_cloud"]
         for key in CUSTOMER_DISTRIBUTION_WEIGHTS
     }
 
@@ -522,21 +536,29 @@ def _receivable_rate_score(overdue_rate: float | None) -> tuple[float, bool]:
 
 
 def _fetch_project_contracts(store: DuckDBStore) -> list[dict[str, object]]:
-    """带真实项目名称的项目合同，按合同号聚合金额/毛利/账期。"""
+    """按统一交易分类确认的项目合同，按合同号聚合金额/毛利/账期。"""
+
+    placeholders = ", ".join("?" for _ in PROJECT_ORDER_TYPES)
 
     result = store.fetch(
-        """
+        f"""
         SELECT "合同编号" AS contract_no,
                "项目名称" AS project_name,
                "客户名称" AS customer_name,
                COALESCE(SUM("销售金额"), 0) AS amount,
                SUM("销售金额" * "实际净毛利率_不含税") / NULLIF(SUM("销售金额"), 0) AS margin_rate,
-               MAX(COALESCE("实际账期", 0) - COALESCE("合同文本账期", 0)) AS term_gap
+               MAX("实际账期" - "合同文本账期") AS term_gap
         FROM contracts
-        WHERE "项目名称" IS NOT NULL AND "项目名称" <> ''
+        WHERE TRIM(COALESCE("项目名称", '')) <> ''
+          AND EXISTS (
+              SELECT 1 FROM sales s
+              WHERE s."合同号" = contracts."合同编号"
+                AND s."订单类型" IN ({placeholders})
+          )
         GROUP BY 1, 2, 3
         ORDER BY 1
-        """
+        """,
+        list(PROJECT_ORDER_TYPES),
     )
     return [
         {
@@ -554,17 +576,28 @@ def _fetch_project_contracts(store: DuckDBStore) -> list[dict[str, object]]:
 def _fetch_contract_ar(store: DuckDBStore) -> dict[str, dict[str, float]]:
     """按合同号聚合最新期末应收与超期。"""
 
+    placeholders = ", ".join("?" for _ in PROJECT_ORDER_TYPES)
+
     result = store.fetch(
-        """
+        f"""
         WITH latest AS (SELECT MAX("快照时间") AS d FROM ar_snapshots)
         SELECT a."合同号",
                COALESCE(SUM(a."应收金额"), 0),
                COALESCE(SUM(a."超期应收金额"), 0)
         FROM ar_snapshots a JOIN latest l ON a."快照时间" = l.d
-        JOIN contracts c ON a."合同号" = c."合同编号"
-        WHERE c."项目名称" IS NOT NULL AND c."项目名称" <> ''
+        WHERE EXISTS (
+                  SELECT 1 FROM contracts c
+                  WHERE c."合同编号" = a."合同号"
+                    AND TRIM(COALESCE(c."项目名称", '')) <> ''
+              )
+          AND EXISTS (
+                  SELECT 1 FROM sales s
+                  WHERE s."合同号" = a."合同号"
+                    AND s."订单类型" IN ({placeholders})
+              )
         GROUP BY 1
-        """
+        """,
+        list(PROJECT_ORDER_TYPES),
     )
     return {
         str(row[0]): {"ar": _as_float(row[1]), "overdue": _as_float(row[2])} for row in result.rows
@@ -574,14 +607,25 @@ def _fetch_contract_ar(store: DuckDBStore) -> dict[str, dict[str, float]]:
 def _fetch_contract_payment(store: DuckDBStore) -> dict[str, float]:
     """按合同号聚合回款金额（元）。"""
 
+    placeholders = ", ".join("?" for _ in PROJECT_ORDER_TYPES)
+
     result = store.fetch(
-        """
+        f"""
         SELECT p."合同号", COALESCE(SUM(p."回款金额"), 0)
         FROM payments p
-        JOIN contracts c ON p."合同号" = c."合同编号"
-        WHERE c."项目名称" IS NOT NULL AND c."项目名称" <> ''
+        WHERE EXISTS (
+                  SELECT 1 FROM contracts c
+                  WHERE c."合同编号" = p."合同号"
+                    AND TRIM(COALESCE(c."项目名称", '')) <> ''
+              )
+          AND EXISTS (
+                  SELECT 1 FROM sales s
+                  WHERE s."合同号" = p."合同号"
+                    AND s."订单类型" IN ({placeholders})
+              )
         GROUP BY 1
-        """
+        """,
+        list(PROJECT_ORDER_TYPES),
     )
     return {str(row[0]): _as_float(row[1]) for row in result.rows}
 
@@ -636,12 +680,12 @@ def _term_gap_score(term_gap: float | None) -> tuple[float, bool]:
     return round(_clamp(100.0 - term_gap / _TERM_GAP_AT_ZERO * 100.0), 1), False
 
 
-def _concentration_score(amount: float, customer_ar: float) -> tuple[float, bool]:
-    """敞口集中度：单合同金额占客户应收比重，>=0.5 记 0。"""
+def _concentration_score(contract_ar: float, customer_ar: float) -> tuple[float, bool]:
+    """敞口集中度：单合同应收占客户应收比重，>=0.5 记 0。"""
 
-    if customer_ar <= 0:
+    if contract_ar <= 0 or customer_ar <= 0:
         return _MISSING_NEUTRAL, True
-    concentration = amount / customer_ar
+    concentration = contract_ar / customer_ar
     return round(_clamp(100.0 - concentration / _CONCENTRATION_AT_ZERO * 100.0), 1), False
 
 
@@ -667,7 +711,8 @@ def _compute_contract(
     payment_score, payment_missing = _contract_payment_score(amount, paid)
     margin_score, margin_missing = _margin_score(margin_rate)
     term_score, term_missing = _term_gap_score(term_gap)
-    concentration_score, concentration_missing = _concentration_score(amount, total_ar)
+    contract_ar = ar["ar"] if ar is not None else 0.0
+    concentration_score, concentration_missing = _concentration_score(contract_ar, total_ar)
 
     dimensions: list[dict[str, Any]] = [
         {
@@ -754,6 +799,7 @@ __all__ = [
     "CONTRACT_WEIGHTS",
     "CUSTOMER_DISTRIBUTION_WEIGHTS",
     "CUSTOMER_PROJECT_WEIGHTS",
+    "CUSTOMER_SERVICE_CLOUD_WEIGHTS",
     "compute_contract_health",
     "compute_customer_health",
     "compute_health_scores",
