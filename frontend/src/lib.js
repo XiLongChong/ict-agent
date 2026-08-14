@@ -12,6 +12,11 @@ export const labels = {
   },
   verifyStatus: { PENDING: "待核验", CONFIRMED: "已确认", EXCLUDED: "已排除" },
   recommendationStatus: { PENDING: "待审批", APPROVED: "已采纳", REJECTED: "已驳回" },
+  recommendationTrigger: {
+    HEALTH_GRADE_RECOVERED: "健康度恢复",
+    HEALTH_GRADE_WARNING: "健康度预警",
+    HEALTH_GRADE_HIGH_RISK: "健康度高危",
+  },
   preAssessmentConclusion: {
     APPROVED: "通过",
     REJECTED: "不通过",
@@ -78,6 +83,13 @@ export function formatMoney(value) {
 }
 
 export const formatPercent = (value) => value == null ? "—" : `${(Number(value) * 100).toFixed(1)}%`;
+
+export function localizeRecommendationText(value) {
+  return Object.entries(labels.grade).reduce(
+    (text, [code, label]) => text.replaceAll(code, label),
+    String(value ?? "")
+  );
+}
 
 export function formatMoneyWan(value) {
   if (value == null || value === "") return "—";

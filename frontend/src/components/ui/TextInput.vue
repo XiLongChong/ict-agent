@@ -1,6 +1,15 @@
 <script setup>
 import { Search, X } from "lucide-vue-next";
-defineProps({ modelValue: String, type: { type: String, default: "text" }, placeholder: String, search: Boolean, clearable: Boolean, maxlength: Number, ariaLabel: String });
+defineProps({
+  modelValue: String,
+  type: { type: String, default: "text" },
+  placeholder: String,
+  search: Boolean,
+  clearable: Boolean,
+  maxlength: Number,
+  ariaLabel: String,
+  clearAriaLabel: { type: String, default: "清空输入内容" },
+});
 defineEmits(["update:modelValue", "clear"]);
 </script>
 <template>
@@ -19,6 +28,8 @@ defineEmits(["update:modelValue", "clear"]);
     <button
       v-if="clearable && modelValue"
       type="button"
+      :aria-label="clearAriaLabel"
+      :title="clearAriaLabel"
       @click="$emit('clear')"
       class="absolute right-2 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded text-faint hover:bg-gray-100 hover:text-muted"
     >

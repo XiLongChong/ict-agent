@@ -1,7 +1,6 @@
 <script setup>
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import VueApexCharts from "vue3-apexcharts";
 import {
   ArrowRight,
   ClipboardCheck,
@@ -22,11 +21,9 @@ import {
   statusColor,
 } from "../lib";
 import { workspace } from "../store";
-import { useResponsiveChart } from "../composables/useResponsiveChart";
 
 const router = useRouter();
 const route = useRoute();
-const { chartRef: donutChartRef, chartHostRef: donutHostRef } = useResponsiveChart();
 const loading = computed(() => workspace.loading);
 const priorityCases = computed(() => {
   const cases = workspace.cases || [];
@@ -123,27 +120,22 @@ const gradeSeries = computed(() => [
   gradeDistribution.value.WARNING || 0,
   gradeDistribution.value.HIGH_RISK || 0,
 ]);
-const donutOptions = computed(() => ({
-  chart: { type: "donut", animations: { enabled: false }, redrawOnParentResize: false, redrawOnWindowResize: false },
-  labels: ["健康", "关注", "预警", "高危"],
-  colors: ["#039855", "#f79009", "#f97316", "#d92d20"],
-  stroke: { width: 0 },
-  dataLabels: { enabled: false },
-  legend: { show: false },
-  plotOptions: {
-    pie: {
-      donut: {
-        size: "78%",
-        labels: {
-          show: true,
-          name: { show: false },
-          value: { show: true, fontSize: "26px", fontWeight: 700, color: "#101828" },
-          total: { show: true, label: "健康度主体", fontSize: "12px", fontWeight: 500, color: "#98a2b3" },
-        },
-      },
-    },
-  },
-}));
+const gradeTotal = computed(() => gradeSeries.value.reduce((total, value) => total + value, 0));
+const gradeChartLabel = computed(() =>
+  ["健康", "关注", "预警", "高危"].map((label, index) => `${label} ${gradeSeries.value[index]}`).join("，")
+);
+const gradeChartStyle = computed(() => {
+  if (!gradeTotal.value) return { background: "#f2f4f7" };
+  const colors = ["#039855", "#f79009", "#f97316", "#d92d20"];
+  let start = 0;
+  const segments = gradeSeries.value.map((value, index) => {
+    const end = start + (value / gradeTotal.value) * 100;
+    const segment = `${colors[index]} ${start}% ${end}%`;
+    start = end;
+    return segment;
+  });
+  return { background: `conic-gradient(${segments.join(", ")})` };
+});
 
 const barTone = { HIGH: "bg-danger", MEDIUM: "bg-warning", LOW: "bg-gray-300" };
 
@@ -206,8 +198,18 @@ function go(path) {
       <section class="card pb-4">
         <div class="panel-head"><h3>健康度分布</h3></div>
         <p class="px-5 pb-1 text-[12px] text-muted">健康度等级由六维指标综合评分得出</p>
-        <div ref="donutHostRef" class="px-5 pt-3">
-          <VueApexCharts ref="donutChartRef" type="donut" height="210" :options="donutOptions" :series="gradeSeries" />
+        <div class="px-5 pt-3">
+          <div
+            role="img"
+            :aria-label="`健康度分布：${gradeChartLabel}`"
+            class="relative mx-auto grid h-[210px] w-[210px] place-items-center rounded-full"
+            :style="gradeChartStyle"
+          >
+            <div class="grid h-[164px] w-[164px] place-content-center rounded-full bg-surface text-center">
+              <strong class="text-[26px] leading-none text-ink">{{ gradeTotal }}</strong>
+              <span class="mt-2 text-[12px] font-medium text-faint">健康度主体</span>
+            </div>
+          </div>
         </div>
         <div class="space-y-3 px-5 pt-1">
           <div v-for="(tone, grade) in { HEALTHY: 'bg-success', WATCH: 'bg-warning', WARNING: 'bg-[#f97316]', HIGH_RISK: 'bg-danger' }" :key="grade" class="flex items-center justify-between text-[13px]">

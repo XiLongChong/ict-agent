@@ -1,13 +1,14 @@
 import { createRouter, createWebHistory } from "vue-router";
 import { Activity, ChartLine, FolderKanban, LayoutDashboard, ListChecks, ListTodo, Newspaper } from "lucide-vue-next";
-import RiskOverview from "./components/RiskOverview.vue";
-import HealthScores from "./components/HealthScores.vue";
-import ListManagement from "./components/ListManagement.vue";
-import Sentiments from "./components/Sentiments.vue";
-import Projects from "./components/Projects.vue";
-import CaseQueue from "./components/CaseQueue.vue";
-import BusinessView from "./components/BusinessView.vue";
-import CaseWorkspace from "./components/CaseWorkspace.vue";
+
+const RiskOverview = () => import("./components/RiskOverview.vue");
+const HealthScores = () => import("./components/HealthScores.vue");
+const ListManagement = () => import("./components/ListManagement.vue");
+const Sentiments = () => import("./components/Sentiments.vue");
+const Projects = () => import("./components/Projects.vue");
+const CaseQueue = () => import("./components/CaseQueue.vue");
+const BusinessView = () => import("./components/BusinessView.vue");
+const CaseWorkspace = () => import("./components/CaseWorkspace.vue");
 
 export const navItems = [
   { path: "/risk", label: "风险预警", icon: LayoutDashboard },

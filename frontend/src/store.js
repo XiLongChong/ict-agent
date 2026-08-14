@@ -16,6 +16,11 @@ export const workspace = reactive({
   status: { text: "正在连接数据", error: false },
 });
 
+export function resetWorkspaceStatus() {
+  if (workspace.loading || workspace.scanning) return;
+  workspace.status = { text: "数据与案件已就绪", error: false };
+}
+
 export async function loadRiskData() {
   const [riskOverview, caseList] = await Promise.all([api("/api/v1/risk/overview"), api("/api/v1/cases")]);
   workspace.overview = riskOverview;

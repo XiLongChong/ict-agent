@@ -5,7 +5,7 @@ import Button from "./ui/Button.vue";
 import Modal from "./ui/Modal.vue";
 import TextArea from "./ui/TextArea.vue";
 import TextInput from "./ui/TextInput.vue";
-import { formatDateTime, formatMoney, listColor, labels, recommendationStatusColor } from "../lib";
+import { formatDateTime, formatMoney, listColor, labels, localizeRecommendationText, recommendationStatusColor } from "../lib";
 import { reviewRecommendation, workspace } from "../store";
 
 const filter = ref("");
@@ -49,7 +49,7 @@ async function submitReview(decision) {
   }
 }
 
-const evidenceText = (item) => (item.evidence || []).map((e) => e.summary).join("；") || "—";
+const evidenceText = (item) => (item.evidence || []).map((e) => localizeRecommendationText(e.summary)).join("；") || "—";
 </script>
 
 <template>
@@ -94,9 +94,11 @@ const evidenceText = (item) => (item.evidence || []).map((e) => e.summary).join(
 
         <!-- 详情区：理由 / 证据 / 健康度变化 / 审核人 -->
         <div class="mt-3 border-t border-border/60 pt-3 text-[13px] text-muted">
-          <p class="text-ink">{{ item.reason }}</p>
+          <p class="text-ink">{{ localizeRecommendationText(item.reason) }}</p>
           <p class="mt-1 text-[12px]">证据：{{ evidenceText(item) }}</p>
-          <p class="mt-1 text-[12px]">健康度变化：{{ item.health_change }} · 触发规则：{{ item.trigger_rule }}</p>
+          <p class="mt-1 text-[12px]">
+            健康度变化：{{ item.health_change }} · 触发规则：{{ labels.recommendationTrigger[item.trigger_rule] || "其他规则" }}
+          </p>
           <p v-if="item.status !== 'PENDING'" class="mt-1 text-[12px]">
             审核人：{{ item.reviewer }} · {{ item.review_reason }} · {{ formatDateTime(item.review_at) }}
           </p>

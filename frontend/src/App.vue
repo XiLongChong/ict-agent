@@ -4,7 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { AlertCircle, Menu, PanelLeftClose, PanelLeftOpen, Radar } from "lucide-vue-next";
 import BrandMark from "./components/BrandMark.vue";
 import { navItems } from "./router";
-import { loadAll, loadRiskData, runScan, workspace } from "./store";
+import { loadAll, loadRiskData, resetWorkspaceStatus, runScan, workspace } from "./store";
 
 const route = useRoute();
 const router = useRouter();
@@ -47,6 +47,7 @@ watch(
   () => route.fullPath,
   () => {
     if (isMobile.value) mobileNav.value = false;
+    resetWorkspaceStatus();
   }
 );
 watch(
