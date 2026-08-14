@@ -194,10 +194,6 @@ function go(path) {
             <span v-else class="text-right text-[13px] text-ink">{{ item.amountText }}</span>
           </div>
 
-          <div v-if="todoItems.total > TODO_LIMIT" class="mt-1 border-t border-border/60 px-2 py-2 text-[12px] text-muted">
-            还有 {{ todoItems.total - TODO_LIMIT }} 条待办，前往名单管理查看全部
-          </div>
-
           <div v-if="!loading && !todoItems.total" class="empty-state">暂无待办事项</div>
         </div>
       </section>
@@ -205,7 +201,6 @@ function go(path) {
       <!-- 健康度分布 -->
       <section class="card pb-4">
         <div class="panel-head"><h3>健康度分布</h3></div>
-        <p class="px-5 pb-1 text-[12px] text-muted">健康度等级由六维指标综合评分得出</p>
         <div ref="donutHostRef" class="px-5 pt-3">
           <VueApexCharts ref="donutChartRef" type="donut" height="210" :options="donutOptions" :series="gradeSeries" />
         </div>
@@ -226,7 +221,6 @@ function go(path) {
           查看全部 <ArrowRight :size="15" />
         </button>
       </div>
-      <p class="px-5 pb-1 text-[12px] text-muted">案件优先级来自规则引擎（高风险信号优先调查），与健康度等级相互独立</p>
       <div class="px-2.5 py-2">
         <button
           v-for="item in priorityCases"

@@ -49,7 +49,7 @@ const trendOptions = computed(() => ({
     type: "area",
     animations: { enabled: false },
     toolbar: { show: false },
-    fontFamily: "DM Sans, 'Microsoft YaHei', sans-serif",
+    fontFamily: "DM Sans, 'Noto Sans SC', 'Microsoft YaHei', sans-serif",
     redrawOnParentResize: false,
     redrawOnWindowResize: false,
   },

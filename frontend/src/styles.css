@@ -21,7 +21,7 @@
   --color-success-deep: #027a48;
   --color-success-wash: #ecfdf3;
   --shadow-card: 0 1px 3px rgba(16, 24, 40, 0.05);
-  --font-sans: "DM Sans", "Microsoft YaHei", system-ui, sans-serif;
+  --font-sans: "DM Sans", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", monospace;
 }
 
