@@ -142,7 +142,7 @@ onUnmounted(() => window.removeEventListener("focus", refreshRiskDataOnFocus));
 
       <main
         class="w-full"
-        :class="isStandalone ? '' : 'mx-auto max-w-[1536px] px-4 py-7 md:px-8'"
+        :class="isStandalone ? '' : 'mx-auto max-w-[1920px] px-4 py-7 md:px-8'"
       >
         <router-view v-slot="{ Component, route: currentRoute }">
           <component :is="Component" :key="currentRoute.fullPath" />

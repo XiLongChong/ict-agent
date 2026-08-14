@@ -271,7 +271,7 @@ function returnToSource() {
       </button>
     </nav>
 
-    <div class="mx-auto w-full max-w-[1536px] px-4 py-7 md:px-8">
+    <div class="mx-auto w-full max-w-[1920px] px-4 py-7 md:px-8">
       <section
         v-if="loading"
         class="card grid min-h-[420px] place-content-center justify-items-center gap-3 text-muted"

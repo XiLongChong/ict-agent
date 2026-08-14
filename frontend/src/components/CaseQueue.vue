@@ -162,7 +162,7 @@ async function scan() {
 
       <div class="flex flex-wrap items-center gap-3 border-t border-border px-5 py-4">
         <span class="text-sm text-muted">第 {{ rangeStart }}–{{ rangeEnd }} 条，共 {{ filtered.length }} 条</span>
-        <SelectInput v-model="pageSize" :options="pageSizeOptions" class="w-[120px]" />
+        <SelectInput v-model="pageSize" :options="pageSizeOptions" class="w-[150px]" />
 
         <div class="ml-auto flex flex-wrap items-center gap-2">
           <button

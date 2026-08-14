@@ -32,13 +32,8 @@
   button, input, textarea, select { font: inherit; }
 }
 
-/* 大屏补偿：系统缩放 100% 的宽屏上物理字号偏小，按断点抬高根字号（媒体查询方式，不影响浏览器缩放） */
-@media (min-width: 1920px) {
-  html { font-size: 21px; }
-}
-@media (min-width: 2560px) {
-  html { font-size: 22.5px; }
-}
+/* 流体根字号：≤1200px 视口保持 16px；1200→1920px 线性升到 21px；之后缓升并在 22.5px 封顶 */
+html { font-size: clamp(16px, 0.6944vw + 7.667px, 22.5px); }
 
 @layer components {
   .card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; box-shadow: var(--shadow-card); }
