@@ -75,7 +75,6 @@ def test_health_score_list_is_not_silently_truncated(tmp_path: Path) -> None:
     records = [
         HealthScoreWrite(
             id=f"HS_CUSTOMER_C{index:03d}",
-            subject_type="CUSTOMER",
             subject_id=f"C{index:03d}",
             subject_label=f"客户 {index:03d}",
             score=80.0,
@@ -93,3 +92,6 @@ def test_health_score_list_is_not_silently_truncated(tmp_path: Path) -> None:
     assert store.save_health_scores(records) == 205
     assert len(store.fetch_health_scores().rows) == 205
     assert len(store.fetch_health_scores(limit=20).rows) == 20
+    assert "subject_type" not in {
+        str(row[1]) for row in store._fetch("PRAGMA table_info('health_scores')").rows
+    }

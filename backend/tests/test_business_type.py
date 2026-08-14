@@ -25,6 +25,8 @@ SALES = (
     "2026-07-01,C005,混合客户戊,X7,S7,W1,M1,1,销售出库,正常销售,200,160,信息产品整机销售订单,微软Azure\n"
     # 负分销客户 C006：分销净额为负 → 兜底 DISTRIBUTION
     "2026-07-01,C006,负分销客户己,X8,S8,W1,M1,1,销售出库,正常销售,-5000,-4000,信产常规销售订单,IPHONE\n"
+    # 类型与核算大类都为空时仍应兜底分销
+    "2026-07-01,C008,空类型客户辛,X9,S9,W1,M1,1,销售出库,正常销售,100,80,,\n"
 )
 
 CUSTOMER_CREDIT = (
@@ -37,6 +39,7 @@ CUSTOMER_CREDIT = (
     "C005,混合客户戊,1000,0,,2025-01-01,一般,3000,100,N\n"
     "C006,负分销客户己,1000,0,,2025-01-01,一般,3000,100,N\n"
     "C007,无销售客户庚,1000,0,,2025-01-01,一般,3000,100,N\n"
+    "C008,空类型客户辛,1000,0,,2025-01-01,一般,3000,100,N\n"
 )
 
 PAYMENTS = (
@@ -146,4 +149,14 @@ def test_customer_without_sales_excluded(store: DuckDBStore) -> None:
     profiles = customer_business_profiles(store)
 
     assert "C007" not in profiles
-    assert set(profiles) == {"C001", "C002", "C003", "C004", "C005", "C006"}
+    assert set(profiles) == {"C001", "C002", "C003", "C004", "C005", "C006", "C008"}
+
+
+def test_missing_order_type_and_category_fall_back_to_distribution(
+    store: DuckDBStore,
+) -> None:
+    profile = customer_business_profiles(store)["C008"]
+
+    assert profile["business_type"] == "DISTRIBUTION"
+    assert profile["distribution_amount"] == pytest.approx(100.0)
+    assert profile["distribution_order_count"] == 1

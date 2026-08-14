@@ -154,7 +154,6 @@ class HealthScoreWrite:
     """一条健康度评分的持久化记录。"""
 
     id: str
-    subject_type: str
     subject_id: str
     subject_label: str
     score: float
@@ -829,7 +828,6 @@ class CaseStore:
             """
             CREATE TABLE IF NOT EXISTS health_scores (
                 id VARCHAR PRIMARY KEY,
-                subject_type VARCHAR NOT NULL,
                 subject_id VARCHAR NOT NULL,
                 subject_label VARCHAR NOT NULL,
                 score DOUBLE NOT NULL,
@@ -848,6 +846,7 @@ class CaseStore:
         connection.execute(
             "ALTER TABLE health_scores ADD COLUMN IF NOT EXISTS business_type VARCHAR"
         )
+        connection.execute("ALTER TABLE health_scores DROP COLUMN IF EXISTS subject_type")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS list_recommendations (
@@ -1191,9 +1190,11 @@ class CaseStore:
             with duckdb.connect(str(self.database_path)) as connection:
                 connection.execute(
                     """
-                    INSERT INTO health_scores VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO health_scores (
+                        id, subject_id, subject_label, score, grade, dimension_json,
+                        drivers_json, trend_json, computed_at, data_snapshot_id, business_type
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT (id) DO UPDATE SET
-                        subject_type = excluded.subject_type,
                         subject_id = excluded.subject_id,
                         subject_label = excluded.subject_label,
                         score = excluded.score,
@@ -1207,7 +1208,6 @@ class CaseStore:
                     """,
                     [
                         record.id,
-                        record.subject_type,
                         record.subject_id,
                         record.subject_label,
                         record.score,
@@ -1235,10 +1235,14 @@ class CaseStore:
                 connection.execute("DELETE FROM health_scores")
                 for record in records:
                     connection.execute(
-                        "INSERT INTO health_scores VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        """
+                        INSERT INTO health_scores (
+                            id, subject_id, subject_label, score, grade, dimension_json,
+                            drivers_json, trend_json, computed_at, data_snapshot_id, business_type
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
                         [
                             record.id,
-                            record.subject_type,
                             record.subject_id,
                             record.subject_label,
                             record.score,
@@ -1259,7 +1263,7 @@ class CaseStore:
     def fetch_health_scores(
         self,
         *,
-        subject_type: str | None = None,
+        business_type: str | None = None,
         grade: str | None = None,
         limit: int | None = None,
     ) -> QueryResult:
@@ -1267,9 +1271,9 @@ class CaseStore:
 
         clauses: list[str] = []
         parameters: list[object] = []
-        if subject_type is not None:
-            clauses.append("subject_type = ?")
-            parameters.append(subject_type)
+        if business_type is not None:
+            clauses.append("business_type = ?")
+            parameters.append(business_type)
         if grade is not None:
             clauses.append("grade = ?")
             parameters.append(grade)
@@ -1280,7 +1284,7 @@ class CaseStore:
             parameters.append(limit)
         return self._fetch(
             f"""
-            SELECT id, subject_type, subject_id, subject_label, score, grade,
+            SELECT id, subject_id, subject_label, score, grade,
                    dimension_json, drivers_json, trend_json, computed_at, data_snapshot_id,
                    business_type
             FROM health_scores
@@ -1296,7 +1300,7 @@ class CaseStore:
 
         return self._fetch(
             """
-            SELECT id, subject_type, subject_id, subject_label, score, grade,
+            SELECT id, subject_id, subject_label, score, grade,
                    dimension_json, drivers_json, trend_json, computed_at, data_snapshot_id,
                    business_type
             FROM health_scores WHERE id = ?

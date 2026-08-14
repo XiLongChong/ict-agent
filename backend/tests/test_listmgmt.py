@@ -28,7 +28,6 @@ def _health(
     trend: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     return {
-        "subject_type": "CUSTOMER",
         "subject_id": subject_id,
         "subject_label": f"客户{subject_id}",
         "score": score,

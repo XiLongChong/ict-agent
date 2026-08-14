@@ -9,7 +9,6 @@ import { formatDateTime, gradeColor, labels } from "../lib";
 import { recalcHealth, workspace } from "../store";
 
 const businessType = ref("");
-const subjectType = ref("");
 const grade = ref("");
 const query = ref("");
 const pageSize = ref("10");
@@ -22,11 +21,6 @@ const businessOptions = [
   { title: "分销", value: "DISTRIBUTION" },
   { title: "项目", value: "PROJECT" },
   { title: "服务云", value: "SERVICE_CLOUD" },
-];
-const subjectOptions = [
-  { title: "全部对象", value: "" },
-  { title: "客户", value: "CUSTOMER" },
-  { title: "项目合同", value: "CONTRACT" },
 ];
 const gradeOptions = [
   { title: "全部等级", value: "" },
@@ -43,14 +37,12 @@ const filtered = computed(() => {
   return items.filter((item) => {
     const matchesFilters =
       (!businessType.value || item.business_type === businessType.value) &&
-      (!subjectType.value || item.subject_type === subjectType.value) &&
       (!grade.value || item.grade === grade.value);
     if (!matchesFilters || !keyword) return matchesFilters;
     const searchable = [
       item.subject_id,
       item.subject_label,
       labels.businessType[item.business_type],
-      item.subject_type === "CUSTOMER" ? "客户" : "项目合同",
       labels.grade[item.grade],
     ]
       .filter(Boolean)
@@ -75,7 +67,7 @@ const pageNumbers = computed(() => {
 const rangeStart = computed(() => (filtered.value.length ? (currentPage.value - 1) * pageSizeValue.value + 1 : 0));
 const rangeEnd = computed(() => Math.min(currentPage.value * pageSizeValue.value, filtered.value.length));
 
-watch([businessType, subjectType, grade, query, pageSize], () => goToPage(1));
+watch([businessType, grade, query, pageSize], () => goToPage(1));
 watch(totalPages, (total) => {
   if (currentPage.value > total) goToPage(total);
 });
@@ -124,10 +116,9 @@ function jumpToPage() {
     <section class="card overflow-hidden">
       <div class="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
         <SelectInput v-model="businessType" :options="businessOptions" class="w-[180px]" />
-        <SelectInput v-model="subjectType" :options="subjectOptions" class="w-[180px]" />
         <SelectInput v-model="grade" :options="gradeOptions" class="w-[180px]" />
-        <TextInput v-model="query" search clearable class="w-[320px] max-w-full" placeholder="搜索客户、合同或等级" aria-label="搜索客户、合同或等级" @clear="query = ''" />
-        <span class="ml-auto text-sm text-muted">共 {{ filtered.length }} 个主体</span>
+        <TextInput v-model="query" search clearable class="w-[320px] max-w-full" placeholder="搜索公司或等级" aria-label="搜索公司或等级" @clear="query = ''" />
+        <span class="ml-auto text-sm text-muted">共 {{ filtered.length }} 条业务健康记录</span>
         <button
           type="button"
           class="inline-flex h-10 items-center gap-2 rounded-lg bg-brand px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-dark disabled:opacity-50"
@@ -140,11 +131,10 @@ function jumpToPage() {
       </div>
 
       <div class="overflow-x-auto">
-        <table class="table-base table-fixed min-w-[1080px]">
+        <table class="table-base table-fixed min-w-[960px]">
           <colgroup>
-            <col class="w-[17%]" />
-            <col class="w-[9%]" />
-            <col class="w-[10%]" />
+            <col class="w-[21%]" />
+            <col class="w-[12%]" />
             <col class="w-[16%]" />
             <col class="w-[9%]" />
             <col class="w-[14%]" />
@@ -154,7 +144,6 @@ function jumpToPage() {
           <thead>
             <tr>
               <th>主体</th>
-              <th>分析对象</th>
               <th>业务类型</th>
               <th>分数</th>
               <th>等级</th>
@@ -167,9 +156,6 @@ function jumpToPage() {
             <tr v-for="item in paginated" :key="item.id" class="hover:bg-canvas/60">
               <td>
                 <strong class="block truncate text-[0.8125rem] text-ink" :title="`${item.subject_id} ${item.subject_label}`">{{ item.subject_id }} {{ item.subject_label }}</strong>
-              </td>
-              <td>
-                <Badge tone="neutral">{{ item.subject_type === "CUSTOMER" ? "客户" : "项目合同" }}</Badge>
               </td>
               <td>
                 <Badge
@@ -193,7 +179,7 @@ function jumpToPage() {
               <td><span class="block truncate text-sm text-muted" :title="topDrivers(item)">{{ topDrivers(item) }}</span></td>
               <td><span class="text-[0.75rem] text-muted">{{ formatDateTime(item.computed_at) }}</span></td>
             </tr>
-            <tr v-if="!workspace.loading && !filtered.length"><td colspan="8" class="empty-state">当前筛选条件下没有健康度数据，请点击“重算健康度”生成</td></tr>
+            <tr v-if="!workspace.loading && !filtered.length"><td colspan="7" class="empty-state">当前筛选条件下没有健康度数据，请点击“重算健康度”生成</td></tr>
           </tbody>
         </table>
       </div>

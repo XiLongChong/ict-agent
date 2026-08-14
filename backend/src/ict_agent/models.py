@@ -456,7 +456,6 @@ class HealthScoreResponse(BaseModel):
     """一条健康度评分。"""
 
     id: str
-    subject_type: str
     subject_id: str
     subject_label: str
     score: float

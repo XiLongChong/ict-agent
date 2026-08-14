@@ -264,12 +264,12 @@ async def submit_case_review(case_id: str, request: ReviewRequest) -> ReviewReco
     tags=["risk-warning"],
 )
 async def health_scores(
-    subject_type: str | None = None,
+    business_type: str | None = None,
     grade: str | None = None,
 ) -> list[HealthScoreResponse]:
     """返回健康度列表（可按类型/等级筛选）。"""
 
-    return list_health_scores(subject_type=subject_type, grade=grade)
+    return list_health_scores(business_type=business_type, grade=grade)
 
 
 @app.get(

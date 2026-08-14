@@ -122,14 +122,13 @@ def build_recommendations(
     written: list[dict[str, Any]] = []
 
     for item in health_scores:
-        if item.get("subject_type") != "CUSTOMER":
-            continue
         subject_id = str(item["subject_id"])
         subject_label = str(item["subject_label"])
         current_list = current_map.get(subject_id, "GENERAL")
         if current_list == "BLACK":
             continue
         grade = str(item["grade"])
+        business_type = str(item.get("business_type", ""))
         score = float(item.get("score", 0.0))
         drivers = item.get("drivers", {})
         risk_amount = _risk_amount(item)
@@ -162,8 +161,16 @@ def build_recommendations(
         if target is None or target == current_list:
             continue
 
+        type_label = {
+            "DISTRIBUTION": "分销",
+            "PROJECT": "项目",
+            "SERVICE_CLOUD": "服务云",
+        }.get(business_type, business_type)
         evidence = [
-            {"id": f"health_{subject_id}", "summary": f"健康度 {score:.1f} 分 / {grade}"},
+            {
+                "id": f"health_{subject_id}_{business_type}",
+                "summary": f"{type_label}健康度 {score:.1f} 分 / {grade}",
+            }
         ]
         record = ListRecommendationWrite(
             recommendation_id=uuid4().hex,

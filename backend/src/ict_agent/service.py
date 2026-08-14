@@ -578,23 +578,22 @@ def _simulated_data(settings: Settings) -> SimulatedData:
 def _health_score_response(row: tuple[DatabaseScalar, ...]) -> HealthScoreResponse:
     return HealthScoreResponse(
         id=str(row[0]),
-        subject_type=str(row[1]),
-        subject_id=str(row[2]),
-        subject_label=str(row[3]),
-        score=_as_float(row[4]),
-        grade=str(row[5]),
-        dimensions=json.loads(str(row[6])),
-        drivers=json.loads(str(row[7])),
-        trend=json.loads(str(row[8])),
-        computed_at=str(row[9]),
-        data_snapshot_id=str(row[10]),
-        business_type=str(row[11]) if row[11] is not None else "DISTRIBUTION",
+        subject_id=str(row[1]),
+        subject_label=str(row[2]),
+        score=_as_float(row[3]),
+        grade=str(row[4]),
+        dimensions=json.loads(str(row[5])),
+        drivers=json.loads(str(row[6])),
+        trend=json.loads(str(row[7])),
+        computed_at=str(row[8]),
+        data_snapshot_id=str(row[9]),
+        business_type=str(row[10]),
     )
 
 
 def list_health_scores(
     *,
-    subject_type: str | None = None,
+    business_type: str | None = None,
     grade: str | None = None,
     settings: Settings | None = None,
 ) -> list[HealthScoreResponse]:
@@ -604,7 +603,8 @@ def list_health_scores(
     try:
         runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
         result = CaseStore(runtime_settings.case_database_path).fetch_health_scores(
-            subject_type=subject_type, grade=grade
+            business_type=business_type,
+            grade=grade,
         )
         return [_health_score_response(tuple(row)) for row in result.rows]
     except (ConfigurationError, DataAccessError) as exc:
@@ -651,8 +651,7 @@ def recalculate_health_scores(
         computed_at = datetime.now(UTC).isoformat()
         records = [
             HealthScoreWrite(
-                id=f"HS_{item['subject_type']}_{item['subject_id']}",
-                subject_type=str(item["subject_type"]),
+                id=f"HS_{item['subject_id']}_{item['business_type']}",
                 subject_id=str(item["subject_id"]),
                 subject_label=str(item["subject_label"]),
                 score=float(item["score"]),
@@ -670,18 +669,22 @@ def recalculate_health_scores(
         count = case_store.save_health_scores(records)
 
         # 基于最新健康度生成名单建议
+        worst_by_customer: dict[str, HealthScoreWrite] = {}
+        for record in records:
+            current = worst_by_customer.get(record.subject_id)
+            if current is None or record.score < current.score:
+                worst_by_customer[record.subject_id] = record
         health_items = [
             {
-                "subject_type": r.subject_type,
-                "subject_id": r.subject_id,
-                "subject_label": r.subject_label,
-                "score": r.score,
-                "grade": r.grade,
-                "drivers": json.loads(r.drivers_json),
-                "trend": json.loads(r.trend_json),
+                "subject_id": record.subject_id,
+                "subject_label": record.subject_label,
+                "business_type": record.business_type,
+                "score": record.score,
+                "grade": record.grade,
+                "drivers": json.loads(record.drivers_json),
+                "trend": json.loads(record.trend_json),
             }
-            for r in records
-            if r.subject_type == "CUSTOMER"
+            for record in worst_by_customer.values()
         ]
         current_map = current_list_from_credit(business_store)
         build_recommendations(

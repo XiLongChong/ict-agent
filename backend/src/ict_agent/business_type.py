@@ -1,8 +1,8 @@
 """业务类型判定（项目 / 分销 / 软件服务云）。
 
 业务类型是「交易级」属性——同一个客户可能既有项目订单又有分销订单，因此
-客户级不强行二选一，而是返回三类金额分量、主导类型与是否混合标志，供健康度等
-下游按金额加权。
+客户级不强行二选一，而是返回三类金额分量、订单条数、主导类型与是否混合标志；
+健康度按实际发生的每一类业务分别计算。
 
 判据（sales 表，确定性推导，不落库、不调用模型）：
 - PROJECT 项目类：订单类型 ∈ {信产项目N, 信产项目S}（企业级项目，一单一议）
@@ -80,30 +80,45 @@ def _dominant_business_type(
     return "DISTRIBUTION"
 
 
+def business_type_condition(alias: str, business_type: BusinessType) -> str:
+    """返回与单笔判定一致的静态 SQL 条件。alias 只能由内部查询传入。"""
+
+    project = f"COALESCE({alias}.\"订单类型\", '') IN ({_PROJECT_ORDER_LIST})"
+    category = f"COALESCE({alias}.\"核算大类名称\", '')"
+    service = (
+        f"({category} IN ({_SERVICE_CLOUD_NAMES_LIST}) "
+        f"OR {category} LIKE '%软件%' OR {category} LIKE '%服务%')"
+    )
+    if business_type == "PROJECT":
+        return project
+    if business_type == "SERVICE_CLOUD":
+        return f"NOT ({project}) AND {service}"
+    return f"NOT ({project}) AND NOT ({service})"
+
+
 def customer_business_profiles(store: DuckDBStore) -> dict[str, dict[str, object]]:
-    """每个授信客户 → 业务画像（三类金额分量 + 主导类型 + 是否混合）。
+    """每个授信客户 → 业务画像（三类金额、订单条数、主导类型与混合标志）。
 
     无销售记录的客户不包含。金额单位：元。三类金额分量互斥，合计等于客户
     销售净额；核算大类缺失或为空的订单归入分销。
     """
 
+    project = business_type_condition("s", "PROJECT")
+    service_cloud = business_type_condition("s", "SERVICE_CLOUD")
+    distribution = business_type_condition("s", "DISTRIBUTION")
     result = store.fetch(
         f"""
         SELECT s."客户编号",
-               SUM(CASE WHEN s."订单类型" IN ({_PROJECT_ORDER_LIST})
+               SUM(CASE WHEN {project}
                         THEN s."销售金额_折扣后_含税" ELSE 0 END) AS project_amount,
-               SUM(CASE WHEN s."订单类型" NOT IN ({_PROJECT_ORDER_LIST})
-                          AND (s."核算大类名称" IN ({_SERVICE_CLOUD_NAMES_LIST})
-                               OR s."核算大类名称" LIKE '%软件%'
-                               OR s."核算大类名称" LIKE '%服务%')
+               SUM(CASE WHEN {service_cloud}
                         THEN s."销售金额_折扣后_含税" ELSE 0 END) AS service_cloud_amount,
-               SUM(CASE
-                     WHEN s."订单类型" IN ({_PROJECT_ORDER_LIST}) THEN 0
-                     WHEN s."核算大类名称" IN ({_SERVICE_CLOUD_NAMES_LIST})
-                       OR s."核算大类名称" LIKE '%软件%'
-                       OR s."核算大类名称" LIKE '%服务%' THEN 0
-                     ELSE s."销售金额_折扣后_含税"
-                   END) AS distribution_amount
+               SUM(CASE WHEN {distribution}
+                        THEN s."销售金额_折扣后_含税" ELSE 0 END) AS distribution_amount
+               ,COUNT(*) FILTER (WHERE {project})
+                    AS project_order_count
+               ,COUNT(*) FILTER (WHERE {service_cloud}) AS service_cloud_order_count
+               ,COUNT(*) FILTER (WHERE {distribution}) AS distribution_order_count
         FROM sales s
         JOIN customer_credit c ON s."客户编号" = c."客户编号_中台"
         GROUP BY 1
@@ -114,18 +129,26 @@ def customer_business_profiles(store: DuckDBStore) -> dict[str, dict[str, object
         project_amount = float(row[1] or 0.0)
         service_cloud_amount = float(row[2] or 0.0)
         distribution_amount = float(row[3] or 0.0)
-        if project_amount == 0.0 and service_cloud_amount == 0.0 and distribution_amount == 0.0:
-            continue
+        project_order_count = int(row[4] or 0)
+        service_cloud_order_count = int(row[5] or 0)
+        distribution_order_count = int(row[6] or 0)
         positive_count = sum(
             1
-            for amount in (project_amount, distribution_amount, service_cloud_amount)
-            if amount > 0
+            for count in (
+                project_order_count,
+                distribution_order_count,
+                service_cloud_order_count,
+            )
+            if count > 0
         )
         profiles[str(row[0])] = {
             "customer_id": str(row[0]),
             "project_amount": project_amount,
             "distribution_amount": distribution_amount,
             "service_cloud_amount": service_cloud_amount,
+            "project_order_count": project_order_count,
+            "distribution_order_count": distribution_order_count,
+            "service_cloud_order_count": service_cloud_order_count,
             "business_type": _dominant_business_type(
                 project_amount, distribution_amount, service_cloud_amount
             ),
@@ -137,6 +160,7 @@ def customer_business_profiles(store: DuckDBStore) -> dict[str, dict[str, object
 __all__ = [
     "BusinessType",
     "PROJECT_ORDER_TYPES",
+    "business_type_condition",
     "customer_business_profiles",
     "order_business_type",
 ]
