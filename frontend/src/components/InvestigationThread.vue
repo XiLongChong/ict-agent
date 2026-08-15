@@ -30,6 +30,9 @@ const protocolDownloadFilename = computed(() => {
   const requestIndex = protocol.value?.request_index || 1;
   return `${caseId}-request-${requestIndex}-deepseek-chat-completions.json`;
 });
+const missingEvidence = computed(() => [
+  ...new Set((record.value?.report?.hypotheses || []).flatMap((item) => item.missing_evidence || [])),
+]);
 
 watch(
   () => props.caseItem,
@@ -204,12 +207,61 @@ function completenessLabel(value) {
           <Badge tone="neutral">{{ completenessLabel(record.report.evidence_completeness) }}</Badge>
         </header>
 
-        <div class="p-5">
+        <div class="space-y-6 p-5">
           <p class="text-[0.9375rem] leading-7 text-ink">
             {{ record.report.risk_assessment.statement }}
           </p>
+          <p class="border-l-2 border-brand pl-4 text-sm leading-6 text-muted">
+            {{ record.report.investigation_summary }}
+          </p>
 
-          <div class="mt-6 border-t border-border pt-5">
+          <section class="border-t border-border pt-5">
+            <h4 class="text-[0.9375rem] font-bold text-ink">关键发现</h4>
+
+            <div class="mt-3 divide-y divide-border border-y border-border">
+              <article v-for="fact in record.report.facts" :key="fact.statement" class="py-3">
+                <p class="text-sm leading-6 text-ink">{{ fact.statement }}</p>
+                <div class="mt-2 flex flex-wrap gap-1.5">
+                  <Badge v-for="id in fact.evidence_ids" :key="id" tone="brand">
+                    {{ labels.tool[evidenceById(id)?.tool_name] || "证据" }} · {{ evidenceById(id)?.period }}
+                  </Badge>
+                </div>
+              </article>
+            </div>
+
+            <div class="mt-4 grid grid-cols-1 gap-5 md:grid-cols-2">
+              <div>
+                <strong class="text-sm text-ink">风险驱动</strong>
+                <ul class="mt-1 space-y-1 text-sm leading-6 text-muted">
+                  <li v-for="item in record.report.risk_assessment.drivers" :key="item">· {{ item }}</li>
+                </ul>
+              </div>
+              <div>
+                <strong class="text-sm text-ink">缓释与反向信号</strong>
+                <ul class="mt-1 space-y-1 text-sm leading-6 text-muted">
+                  <li v-for="item in record.report.risk_assessment.counter_signals" :key="item">· {{ item }}</li>
+                  <li v-if="!record.report.risk_assessment.counter_signals.length">· 暂无</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section class="border-t border-border pt-5">
+            <h4 class="text-[0.9375rem] font-bold text-ink">原因判断</h4>
+            <div class="mt-2 divide-y divide-border">
+              <article v-for="item in record.report.hypotheses" :key="item.hypothesis_id" class="py-3">
+                <div class="flex items-start gap-2">
+                  <Badge :tone="hypothesisColor(item.status)">{{ labels.hypothesis[item.status] }}</Badge>
+                  <strong class="text-sm leading-6 text-ink">{{ item.statement }}</strong>
+                </div>
+                <p v-if="item.missing_evidence.length" class="mt-1.5 pl-0 text-sm leading-6 text-warning-deep md:pl-[4.75rem]">
+                  <b>仍需补证：</b>{{ item.missing_evidence.join("；") }}
+                </p>
+              </article>
+            </div>
+          </section>
+
+          <section class="border-t border-border pt-5">
             <div class="flex items-center gap-2">
               <h4 class="text-[0.9375rem] font-bold text-ink">后续处理建议</h4>
               <Badge :tone="priorityColor(record.report.recommended_priority)">
@@ -228,95 +280,39 @@ function completenessLabel(value) {
                 <span>{{ item }}</span>
               </li>
             </ol>
-          </div>
-
-          <p class="mt-5 rounded-lg bg-warning-wash px-4 py-3 text-sm leading-6 text-warning-deep">
-            AI结论用于辅助判断，请结合下方可复核依据完成人工复核。
-          </p>
-        </div>
-      </article>
-
-      <details class="card">
-        <summary class="cursor-pointer select-none px-5 py-4 text-sm font-semibold text-ink">
-          查看完整分析依据
-        </summary>
-        <div class="space-y-6 border-t border-border px-5 py-5">
-          <section>
-            <h4 class="text-[0.9375rem] font-bold text-ink">审查摘要</h4>
-            <p class="mt-2 text-sm leading-6 text-muted">{{ record.report.investigation_summary }}</p>
           </section>
 
-          <section>
-            <h4 class="text-[0.9375rem] font-bold text-ink">判断依据</h4>
-            <div class="mt-3 grid grid-cols-1 gap-4 md:grid-cols-3">
-              <div>
-                <strong class="text-sm text-ink">主要驱动</strong>
-                <ul class="mt-1 space-y-1 text-sm leading-6 text-muted">
-                  <li v-for="item in record.report.risk_assessment.drivers" :key="item">· {{ item }}</li>
-                </ul>
-              </div>
-              <div>
-                <strong class="text-sm text-ink">反向信号</strong>
-                <ul class="mt-1 space-y-1 text-sm leading-6 text-muted">
-                  <li v-for="item in record.report.risk_assessment.counter_signals" :key="item">· {{ item }}</li>
-                  <li v-if="!record.report.risk_assessment.counter_signals.length">· 暂无</li>
-                </ul>
-              </div>
+          <section class="border-t border-border pt-5">
+            <h4 class="text-[0.9375rem] font-bold text-ink">待补信息与限制</h4>
+            <div class="mt-3 grid grid-cols-1 gap-5 md:grid-cols-3">
               <div>
                 <strong class="text-sm text-ink">后续监测</strong>
                 <ul class="mt-1 space-y-1 text-sm leading-6 text-muted">
                   <li v-for="item in record.report.risk_assessment.watch_items" :key="item">· {{ item }}</li>
                 </ul>
               </div>
+              <div>
+                <strong class="text-sm text-ink">待补证据</strong>
+                <ul class="mt-1 space-y-1 text-sm leading-6 text-muted">
+                  <li v-for="item in missingEvidence" :key="item">· {{ item }}</li>
+                  <li v-if="!missingEvidence.length">· 暂无</li>
+                </ul>
+              </div>
+              <div>
+                <strong class="text-sm text-ink">数据限制</strong>
+                <ul class="mt-1 space-y-1 text-sm leading-6 text-muted">
+                  <li v-for="item in record.report.limitations" :key="item">· {{ item }}</li>
+                  <li v-if="!record.report.limitations.length">· 未报告额外限制</li>
+                </ul>
+              </div>
             </div>
           </section>
 
-          <section>
-            <h4 class="text-[0.9375rem] font-bold text-ink">确定事实</h4>
-            <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-              <article
-                v-for="fact in record.report.facts"
-                :key="fact.statement"
-                class="rounded-lg border border-border p-3"
-              >
-                <p class="text-sm leading-6 text-muted">{{ fact.statement }}</p>
-                <div class="mt-2 flex flex-wrap gap-1.5">
-                  <Badge v-for="id in fact.evidence_ids" :key="id" tone="brand">
-                    {{ labels.tool[evidenceById(id)?.tool_name] || "证据" }} · {{ evidenceById(id)?.period }}
-                  </Badge>
-                </div>
-              </article>
-            </div>
-          </section>
-
-          <section>
-            <h4 class="text-[0.9375rem] font-bold text-ink">证据支持的判断</h4>
-            <div class="mt-3 space-y-3">
-              <article
-                v-for="item in record.report.hypotheses"
-                :key="item.hypothesis_id"
-                class="rounded-lg border border-border p-3"
-              >
-                <div class="flex items-start gap-2">
-                  <Badge :tone="hypothesisColor(item.status)">{{ labels.hypothesis[item.status] }}</Badge>
-                  <strong class="text-sm leading-6 text-ink">{{ item.statement }}</strong>
-                </div>
-                <p v-if="item.missing_evidence.length" class="mt-1.5 text-sm leading-6 text-warning-deep">
-                  <b>仍需补证：</b>{{ item.missing_evidence.join("；") }}
-                </p>
-              </article>
-            </div>
-          </section>
-
-          <section>
-            <h4 class="text-[0.9375rem] font-bold text-ink">数据限制</h4>
-            <ul class="mt-2 space-y-1 text-sm leading-6 text-muted">
-              <li v-for="item in record.report.limitations" :key="item">· {{ item }}</li>
-              <li v-if="!record.report.limitations.length">· 未报告额外限制</li>
-            </ul>
-          </section>
+          <p class="rounded-lg bg-warning-wash px-4 py-3 text-sm leading-6 text-warning-deep">
+            AI结论用于辅助判断，请结合下方可复核依据完成人工复核。
+          </p>
         </div>
-      </details>
+      </article>
 
       <details class="card">
         <summary class="cursor-pointer select-none px-5 py-4 text-sm font-semibold text-ink">
