@@ -134,7 +134,7 @@ async function scan() {
             <tr>
               <th>主体</th>
               <th>来源</th>
-              <th>业务</th>
+              <th>类型</th>
               <th>风险概况</th>
               <th>风险等级</th>
               <th>风险敞口</th>
