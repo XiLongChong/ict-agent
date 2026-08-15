@@ -8,7 +8,14 @@ from pydantic import BaseModel, Field, JsonValue, model_validator
 
 type JsonScalar = str | int | float | bool | None
 BusinessType = Literal["DISTRIBUTION", "PROJECT", "SERVICE_CLOUD"]
-CaseType = Literal["ACCOUNTS_RECEIVABLE", "INVENTORY", "PRE_TRANSACTION"]
+CaseSource = Literal[
+    "RULE_SCAN",
+    "EXTERNAL_ALERT",
+    "PRE_TRANSACTION_SIMULATION",
+    "MANUAL",
+]
+SubjectType = Literal["CUSTOMER", "CONTRACT", "MATERIAL_INVENTORY_ORG"]
+InvestigationProfile = Literal["RECEIVABLES", "INVENTORY", "PRE_TRANSACTION"]
 CaseStatus = Literal[
     "PENDING_AGENT_REVIEW",
     "PENDING_HUMAN_REVIEW",
@@ -25,7 +32,6 @@ InvestigationToolName = Literal[
     "find_records",
     "get_evidence",
 ]
-DiscoverySource = Literal["RULE", "EXTERNAL_ALERT", "PRE_TRANSACTION", "MANUAL"]
 DataQualityStatus = Literal["PASS", "WARNING", "FAIL", "UNKNOWN"]
 SimulationScenario = Literal["RANDOM", "NORMAL", "BORDERLINE", "ANOMALY"]
 GeneratedSimulationScenario = Literal["NORMAL", "BORDERLINE", "ANOMALY"]
@@ -163,8 +169,8 @@ class DatasetCapability(BaseModel):
 class BusinessDataCatalog(BaseModel):
     """当前案件可访问的数据地图，不包含数据库结构或 SQL。"""
 
-    case_type: CaseType
-    entity_scope: str
+    investigation_profile: InvestigationProfile
+    subject_scope: str
     observation_date: str
     datasets: list[DatasetCapability]
     global_rules: list[str]
@@ -259,17 +265,17 @@ class InvestigationDataQuality(BaseModel):
 
 
 class InvestigationCaseInput(BaseModel):
-    """规则引擎与 V2 调查内核之间冻结的输入契约。"""
+    """统一案件与调查内核之间冻结的 V4 输入契约。"""
 
-    schema_version: Literal["3.0"] = "3.0"
+    schema_version: Literal["4.0"] = "4.0"
     case_id: str
-    discovery_source: DiscoverySource
-    case_type: CaseType
-    entity_type: str
-    entity_id: str
-    entity_label: str
+    source: CaseSource
+    subject_type: SubjectType
+    subject_id: str
+    subject_label: str
+    subject_context: dict[str, JsonScalar]
+    investigation_profile: InvestigationProfile
     business_type: BusinessType | None = None
-    entity_context: dict[str, JsonScalar]
     observation_date: str
     priority: RiskPriority
     exposure_amount: float
@@ -284,11 +290,11 @@ class RiskCaseSummary(BaseModel):
     """案件队列中的单行摘要。"""
 
     case_id: str
-    discovery_source: DiscoverySource
-    case_type: CaseType
-    entity_type: str
-    entity_id: str
-    entity_label: str
+    source: CaseSource
+    subject_type: SubjectType
+    subject_id: str
+    subject_label: str
+    investigation_profile: InvestigationProfile
     business_type: BusinessType | None = None
     observation_date: str
     status: CaseStatus
@@ -437,7 +443,7 @@ class ReviewRecord(BaseModel):
 class RiskCaseDetail(RiskCaseSummary):
     """案件详情、最新调查和审核历史。"""
 
-    entity_context: dict[str, JsonScalar]
+    subject_context: dict[str, JsonScalar]
     signals: list[InvestigationSignalInput]
     latest_investigation: InvestigationRecord | None = None
     reviews: list[ReviewRecord] = []
@@ -468,7 +474,7 @@ class RiskOverviewResponse(BaseModel):
     closed_cases: int
     high_priority_cases: int
     exposure_amount: float
-    cases_by_type: dict[str, int]
+    cases_by_investigation_profile: dict[InvestigationProfile, int]
 
 
 class PreTransactionSimulationRequest(BaseModel):

@@ -11,8 +11,8 @@ from ict_agent.config import ConfigurationError, load_settings
 from ict_agent.data import DataAccessError, DuckDBStore
 from ict_agent.models import (
     BusinessRecordSearchQuery,
-    CaseType,
     EvidenceQuery,
+    InvestigationProfile,
     JsonScalar,
 )
 from ict_agent.tools import (
@@ -26,9 +26,9 @@ from pydantic import ValidationError
 
 def _add_scope(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--case-type",
+        "--investigation-profile",
         required=True,
-        choices=["ACCOUNTS_RECEIVABLE", "INVENTORY"],
+        choices=["RECEIVABLES", "INVENTORY"],
     )
     parser.add_argument("--customer-id", help="应收案件客户编号，例如 C015。")
     parser.add_argument("--customer-name", default="", help="可选客户名称。")
@@ -92,18 +92,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _scope(args: argparse.Namespace) -> tuple[CaseType, dict[str, JsonScalar]]:
-    case_type = cast(CaseType, args.case_type)
-    if case_type == "ACCOUNTS_RECEIVABLE":
+def _scope(args: argparse.Namespace) -> tuple[InvestigationProfile, dict[str, JsonScalar]]:
+    investigation_profile = cast(InvestigationProfile, args.investigation_profile)
+    if investigation_profile == "RECEIVABLES":
         if not args.customer_id:
             raise AnalysisInputError("应收案件必须提供 --customer-id。")
-        return case_type, {
+        return investigation_profile, {
             "customer_id": args.customer_id,
             "customer_name": args.customer_name,
         }
     if not args.material_code or not args.inventory_org:
         raise AnalysisInputError("库存案件必须提供 --material-code 和 --inventory-org。")
-    return case_type, {
+    return investigation_profile, {
         "material_code": args.material_code,
         "inventory_org": args.inventory_org,
     }
@@ -128,15 +128,15 @@ def main() -> int:
         if args.command == "snapshot":
             payload: Any = _snapshot_payload(store)
         else:
-            case_type, context = _scope(args)
+            investigation_profile, context = _scope(args)
             if args.command == "capabilities":
                 payload = discover_evidence_capabilities(
-                    store, case_type, context, args.observation_date
+                    store, investigation_profile, context, args.observation_date
                 ).model_dump(mode="json")
             elif args.command == "search":
                 payload = search_business_records(
                     store,
-                    case_type,
+                    investigation_profile,
                     context,
                     BusinessRecordSearchQuery(
                         record_type=args.record_type,
@@ -147,7 +147,7 @@ def main() -> int:
             else:
                 payload = query_business_evidence(
                     store,
-                    case_type,
+                    investigation_profile,
                     context,
                     EvidenceQuery(
                         dataset=args.dataset,

@@ -9,7 +9,6 @@ import random
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from statistics import median
 from uuid import UUID, uuid5
 
 from ict_agent.models import BusinessType, DataQualityStatus
@@ -27,9 +26,12 @@ class HistoricalOrderProfile:
     customer_id: str
     customer_name: str
     business_type: BusinessType
-    positive_order_amounts: tuple[float, ...]
-    gross_margin_rates: tuple[float, ...]
-    payment_days: tuple[float, ...]
+    historical_order_count: int
+    distribution_summary: dict[str, float]
+    maximum_order_amount: float
+    sampled_order_amount: float
+    median_gross_margin_rate: float | None
+    median_payment_days: float | None
     source_snapshot_id: str
 
 
@@ -86,8 +88,7 @@ def generate_simulated_order(
 ) -> SimulatedOrder:
     """根据历史画像生成一笔可复现的新订单情景。"""
 
-    amounts = tuple(float(value) for value in profile.positive_order_amounts if float(value) > 0)
-    if not amounts:
+    if profile.historical_order_count <= 0 or profile.sampled_order_amount <= 0:
         raise ValueError("历史画像没有正订单金额，无法生成模拟订单。")
     selected = Scenario(scenario)
     actual_seed = seed if seed is not None else random.SystemRandom().randrange(2_147_483_648)
@@ -99,31 +100,29 @@ def generate_simulated_order(
             k=1,
         )[0]
 
-    p75 = _percentile(amounts, 0.75)
-    p90 = _percentile(amounts, 0.90)
+    p75 = profile.distribution_summary["p75_yuan"]
+    p90 = profile.distribution_summary["p90_yuan"]
     if selected is Scenario.NORMAL:
-        amount = rng.choice(amounts) * rng.uniform(0.85, 1.15)
+        amount = profile.sampled_order_amount * rng.uniform(0.85, 1.15)
     elif selected is Scenario.BORDERLINE:
         amount = p75 * rng.uniform(1.0, 1.25)
     else:
-        amount = max(p90, max(amounts)) * rng.uniform(1.5, 2.5)
+        amount = max(p90, profile.maximum_order_amount) * rng.uniform(1.5, 2.5)
 
-    margins = tuple(float(value) for value in profile.gross_margin_rates)
-    terms = tuple(float(value) for value in profile.payment_days if float(value) >= 0)
-    expected_margin = median(margins) if margins else None
-    proposed_term = median(terms) if terms else 0.0
+    expected_margin = profile.median_gross_margin_rate
+    proposed_term = profile.median_payment_days or 0.0
     if expected_margin is not None:
         expected_margin *= rng.uniform(0.95, 1.05)
     proposed_term *= rng.uniform(0.95, 1.05)
     warnings: list[str] = []
-    if len(amounts) < 5:
+    if profile.historical_order_count < 5:
         warnings.append("历史正订单少于 5 笔，分布稳定性有限。")
-    if not margins:
+    if expected_margin is None:
         warnings.append("历史订单缺少可计算毛利率，拟交易不生成预期毛利率。")
-    if not terms:
+    if profile.median_payment_days is None:
         warnings.append("历史回款缺少有效账龄，拟账期暂按 0 天展示并要求人工补充。")
     status: DataQualityStatus = "WARNING" if warnings else "PASS"
-    distribution = summarize_order_amounts(amounts)
+    distribution = profile.distribution_summary
     simulation_id = str(
         uuid5(
             UUID("00000000-0000-0000-0000-000000000001"),
@@ -143,7 +142,7 @@ def generate_simulated_order(
         expected_margin_rate=round(expected_margin, 6) if expected_margin is not None else None,
         scenario=selected,
         seed=actual_seed,
-        historical_order_count=len(amounts),
+        historical_order_count=profile.historical_order_count,
         distribution_summary=distribution,
         source_snapshot_id=profile.source_snapshot_id,
         data_quality_status=status,

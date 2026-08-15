@@ -138,11 +138,11 @@ def _tag_hit(hit: RuleHitWrite, entity_meta: dict[str, object]) -> RuleHitWrite:
 
 def _entity_meta(
     *,
-    case_type: str,
-    entity_type: str,
-    entity_id: str,
-    entity_label: str,
-    entity_context: dict[str, object],
+    investigation_profile: str,
+    subject_type: str,
+    subject_id: str,
+    subject_label: str,
+    subject_context: dict[str, object],
     observation_date: str,
     ar_balance: float | None = None,
     inv_amount: float | None = None,
@@ -150,11 +150,11 @@ def _entity_meta(
     """构造实体元数据，供合并案件时还原 CaseWrite 字段。"""
 
     return {
-        "case_type": case_type,
-        "entity_type": entity_type,
-        "entity_id": entity_id,
-        "entity_label": entity_label,
-        "entity_context": entity_context,
+        "investigation_profile": investigation_profile,
+        "subject_type": subject_type,
+        "subject_id": subject_id,
+        "subject_label": subject_label,
+        "subject_context": subject_context,
         "observation_date": observation_date,
         "ar_balance": ar_balance,
         "inv_amount": inv_amount,
@@ -185,18 +185,18 @@ def _merge_hits_into_cases(
             if isinstance(ent, dict):
                 meta = ent
                 break
-        case_type = str(meta.get("case_type", "ACCOUNTS_RECEIVABLE"))
-        entity_type = str(meta.get("entity_type", "CUSTOMER"))
-        entity_id = str(meta.get("entity_id", case_id))
-        entity_label = str(meta.get("entity_label", entity_id))
-        entity_context = meta.get("entity_context")
+        investigation_profile = str(meta.get("investigation_profile", "RECEIVABLES"))
+        subject_type = str(meta.get("subject_type", "CUSTOMER"))
+        subject_id = str(meta.get("subject_id", case_id))
+        subject_label = str(meta.get("subject_label", subject_id))
+        subject_context = meta.get("subject_context")
         observation_date = str(meta.get("observation_date", ""))
         # 暴露金额：应收域取应收余额，库存域取库存金额；缺省用组内最大命中暴露
         ar_balance = meta.get("ar_balance")
         inv_amount = meta.get("inv_amount")
         ar_balance_num = float(ar_balance) if isinstance(ar_balance, (int, float)) else None
         inv_amount_num = float(inv_amount) if isinstance(inv_amount, (int, float)) else None
-        if case_type == "INVENTORY" and inv_amount_num is not None:
+        if investigation_profile == "INVENTORY" and inv_amount_num is not None:
             exposure = inv_amount_num
         elif ar_balance_num is not None:
             exposure = ar_balance_num
@@ -212,11 +212,11 @@ def _merge_hits_into_cases(
         cases.append(
             CaseWrite(
                 case_id=case_id,
-                case_type=case_type,
-                entity_type=entity_type,
-                entity_id=entity_id,
-                entity_label=entity_label,
-                entity_context=dict(entity_context) if isinstance(entity_context, dict) else {},
+                investigation_profile=investigation_profile,
+                subject_type=subject_type,
+                subject_id=subject_id,
+                subject_label=subject_label,
+                subject_context=dict(subject_context) if isinstance(subject_context, dict) else {},
                 observation_date=observation_date,
                 priority=_priority(group),
                 exposure_amount=exposure,
@@ -332,11 +332,11 @@ def _receivable_cases(
             "list_status": list_status,
             "credit_limit": credit_limit,
             _ENTITY_KEY: _entity_meta(
-                case_type="ACCOUNTS_RECEIVABLE",
-                entity_type="CUSTOMER",
-                entity_id=customer_id,
-                entity_label=f"{customer_id} {customer_name}".strip(),
-                entity_context={"customer_id": customer_id, "customer_name": customer_name},
+                investigation_profile="RECEIVABLES",
+                subject_type="CUSTOMER",
+                subject_id=customer_id,
+                subject_label=f"{customer_id} {customer_name}".strip(),
+                subject_context={"customer_id": customer_id, "customer_name": customer_name},
                 observation_date=observation_date,
                 ar_balance=ar_amount,
             ),
@@ -487,11 +487,11 @@ def _receivable_cases(
         cases.append(
             CaseWrite(
                 case_id=case_id,
-                case_type="ACCOUNTS_RECEIVABLE",
-                entity_type="CUSTOMER",
-                entity_id=customer_id,
-                entity_label=f"{customer_id} {customer_name}".strip(),
-                entity_context={"customer_id": customer_id, "customer_name": customer_name},
+                investigation_profile="RECEIVABLES",
+                subject_type="CUSTOMER",
+                subject_id=customer_id,
+                subject_label=f"{customer_id} {customer_name}".strip(),
+                subject_context={"customer_id": customer_id, "customer_name": customer_name},
                 observation_date=observation_date,
                 priority=_priority(hits),
                 exposure_amount=ar_amount,
@@ -535,8 +535,8 @@ def _inventory_cases(
         fresh_amount = _number_value(row, 9)
         sales_3m = _number_value(row, 10)
         previous_sales_3m = _number_value(row, 11)
-        entity_id = f"{material_code}|{inventory_org}"
-        case_id = f"INV|{entity_id}"
+        subject_id = f"{material_code}|{inventory_org}"
+        case_id = f"INV|{subject_id}"
         hits: list[RuleHitWrite] = []
         is_material_buildup = inventory_growth >= thresholds.inventory_buildup_amount and (
             previous_inventory_amount == 0
@@ -567,11 +567,11 @@ def _inventory_cases(
             "sales_3m": sales_3m,
             "previous_sales_3m": previous_sales_3m,
             _ENTITY_KEY: _entity_meta(
-                case_type="INVENTORY",
-                entity_type="MATERIAL_INVENTORY_ORG",
-                entity_id=entity_id,
-                entity_label=material_code,
-                entity_context={
+                investigation_profile="INVENTORY",
+                subject_type="MATERIAL_INVENTORY_ORG",
+                subject_id=subject_id,
+                subject_label=material_code,
+                subject_context={
                     "material_code": material_code,
                     "inventory_org": inventory_org,
                 },
@@ -644,11 +644,11 @@ def _inventory_cases(
         cases.append(
             CaseWrite(
                 case_id=case_id,
-                case_type="INVENTORY",
-                entity_type="MATERIAL_INVENTORY_ORG",
-                entity_id=entity_id,
-                entity_label=material_code,
-                entity_context={
+                investigation_profile="INVENTORY",
+                subject_type="MATERIAL_INVENTORY_ORG",
+                subject_id=subject_id,
+                subject_label=material_code,
+                subject_context={
                     "material_code": material_code,
                     "inventory_org": inventory_org,
                 },
@@ -709,11 +709,11 @@ def _unpaid_sales_cases(
                 "unpaid_ge90_amount": unpaid_ge90_amount,
                 "max_unpaid_days": max_unpaid_days,
                 _ENTITY_KEY: _entity_meta(
-                    case_type="ACCOUNTS_RECEIVABLE",
-                    entity_type="CUSTOMER",
-                    entity_id=customer_id,
-                    entity_label=f"{customer_id} {customer_name}".strip(),
-                    entity_context={"customer_id": customer_id, "customer_name": customer_name},
+                    investigation_profile="RECEIVABLES",
+                    subject_type="CUSTOMER",
+                    subject_id=customer_id,
+                    subject_label=f"{customer_id} {customer_name}".strip(),
+                    subject_context={"customer_id": customer_id, "customer_name": customer_name},
                     observation_date=observation_date,
                     ar_balance=unpaid_ge90_amount,
                 ),
@@ -725,11 +725,11 @@ def _unpaid_sales_cases(
         cases.append(
             CaseWrite(
                 case_id=case_id,
-                case_type="ACCOUNTS_RECEIVABLE",
-                entity_type="CUSTOMER",
-                entity_id=customer_id,
-                entity_label=f"{customer_id} {customer_name}".strip(),
-                entity_context={"customer_id": customer_id, "customer_name": customer_name},
+                investigation_profile="RECEIVABLES",
+                subject_type="CUSTOMER",
+                subject_id=customer_id,
+                subject_label=f"{customer_id} {customer_name}".strip(),
+                subject_context={"customer_id": customer_id, "customer_name": customer_name},
                 observation_date=observation_date,
                 priority="HIGH",
                 exposure_amount=unpaid_ge90_amount,
@@ -765,8 +765,8 @@ def _zero_sales_inventory_cases(
         sales_3m = _number_value(row, 4)
         if sales_3m > 0 or inventory_amount < thresholds.zero_sales_inventory_amount:
             continue
-        entity_id = f"{material_code}|{inventory_org}"
-        case_id = f"INV|{entity_id}"
+        subject_id = f"{material_code}|{inventory_org}"
+        case_id = f"INV|{subject_id}"
         hit = _hit(
             case_id=case_id,
             rule_id="INV_ZERO_SALES_STOCK",
@@ -778,11 +778,14 @@ def _zero_sales_inventory_cases(
                 "inventory_amount": inventory_amount,
                 "sales_3m": sales_3m,
                 _ENTITY_KEY: _entity_meta(
-                    case_type="INVENTORY",
-                    entity_type="MATERIAL_INVENTORY_ORG",
-                    entity_id=entity_id,
-                    entity_label=material_code,
-                    entity_context={"material_code": material_code, "inventory_org": inventory_org},
+                    investigation_profile="INVENTORY",
+                    subject_type="MATERIAL_INVENTORY_ORG",
+                    subject_id=subject_id,
+                    subject_label=material_code,
+                    subject_context={
+                        "material_code": material_code,
+                        "inventory_org": inventory_org,
+                    },
                     observation_date=observation_date,
                     inv_amount=inventory_amount,
                 ),
@@ -794,11 +797,11 @@ def _zero_sales_inventory_cases(
         cases.append(
             CaseWrite(
                 case_id=case_id,
-                case_type="INVENTORY",
-                entity_type="MATERIAL_INVENTORY_ORG",
-                entity_id=entity_id,
-                entity_label=material_code,
-                entity_context={"material_code": material_code, "inventory_org": inventory_org},
+                investigation_profile="INVENTORY",
+                subject_type="MATERIAL_INVENTORY_ORG",
+                subject_id=subject_id,
+                subject_label=material_code,
+                subject_context={"material_code": material_code, "inventory_org": inventory_org},
                 observation_date=observation_date,
                 priority="HIGH",
                 exposure_amount=inventory_amount,
@@ -831,8 +834,8 @@ def _very_old_inventory_cases(
         very_old_quantity = _number_value(row, 4)
         if very_old_amount < thresholds.very_old_inventory_amount:
             continue
-        entity_id = f"{material_code}|{inventory_org}"
-        case_id = f"INV|{entity_id}"
+        subject_id = f"{material_code}|{inventory_org}"
+        case_id = f"INV|{subject_id}"
         hit = _hit(
             case_id=case_id,
             rule_id="INV_VERY_OLD_STOCK",
@@ -847,11 +850,14 @@ def _very_old_inventory_cases(
                 "very_old_amount": very_old_amount,
                 "very_old_quantity": very_old_quantity,
                 _ENTITY_KEY: _entity_meta(
-                    case_type="INVENTORY",
-                    entity_type="MATERIAL_INVENTORY_ORG",
-                    entity_id=entity_id,
-                    entity_label=material_code,
-                    entity_context={"material_code": material_code, "inventory_org": inventory_org},
+                    investigation_profile="INVENTORY",
+                    subject_type="MATERIAL_INVENTORY_ORG",
+                    subject_id=subject_id,
+                    subject_label=material_code,
+                    subject_context={
+                        "material_code": material_code,
+                        "inventory_org": inventory_org,
+                    },
                     observation_date=observation_date,
                     inv_amount=very_old_amount,
                 ),
@@ -863,11 +869,11 @@ def _very_old_inventory_cases(
         cases.append(
             CaseWrite(
                 case_id=case_id,
-                case_type="INVENTORY",
-                entity_type="MATERIAL_INVENTORY_ORG",
-                entity_id=entity_id,
-                entity_label=material_code,
-                entity_context={"material_code": material_code, "inventory_org": inventory_org},
+                investigation_profile="INVENTORY",
+                subject_type="MATERIAL_INVENTORY_ORG",
+                subject_id=subject_id,
+                subject_label=material_code,
+                subject_context={"material_code": material_code, "inventory_org": inventory_org},
                 observation_date=observation_date,
                 priority="HIGH",
                 exposure_amount=very_old_amount,
@@ -909,11 +915,11 @@ def _extension_cases(
             metrics={
                 "extension_count": extension_count,
                 _ENTITY_KEY: _entity_meta(
-                    case_type="ACCOUNTS_RECEIVABLE",
-                    entity_type="CUSTOMER",
-                    entity_id=customer_id,
-                    entity_label=f"{customer_id} {customer_name}".strip(),
-                    entity_context={"customer_id": customer_id, "customer_name": customer_name},
+                    investigation_profile="RECEIVABLES",
+                    subject_type="CUSTOMER",
+                    subject_id=customer_id,
+                    subject_label=f"{customer_id} {customer_name}".strip(),
+                    subject_context={"customer_id": customer_id, "customer_name": customer_name},
                     observation_date=observation_date,
                     ar_balance=None,
                 ),
@@ -925,11 +931,11 @@ def _extension_cases(
         cases.append(
             CaseWrite(
                 case_id=case_id,
-                case_type="ACCOUNTS_RECEIVABLE",
-                entity_type="CUSTOMER",
-                entity_id=customer_id,
-                entity_label=f"{customer_id} {customer_name}".strip(),
-                entity_context={"customer_id": customer_id, "customer_name": customer_name},
+                investigation_profile="RECEIVABLES",
+                subject_type="CUSTOMER",
+                subject_id=customer_id,
+                subject_label=f"{customer_id} {customer_name}".strip(),
+                subject_context={"customer_id": customer_id, "customer_name": customer_name},
                 observation_date=observation_date,
                 priority="MEDIUM",
                 exposure_amount=0.0,
@@ -971,11 +977,11 @@ def _penalty_interest_cases(
             metrics={
                 "penalty_interest": penalty_interest,
                 _ENTITY_KEY: _entity_meta(
-                    case_type="ACCOUNTS_RECEIVABLE",
-                    entity_type="CUSTOMER",
-                    entity_id=customer_id,
-                    entity_label=f"{customer_id} {customer_name}".strip(),
-                    entity_context={"customer_id": customer_id, "customer_name": customer_name},
+                    investigation_profile="RECEIVABLES",
+                    subject_type="CUSTOMER",
+                    subject_id=customer_id,
+                    subject_label=f"{customer_id} {customer_name}".strip(),
+                    subject_context={"customer_id": customer_id, "customer_name": customer_name},
                     observation_date=observation_date,
                     ar_balance=None,
                 ),
@@ -987,11 +993,11 @@ def _penalty_interest_cases(
         cases.append(
             CaseWrite(
                 case_id=case_id,
-                case_type="ACCOUNTS_RECEIVABLE",
-                entity_type="CUSTOMER",
-                entity_id=customer_id,
-                entity_label=f"{customer_id} {customer_name}".strip(),
-                entity_context={"customer_id": customer_id, "customer_name": customer_name},
+                investigation_profile="RECEIVABLES",
+                subject_type="CUSTOMER",
+                subject_id=customer_id,
+                subject_label=f"{customer_id} {customer_name}".strip(),
+                subject_context={"customer_id": customer_id, "customer_name": customer_name},
                 observation_date=observation_date,
                 priority="MEDIUM",
                 exposure_amount=penalty_interest,
@@ -1030,8 +1036,8 @@ def _stale_ratio_cases(
             or stale_amount < thresholds.stale_ratio_amount
         ):
             continue
-        entity_id = f"{material_code}|{inventory_org}"
-        case_id = f"INV|{entity_id}"
+        subject_id = f"{material_code}|{inventory_org}"
+        case_id = f"INV|{subject_id}"
         hit = _hit(
             case_id=case_id,
             rule_id="INV_STALE_RATIO_HIGH",
@@ -1044,11 +1050,14 @@ def _stale_ratio_cases(
                 "stale_amount": stale_amount,
                 "stale_rate": stale_rate,
                 _ENTITY_KEY: _entity_meta(
-                    case_type="INVENTORY",
-                    entity_type="MATERIAL_INVENTORY_ORG",
-                    entity_id=entity_id,
-                    entity_label=material_code,
-                    entity_context={"material_code": material_code, "inventory_org": inventory_org},
+                    investigation_profile="INVENTORY",
+                    subject_type="MATERIAL_INVENTORY_ORG",
+                    subject_id=subject_id,
+                    subject_label=material_code,
+                    subject_context={
+                        "material_code": material_code,
+                        "inventory_org": inventory_org,
+                    },
                     observation_date=observation_date,
                     inv_amount=stale_amount,
                 ),
@@ -1060,11 +1069,11 @@ def _stale_ratio_cases(
         cases.append(
             CaseWrite(
                 case_id=case_id,
-                case_type="INVENTORY",
-                entity_type="MATERIAL_INVENTORY_ORG",
-                entity_id=entity_id,
-                entity_label=material_code,
-                entity_context={"material_code": material_code, "inventory_org": inventory_org},
+                investigation_profile="INVENTORY",
+                subject_type="MATERIAL_INVENTORY_ORG",
+                subject_id=subject_id,
+                subject_label=material_code,
+                subject_context={"material_code": material_code, "inventory_org": inventory_org},
                 observation_date=observation_date,
                 priority="MEDIUM",
                 exposure_amount=stale_amount,
@@ -1102,8 +1111,8 @@ def _overdue_stock_cases(
             continue
         if max_overdue_days < thresholds.borrow_overdue_days:
             continue
-        entity_id = f"{material_code}|{inventory_org}"
-        case_id = f"INV|{entity_id}"
+        subject_id = f"{material_code}|{inventory_org}"
+        case_id = f"INV|{subject_id}"
         hit = _hit(
             case_id=case_id,
             rule_id="INV_OVERDUE_STOCK",
@@ -1119,11 +1128,14 @@ def _overdue_stock_cases(
                 "max_overdue_days": max_overdue_days,
                 "overdue_rows": overdue_rows,
                 _ENTITY_KEY: _entity_meta(
-                    case_type="INVENTORY",
-                    entity_type="MATERIAL_INVENTORY_ORG",
-                    entity_id=entity_id,
-                    entity_label=material_code,
-                    entity_context={"material_code": material_code, "inventory_org": inventory_org},
+                    investigation_profile="INVENTORY",
+                    subject_type="MATERIAL_INVENTORY_ORG",
+                    subject_id=subject_id,
+                    subject_label=material_code,
+                    subject_context={
+                        "material_code": material_code,
+                        "inventory_org": inventory_org,
+                    },
                     observation_date=observation_date,
                     inv_amount=overdue_amount,
                 ),
@@ -1135,11 +1147,11 @@ def _overdue_stock_cases(
         cases.append(
             CaseWrite(
                 case_id=case_id,
-                case_type="INVENTORY",
-                entity_type="MATERIAL_INVENTORY_ORG",
-                entity_id=entity_id,
-                entity_label=material_code,
-                entity_context={"material_code": material_code, "inventory_org": inventory_org},
+                investigation_profile="INVENTORY",
+                subject_type="MATERIAL_INVENTORY_ORG",
+                subject_id=subject_id,
+                subject_label=material_code,
+                subject_context={"material_code": material_code, "inventory_org": inventory_org},
                 observation_date=observation_date,
                 priority="MEDIUM",
                 exposure_amount=overdue_amount,
@@ -1190,11 +1202,11 @@ def _customer_return_cases(
                 "return_amount": return_amount,
                 "return_ratio": ratio,
                 _ENTITY_KEY: _entity_meta(
-                    case_type="ACCOUNTS_RECEIVABLE",
-                    entity_type="CUSTOMER",
-                    entity_id=customer_id,
-                    entity_label=f"{customer_id} {customer_name}".strip(),
-                    entity_context={"customer_id": customer_id, "customer_name": customer_name},
+                    investigation_profile="RECEIVABLES",
+                    subject_type="CUSTOMER",
+                    subject_id=customer_id,
+                    subject_label=f"{customer_id} {customer_name}".strip(),
+                    subject_context={"customer_id": customer_id, "customer_name": customer_name},
                     observation_date=observation_date,
                     ar_balance=None,
                 ),
@@ -1206,11 +1218,11 @@ def _customer_return_cases(
         cases.append(
             CaseWrite(
                 case_id=case_id,
-                case_type="ACCOUNTS_RECEIVABLE",
-                entity_type="CUSTOMER",
-                entity_id=customer_id,
-                entity_label=f"{customer_id} {customer_name}".strip(),
-                entity_context={"customer_id": customer_id, "customer_name": customer_name},
+                investigation_profile="RECEIVABLES",
+                subject_type="CUSTOMER",
+                subject_id=customer_id,
+                subject_label=f"{customer_id} {customer_name}".strip(),
+                subject_context={"customer_id": customer_id, "customer_name": customer_name},
                 observation_date=observation_date,
                 priority="MEDIUM",
                 exposure_amount=return_amount,
@@ -1264,11 +1276,11 @@ def _negative_payment_cases(
                 "negative_payment": negative_payment,
                 "negative_ratio": ratio,
                 _ENTITY_KEY: _entity_meta(
-                    case_type="ACCOUNTS_RECEIVABLE",
-                    entity_type="CUSTOMER",
-                    entity_id=customer_id,
-                    entity_label=f"{customer_id} {customer_name}".strip(),
-                    entity_context={"customer_id": customer_id, "customer_name": customer_name},
+                    investigation_profile="RECEIVABLES",
+                    subject_type="CUSTOMER",
+                    subject_id=customer_id,
+                    subject_label=f"{customer_id} {customer_name}".strip(),
+                    subject_context={"customer_id": customer_id, "customer_name": customer_name},
                     observation_date=observation_date,
                     ar_balance=None,
                 ),
@@ -1280,11 +1292,11 @@ def _negative_payment_cases(
         cases.append(
             CaseWrite(
                 case_id=case_id,
-                case_type="ACCOUNTS_RECEIVABLE",
-                entity_type="CUSTOMER",
-                entity_id=customer_id,
-                entity_label=f"{customer_id} {customer_name}".strip(),
-                entity_context={"customer_id": customer_id, "customer_name": customer_name},
+                investigation_profile="RECEIVABLES",
+                subject_type="CUSTOMER",
+                subject_id=customer_id,
+                subject_label=f"{customer_id} {customer_name}".strip(),
+                subject_context={"customer_id": customer_id, "customer_name": customer_name},
                 observation_date=observation_date,
                 priority="MEDIUM",
                 exposure_amount=negative_payment,
@@ -1326,11 +1338,11 @@ def _aging_payment_cases(
             metrics={
                 "aging_amount": aging_amount,
                 _ENTITY_KEY: _entity_meta(
-                    case_type="ACCOUNTS_RECEIVABLE",
-                    entity_type="CUSTOMER",
-                    entity_id=customer_id,
-                    entity_label=f"{customer_id} {customer_name}".strip(),
-                    entity_context={"customer_id": customer_id, "customer_name": customer_name},
+                    investigation_profile="RECEIVABLES",
+                    subject_type="CUSTOMER",
+                    subject_id=customer_id,
+                    subject_label=f"{customer_id} {customer_name}".strip(),
+                    subject_context={"customer_id": customer_id, "customer_name": customer_name},
                     observation_date=observation_date,
                     ar_balance=None,
                 ),
@@ -1342,11 +1354,11 @@ def _aging_payment_cases(
         cases.append(
             CaseWrite(
                 case_id=case_id,
-                case_type="ACCOUNTS_RECEIVABLE",
-                entity_type="CUSTOMER",
-                entity_id=customer_id,
-                entity_label=f"{customer_id} {customer_name}".strip(),
-                entity_context={"customer_id": customer_id, "customer_name": customer_name},
+                investigation_profile="RECEIVABLES",
+                subject_type="CUSTOMER",
+                subject_id=customer_id,
+                subject_label=f"{customer_id} {customer_name}".strip(),
+                subject_context={"customer_id": customer_id, "customer_name": customer_name},
                 observation_date=observation_date,
                 priority="MEDIUM",
                 exposure_amount=aging_amount,
@@ -1388,11 +1400,11 @@ def _negative_margin_cases(
             metrics={
                 "margin_loss": margin_loss,
                 _ENTITY_KEY: _entity_meta(
-                    case_type="ACCOUNTS_RECEIVABLE",
-                    entity_type="CUSTOMER",
-                    entity_id=customer_id,
-                    entity_label=f"{customer_id} {customer_name}".strip(),
-                    entity_context={"customer_id": customer_id, "customer_name": customer_name},
+                    investigation_profile="RECEIVABLES",
+                    subject_type="CUSTOMER",
+                    subject_id=customer_id,
+                    subject_label=f"{customer_id} {customer_name}".strip(),
+                    subject_context={"customer_id": customer_id, "customer_name": customer_name},
                     observation_date=observation_date,
                     ar_balance=None,
                 ),
@@ -1404,11 +1416,11 @@ def _negative_margin_cases(
         cases.append(
             CaseWrite(
                 case_id=case_id,
-                case_type="ACCOUNTS_RECEIVABLE",
-                entity_type="CUSTOMER",
-                entity_id=customer_id,
-                entity_label=f"{customer_id} {customer_name}".strip(),
-                entity_context={"customer_id": customer_id, "customer_name": customer_name},
+                investigation_profile="RECEIVABLES",
+                subject_type="CUSTOMER",
+                subject_id=customer_id,
+                subject_label=f"{customer_id} {customer_name}".strip(),
+                subject_context={"customer_id": customer_id, "customer_name": customer_name},
                 observation_date=observation_date,
                 priority="MEDIUM",
                 exposure_amount=margin_loss,
@@ -1460,11 +1472,11 @@ def _margin_optimistic_cases(
                 "estimated_margin": weighted_est_margin,
                 "actual_margin": weighted_act_margin,
                 _ENTITY_KEY: _entity_meta(
-                    case_type="ACCOUNTS_RECEIVABLE",
-                    entity_type="CONTRACT",
-                    entity_id=contract_number,
-                    entity_label=contract_number,
-                    entity_context={
+                    investigation_profile="RECEIVABLES",
+                    subject_type="CONTRACT",
+                    subject_id=contract_number,
+                    subject_label=contract_number,
+                    subject_context={
                         "contract_number": contract_number,
                         "customer_name": customer_name,
                     },
@@ -1479,11 +1491,14 @@ def _margin_optimistic_cases(
         cases.append(
             CaseWrite(
                 case_id=case_id,
-                case_type="ACCOUNTS_RECEIVABLE",
-                entity_type="CONTRACT",
-                entity_id=contract_number,
-                entity_label=contract_number,
-                entity_context={"contract_number": contract_number, "customer_name": customer_name},
+                investigation_profile="RECEIVABLES",
+                subject_type="CONTRACT",
+                subject_id=contract_number,
+                subject_label=contract_number,
+                subject_context={
+                    "contract_number": contract_number,
+                    "customer_name": customer_name,
+                },
                 observation_date=observation_date,
                 priority="MEDIUM",
                 exposure_amount=contract_amount,
@@ -1532,11 +1547,11 @@ def _term_overage_cases(
                 "contract_amount": contract_amount,
                 "max_overage_days": max_overage,
                 _ENTITY_KEY: _entity_meta(
-                    case_type="ACCOUNTS_RECEIVABLE",
-                    entity_type="CUSTOMER",
-                    entity_id=customer_id,
-                    entity_label=f"{customer_id} {customer_name}".strip(),
-                    entity_context={"customer_id": customer_id, "customer_name": customer_name},
+                    investigation_profile="RECEIVABLES",
+                    subject_type="CUSTOMER",
+                    subject_id=customer_id,
+                    subject_label=f"{customer_id} {customer_name}".strip(),
+                    subject_context={"customer_id": customer_id, "customer_name": customer_name},
                     observation_date=observation_date,
                     ar_balance=None,
                 ),
@@ -1548,11 +1563,11 @@ def _term_overage_cases(
         cases.append(
             CaseWrite(
                 case_id=case_id,
-                case_type="ACCOUNTS_RECEIVABLE",
-                entity_type="CUSTOMER",
-                entity_id=customer_id,
-                entity_label=f"{customer_id} {customer_name}".strip(),
-                entity_context={"customer_id": customer_id, "customer_name": customer_name},
+                investigation_profile="RECEIVABLES",
+                subject_type="CUSTOMER",
+                subject_id=customer_id,
+                subject_label=f"{customer_id} {customer_name}".strip(),
+                subject_context={"customer_id": customer_id, "customer_name": customer_name},
                 observation_date=observation_date,
                 priority="MEDIUM",
                 exposure_amount=contract_amount,
@@ -1629,8 +1644,8 @@ def build_rule_scan(
         staleratio_period,
         borrow_period,
     )
-    ar_case_count = sum(1 for c in cases if c.case_type == "ACCOUNTS_RECEIVABLE")
-    inv_case_count = sum(1 for c in cases if c.case_type == "INVENTORY")
+    ar_case_count = sum(1 for c in cases if c.investigation_profile == "RECEIVABLES")
+    inv_case_count = sum(1 for c in cases if c.investigation_profile == "INVENTORY")
     run_id = _short_id("run", f"{RULE_SET_VERSION}|{created_at}")
     return RuleScanDraft(
         run=RuleRunWrite(

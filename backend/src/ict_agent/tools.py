@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import re
-from statistics import median
-from typing import cast
 
 from ict_agent.business_type import business_type_condition
 from ict_agent.data import DatabaseScalar, DuckDBStore, QueryResult
@@ -12,13 +10,13 @@ from ict_agent.models import (
     BusinessDataCatalog,
     BusinessRecordSearchQuery,
     BusinessType,
-    CaseType,
     DatasetCapability,
     EvidenceQuery,
+    InvestigationProfile,
     JsonScalar,
     ToolResult,
 )
-from ict_agent.pretransaction import HistoricalOrderProfile, summarize_order_amounts
+from ict_agent.pretransaction import HistoricalOrderProfile
 from ict_agent.semantic import SemanticCapability, capabilities_for, get_capability
 
 
@@ -105,6 +103,8 @@ def get_historical_order_profile(
     store: DuckDBStore,
     customer_id: str,
     business_type: BusinessType,
+    *,
+    sample_seed: int = 0,
 ) -> HistoricalOrderProfile:
     """构造客户同业务类型的订单金额、毛利率与回款账龄历史画像。"""
 
@@ -112,46 +112,82 @@ def get_historical_order_profile(
     if not re.fullmatch(r"C\d{3}", normalized_id):
         raise AnalysisInputError("客户编号必须采用 C015 这样的 C 加三位数字格式。")
     condition = business_type_condition("s", business_type)
-    orders = store.fetch(
+    order_summary = store.fetch(
         f"""
-        SELECT s."销售订单号", MAX(s."客户名称") AS customer_name,
-               SUM(s."销售金额_折扣后_含税") AS order_amount,
-               CASE WHEN SUM(s."销售金额_折扣后_含税") = 0 THEN NULL
-                    ELSE SUM(s."销售金额_折扣后_含税" - s."出库成本金额")
-                         / SUM(s."销售金额_折扣后_含税") END AS gross_margin_rate
-        FROM sales s
-        WHERE s."客户编号" = ? AND {condition}
-        GROUP BY s."销售订单号"
-        ORDER BY s."销售订单号"
+        WITH order_totals AS (
+            SELECT s."销售订单号" AS order_id,
+                   MAX(s."客户名称") AS customer_name,
+                   SUM(s."销售金额_折扣后_含税") AS order_amount,
+                   CASE WHEN SUM(s."销售金额_折扣后_含税") = 0 THEN NULL
+                        ELSE SUM(s."销售金额_折扣后_含税" - s."出库成本金额")
+                             / SUM(s."销售金额_折扣后_含税") END AS gross_margin_rate
+            FROM sales s
+            WHERE s."客户编号" = ? AND {condition}
+            GROUP BY s."销售订单号"
+        )
+        SELECT MAX(customer_name), COUNT(*),
+               quantile_cont(order_amount, 0.25), quantile_cont(order_amount, 0.50),
+               quantile_cont(order_amount, 0.75), quantile_cont(order_amount, 0.90),
+               MAX(order_amount), median(gross_margin_rate)
+        FROM order_totals
+        WHERE order_amount > 0
         """,
         [normalized_id],
     )
-    positive_rows = [row for row in orders.rows if _number(row[2]) > 0]
-    if not positive_rows:
+    summary_row = _first_row(order_summary)
+    order_count = int(_number(summary_row[1]))
+    if order_count == 0:
         raise AnalysisInputError(f"客户 {normalized_id} 在 {business_type} 下没有正向历史订单。")
-    payments = store.fetch(
+    sampled_order = store.fetch(
         f"""
-        SELECT p."回款账龄"
+        WITH order_totals AS (
+            SELECT s."销售订单号" AS order_id,
+                   SUM(s."销售金额_折扣后_含税") AS order_amount
+            FROM sales s
+            WHERE s."客户编号" = ? AND {condition}
+            GROUP BY s."销售订单号"
+        )
+        SELECT order_amount
+        FROM order_totals
+        WHERE order_amount > 0
+        ORDER BY hash(order_id, ?)
+        LIMIT 1
+        """,
+        [normalized_id, sample_seed],
+    )
+    payment_summary = store.fetch(
+        f"""
+        WITH eligible_orders AS (
+            SELECT DISTINCT s."客户编号" AS customer_id,
+                            s."销售订单号" AS order_id
+            FROM sales s
+            WHERE s."客户编号" = ? AND {condition}
+        )
+        SELECT median(p."回款账龄")
         FROM payments p
-        WHERE p."客户编号" = ?
-          AND p."回款账龄" IS NOT NULL
-          AND p."回款账龄" >= 0
-          AND EXISTS (
-              SELECT 1 FROM sales s
-              WHERE s."客户编号" = p."客户编号"
-                AND s."销售订单号" = p."销售订单号"
-                AND {condition}
-          )
+        JOIN eligible_orders e
+          ON e.customer_id = p."客户编号" AND e.order_id = p."销售订单号"
+        WHERE p."回款账龄" IS NOT NULL AND p."回款账龄" >= 0
         """,
         [normalized_id],
     )
+    payment_row = _first_row(payment_summary)
+    distribution = {
+        "p25_yuan": round(_number(summary_row[2]), 2),
+        "median_yuan": round(_number(summary_row[3]), 2),
+        "p75_yuan": round(_number(summary_row[4]), 2),
+        "p90_yuan": round(_number(summary_row[5]), 2),
+    }
     return HistoricalOrderProfile(
         customer_id=normalized_id,
-        customer_name=str(positive_rows[0][1]),
+        customer_name=str(summary_row[0]),
         business_type=business_type,
-        positive_order_amounts=tuple(_number(row[2]) for row in positive_rows),
-        gross_margin_rates=tuple(_number(row[3]) for row in positive_rows if row[3] is not None),
-        payment_days=tuple(_number(row[0]) for row in payments.rows),
+        historical_order_count=order_count,
+        distribution_summary=distribution,
+        maximum_order_amount=_number(summary_row[6]),
+        sampled_order_amount=_number(_first_row(sampled_order)[0]),
+        median_gross_margin_rate=(_number(summary_row[7]) if summary_row[7] is not None else None),
+        median_payment_days=(_number(payment_row[0]) if payment_row[0] is not None else None),
         source_snapshot_id=store.get_snapshot().snapshot_id,
     )
 
@@ -164,11 +200,11 @@ def get_customer_business_profile_evidence(
     """返回事前案件可引用的客户×业务类型历史基线。"""
 
     profile = get_historical_order_profile(store, customer_id, business_type)
-    distribution = summarize_order_amounts(profile.positive_order_amounts)
-    median_payment_days = median(profile.payment_days) if profile.payment_days else None
-    median_margin_rate = median(profile.gross_margin_rates) if profile.gross_margin_rates else None
+    distribution = profile.distribution_summary
+    median_payment_days = profile.median_payment_days
+    median_margin_rate = profile.median_gross_margin_rate
     warnings: list[str] = []
-    if len(profile.positive_order_amounts) < 5:
+    if profile.historical_order_count < 5:
         warnings.append("历史正订单少于 5 笔，分布稳定性有限。")
     if median_payment_days is None:
         warnings.append("当前业务类型未匹配到有效回款账龄。")
@@ -177,7 +213,7 @@ def get_customer_business_profile_evidence(
     return ToolResult(
         summary=(
             f"{profile.customer_id} 的 {business_type} 历史共有 "
-            f"{len(profile.positive_order_amounts)} 笔正向订单，"
+            f"{profile.historical_order_count} 笔正向订单，"
             f"订单金额中位数 {_format_money(distribution['median_yuan'])}，"
             f"P90 {_format_money(distribution['p90_yuan'])}。"
         ),
@@ -194,7 +230,7 @@ def get_customer_business_profile_evidence(
             [
                 profile.customer_id,
                 business_type,
-                len(profile.positive_order_amounts),
+                profile.historical_order_count,
                 distribution["median_yuan"],
                 distribution["p90_yuan"],
                 median_payment_days,
@@ -212,27 +248,27 @@ def get_customer_business_profile_evidence(
 
 
 def get_pre_transaction_proposal_evidence(
-    entity_context: dict[str, JsonScalar],
+    subject_context: dict[str, JsonScalar],
+    business_type: BusinessType,
 ) -> ToolResult:
     """把案件库中的模拟交易输入转换为可引用证据。"""
 
     required = (
         "simulation_id",
         "customer_id",
-        "business_type",
         "amount_yuan",
         "proposed_term_days",
         "scenario",
     )
-    if any(entity_context.get(key) in (None, "") for key in required):
+    if any(subject_context.get(key) in (None, "") for key in required):
         raise AnalysisInputError("事前案件缺少完整的模拟交易输入。")
-    proposed_amount = entity_context["amount_yuan"]
+    proposed_amount = subject_context["amount_yuan"]
     if not isinstance(proposed_amount, int | float) or isinstance(proposed_amount, bool):
         raise AnalysisInputError("事前案件的拟交易金额不是有效数字。")
     return ToolResult(
         summary=(
-            f"模拟交易 {entity_context['simulation_id']} 拟向客户 "
-            f"{entity_context['customer_id']} 开展 {entity_context['business_type']} 业务，"
+            f"模拟交易 {subject_context['simulation_id']} 拟向客户 "
+            f"{subject_context['customer_id']} 开展 {business_type} 业务，"
             f"金额 {_format_money(float(proposed_amount))}。"
         ),
         columns=[
@@ -246,17 +282,17 @@ def get_pre_transaction_proposal_evidence(
         ],
         rows=[
             [
-                entity_context["simulation_id"],
-                entity_context["customer_id"],
-                entity_context["business_type"],
-                entity_context["scenario"],
-                entity_context["amount_yuan"],
-                entity_context["proposed_term_days"],
-                entity_context.get("expected_margin_rate"),
+                subject_context["simulation_id"],
+                subject_context["customer_id"],
+                business_type,
+                subject_context["scenario"],
+                subject_context["amount_yuan"],
+                subject_context["proposed_term_days"],
+                subject_context.get("expected_margin_rate"),
             ]
         ],
         sources=["pre_transaction_simulations"],
-        period=str(entity_context.get("generated_at", "")),
+        period=str(subject_context.get("generated_at", "")),
         metric_definitions=["模拟交易只用于事前调查演示，不写入真实销售、合同、应收或授信数据。"],
     )
 
@@ -1478,10 +1514,14 @@ _WINDOW_QUARTERS = {
 }
 
 
-def _validate_evidence_query(case_type: CaseType, query: EvidenceQuery) -> SemanticCapability:
+def _validate_evidence_query(
+    investigation_profile: InvestigationProfile, query: EvidenceQuery
+) -> SemanticCapability:
     capability = get_capability(query.dataset, query.grain)
-    if capability is None or case_type not in capability.case_types:
-        raise AnalysisInputError(f"{case_type} 案件不支持数据集 {query.dataset}/{query.grain}。")
+    if capability is None or investigation_profile not in capability.investigation_profiles:
+        raise AnalysisInputError(
+            f"{investigation_profile} 案件不支持数据集 {query.dataset}/{query.grain}。"
+        )
     invalid_metrics = sorted(set(query.metrics) - set(capability.metrics))
     if invalid_metrics:
         raise AnalysisInputError(
@@ -1537,32 +1577,30 @@ def _credit_query_result(
 
 def query_business_evidence(
     store: DuckDBStore,
-    case_type: CaseType,
-    entity_context: dict[str, JsonScalar],
+    investigation_profile: InvestigationProfile,
+    subject_context: dict[str, JsonScalar],
     query: EvidenceQuery,
+    *,
+    business_type: BusinessType | None = None,
 ) -> ToolResult:
     """按单一语义注册表执行当前案件范围内的受控证据查询。"""
 
-    capability = _validate_evidence_query(case_type, query)
+    capability = _validate_evidence_query(investigation_profile, query)
     key = (query.dataset, query.grain)
-    if case_type in ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"):
-        normalized_id = str(entity_context.get("customer_id", "")).strip().upper()
+    if investigation_profile in ("RECEIVABLES", "PRE_TRANSACTION"):
+        normalized_id = str(subject_context.get("customer_id", "")).strip().upper()
         if not re.fullmatch(r"C\d{3}", normalized_id):
             raise AnalysisInputError("案件缺少合法客户编号。")
     else:
-        material = str(entity_context.get("material_code", "")).strip()
-        org = str(entity_context.get("inventory_org", "")).strip()
+        material = str(subject_context.get("material_code", "")).strip()
+        org = str(subject_context.get("inventory_org", "")).strip()
         if not material or not org:
             raise AnalysisInputError("库存案件缺少物料编码或库存组织。")
 
-    business_type_value = entity_context.get("business_type")
-    business_type: BusinessType | None = (
-        cast(BusinessType, business_type_value)
-        if business_type_value in ("DISTRIBUTION", "PROJECT", "SERVICE_CLOUD")
-        else None
-    )
     if key == ("proposal", "order"):
-        result = get_pre_transaction_proposal_evidence(entity_context)
+        if business_type is None:
+            raise AnalysisInputError("事前案件缺少合法业务类型。")
+        result = get_pre_transaction_proposal_evidence(subject_context, business_type)
     elif key == ("customer_profile", "business_type"):
         if business_type is None:
             raise AnalysisInputError("事前案件缺少合法业务类型。")
@@ -1578,7 +1616,7 @@ def query_business_evidence(
             store,
             normalized_id,
             months=_WINDOW_MONTHS[query.time_window],
-            business_type=business_type if case_type == "PRE_TRANSACTION" else None,
+            business_type=business_type if investigation_profile == "PRE_TRANSACTION" else None,
         )
     elif key == ("extensions", "order"):
         result = get_customer_extension_evidence(store, normalized_id)
@@ -1609,14 +1647,16 @@ def query_business_evidence(
 
 def discover_evidence_capabilities(
     store: DuckDBStore,
-    case_type: CaseType,
-    entity_context: dict[str, JsonScalar],
+    investigation_profile: InvestigationProfile,
+    subject_context: dict[str, JsonScalar],
     observation_date: str,
+    *,
+    business_type: BusinessType | None = None,
 ) -> BusinessDataCatalog:
     """用真实受控查询探测当前案件可用能力，不暴露 SQL 或物理字段。"""
 
     datasets = []
-    for capability in capabilities_for(case_type):
+    for capability in capabilities_for(investigation_profile):
         time_window = (
             "latest" if "latest" in capability.time_windows else capability.time_windows[0]
         )
@@ -1628,7 +1668,13 @@ def discover_evidence_capabilities(
             limit=1,
         )
         try:
-            result = query_business_evidence(store, case_type, entity_context, query)
+            result = query_business_evidence(
+                store,
+                investigation_profile,
+                subject_context,
+                query,
+                business_type=business_type,
+            )
             available = True
             returned_rows = len(result.rows)
             period = result.period
@@ -1649,18 +1695,18 @@ def discover_evidence_capabilities(
                 limitations=list(capability.limitations),
             )
         )
-    if case_type in ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"):
-        entity_scope = f"Customer {entity_context.get('customer_id', '')}"
-        if case_type == "PRE_TRANSACTION":
-            entity_scope += f" / Business type {entity_context.get('business_type', '')}"
+    if investigation_profile in ("RECEIVABLES", "PRE_TRANSACTION"):
+        subject_scope = f"Customer {subject_context.get('customer_id', '')}"
+        if investigation_profile == "PRE_TRANSACTION":
+            subject_scope += f" / Business type {business_type or ''}"
     else:
-        entity_scope = (
-            f"Material {entity_context.get('material_code', '')} / "
-            f"Inventory organization {entity_context.get('inventory_org', '')}"
+        subject_scope = (
+            f"Material {subject_context.get('material_code', '')} / "
+            f"Inventory organization {subject_context.get('inventory_org', '')}"
         )
     return BusinessDataCatalog(
-        case_type=case_type,
-        entity_scope=entity_scope,
+        investigation_profile=investigation_profile,
+        subject_scope=subject_scope,
         observation_date=observation_date,
         datasets=datasets,
         global_rules=[
@@ -1676,18 +1722,18 @@ def discover_evidence_capabilities(
 
 def search_business_records(
     store: DuckDBStore,
-    case_type: CaseType,
-    entity_context: dict[str, JsonScalar],
+    investigation_profile: InvestigationProfile,
+    subject_context: dict[str, JsonScalar],
     search: BusinessRecordSearchQuery,
 ) -> ToolResult:
     """在案件主体的关联记录内按业务标识做参数化包含搜索。"""
 
     query_text = search.query.strip()
     rows: list[list[JsonScalar]]
-    if case_type in ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"):
-        customer_id = str(entity_context.get("customer_id", "")).strip().upper()
+    if investigation_profile in ("RECEIVABLES", "PRE_TRANSACTION"):
+        customer_id = str(subject_context.get("customer_id", "")).strip().upper()
         if search.record_type == "customer":
-            label = str(entity_context.get("customer_name", customer_id))
+            label = str(subject_context.get("customer_name", customer_id))
             rows = (
                 [["customer", customer_id, label]]
                 if query_text.lower() in f"{customer_id} {label}".lower()
@@ -1713,8 +1759,8 @@ def search_business_records(
             rows = [[search.record_type, row[0], row[0]] for row in result.rows]
             sources = ["ar_snapshots"]
     else:
-        material = str(entity_context.get("material_code", "")).strip()
-        org = str(entity_context.get("inventory_org", "")).strip()
+        material = str(subject_context.get("material_code", "")).strip()
+        org = str(subject_context.get("inventory_org", "")).strip()
         if search.record_type == "material":
             rows = (
                 [["material", material, material]] if query_text.lower() in material.lower() else []

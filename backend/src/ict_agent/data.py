@@ -80,11 +80,11 @@ class CaseWrite:
     """统一信号入口写入调查案件库的案件记录。"""
 
     case_id: str
-    case_type: str
-    entity_type: str
-    entity_id: str
-    entity_label: str
-    entity_context: Mapping[str, DatabaseScalar]
+    subject_type: str
+    subject_id: str
+    subject_label: str
+    subject_context: Mapping[str, DatabaseScalar]
+    investigation_profile: str
     observation_date: str
     priority: str
     exposure_amount: float
@@ -92,7 +92,7 @@ class CaseWrite:
     rule_hit_count: int
     rule_set_version: str
     created_at: str
-    discovery_source: str = "RULE"
+    source: str = "RULE_SCAN"
     business_type: str | None = None
     source_snapshot_id: str = ""
     data_quality_status: str = "UNKNOWN"
@@ -691,11 +691,35 @@ class CaseStore:
 
     @staticmethod
     def _create_schema(connection: duckdb.DuckDBPyConnection) -> None:
+        existing_case_table = connection.execute(
+            """
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'main' AND table_name = 'investigation_cases'
+            """
+        ).fetchone()
+        if existing_case_table is not None:
+            case_columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info('investigation_cases')").fetchall()
+            }
+            required_case_columns = {
+                "source",
+                "subject_type",
+                "subject_id",
+                "subject_label",
+                "subject_context_json",
+                "investigation_profile",
+                "business_type",
+            }
+            if not required_case_columns.issubset(case_columns):
+                raise DataAccessError(
+                    "案件库结构版本不匹配；当前版本不迁移旧案件，请先备份审核记录后重新生成案件库。"
+                )
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS detection_runs (
                 run_id VARCHAR PRIMARY KEY,
-                discovery_source VARCHAR NOT NULL,
+                source VARCHAR NOT NULL,
                 source_set_version VARCHAR NOT NULL,
                 source_snapshot_id VARCHAR NOT NULL,
                 observation_date DATE NOT NULL,
@@ -713,13 +737,13 @@ class CaseStore:
             """
             CREATE TABLE IF NOT EXISTS investigation_cases (
                 case_id VARCHAR PRIMARY KEY,
-                discovery_source VARCHAR NOT NULL,
-                case_type VARCHAR NOT NULL,
-                entity_type VARCHAR NOT NULL,
-                entity_id VARCHAR NOT NULL,
-                entity_label VARCHAR NOT NULL,
+                source VARCHAR NOT NULL,
+                subject_type VARCHAR NOT NULL,
+                subject_id VARCHAR NOT NULL,
+                subject_label VARCHAR NOT NULL,
+                investigation_profile VARCHAR NOT NULL,
                 business_type VARCHAR,
-                entity_context_json VARCHAR NOT NULL,
+                subject_context_json VARCHAR NOT NULL,
                 observation_date DATE NOT NULL,
                 status VARCHAR NOT NULL,
                 priority VARCHAR NOT NULL,
@@ -865,13 +889,14 @@ class CaseStore:
                     connection.execute(
                         """
                         INSERT INTO investigation_cases (
-                            case_id, discovery_source, case_type, entity_type, entity_id,
-                            entity_label, business_type, entity_context_json, observation_date,
+                            case_id, source, subject_type, subject_id, subject_label,
+                            investigation_profile, business_type, subject_context_json,
+                            observation_date,
                             status, priority, exposure_amount, summary, signal_count,
                             source_set_version, source_snapshot_id, data_quality_status,
                             data_quality_warnings_json, created_at, updated_at
                         ) VALUES (
-                            ?, 'RULE', ?, ?, ?, ?, ?, ?, ?, 'PENDING_AGENT_REVIEW',
+                            ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_AGENT_REVIEW',
                             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                         )
                         ON CONFLICT (case_id) DO UPDATE SET
@@ -880,7 +905,7 @@ class CaseStore:
                             summary = excluded.summary,
                             signal_count = excluded.signal_count,
                             business_type = excluded.business_type,
-                            entity_context_json = excluded.entity_context_json,
+                            subject_context_json = excluded.subject_context_json,
                             source_snapshot_id = excluded.source_snapshot_id,
                             data_quality_status = excluded.data_quality_status,
                             data_quality_warnings_json = excluded.data_quality_warnings_json,
@@ -888,12 +913,13 @@ class CaseStore:
                         """,
                         [
                             case.case_id,
-                            case.case_type,
-                            case.entity_type,
-                            case.entity_id,
-                            case.entity_label,
+                            case.source,
+                            case.subject_type,
+                            case.subject_id,
+                            case.subject_label,
+                            case.investigation_profile,
                             case.business_type,
-                            json.dumps(case.entity_context, ensure_ascii=False),
+                            json.dumps(case.subject_context, ensure_ascii=False),
                             case.observation_date,
                             case.priority,
                             case.exposure_amount,
@@ -934,7 +960,7 @@ class CaseStore:
                 connection.execute(
                     """
                     INSERT INTO detection_runs VALUES (
-                        ?, 'RULE', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?
+                        ?, 'RULE_SCAN', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?
                     )
                     """,
                     [
@@ -963,7 +989,7 @@ class CaseStore:
             SELECT run_id, source_set_version, observation_date, cases_detected, cases_created,
                    signal_count, receivable_cases, inventory_cases, created_at
             FROM detection_runs
-            WHERE discovery_source = 'RULE'
+            WHERE source = 'RULE_SCAN'
             ORDER BY created_at DESC LIMIT 1
             """
         )
@@ -989,24 +1015,27 @@ class CaseStore:
                 connection.execute(
                     """
                     INSERT INTO investigation_cases (
-                        case_id, discovery_source, case_type, entity_type, entity_id,
-                        entity_label, business_type, entity_context_json, observation_date,
+                        case_id, source, subject_type, subject_id, subject_label,
+                        investigation_profile, business_type, subject_context_json,
+                        observation_date,
                         status, priority, exposure_amount, summary, signal_count,
                         source_set_version, source_snapshot_id, data_quality_status,
                         data_quality_warnings_json, created_at, updated_at
                     ) VALUES (
-                        ?, 'PRE_TRANSACTION', 'PRE_TRANSACTION', ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?,
                         'PENDING_AGENT_REVIEW', ?, ?, ?, 1, ?, ?, ?, ?, ?, ?
                     )
                     ON CONFLICT (case_id) DO NOTHING
                     """,
                     [
                         case.case_id,
-                        case.entity_type,
-                        case.entity_id,
-                        case.entity_label,
+                        case.source,
+                        case.subject_type,
+                        case.subject_id,
+                        case.subject_label,
+                        case.investigation_profile,
                         case.business_type,
-                        json.dumps(case.entity_context, ensure_ascii=False),
+                        json.dumps(case.subject_context, ensure_ascii=False),
                         case.observation_date,
                         case.priority,
                         case.exposure_amount,
@@ -1068,7 +1097,7 @@ class CaseStore:
                 connection.execute(
                     """
                     INSERT INTO detection_runs VALUES (
-                        ?, 'PRE_TRANSACTION', ?, ?, ?, 1, ?, 1, 0, 0, 1, ?
+                        ?, 'PRE_TRANSACTION_SIMULATION', ?, ?, ?, 1, ?, 1, 0, 0, 1, ?
                     ) ON CONFLICT (run_id) DO NOTHING
                     """,
                     [
@@ -1152,15 +1181,15 @@ class CaseStore:
         self,
         *,
         status: str | None = None,
-        case_type: str | None = None,
+        investigation_profile: str | None = None,
         limit: int = 200,
     ) -> QueryResult:
         """返回案件队列。"""
 
         clauses = [
-            "(discovery_source <> 'RULE' OR source_set_version = ("
+            "(source <> 'RULE_SCAN' OR source_set_version = ("
             "SELECT source_set_version FROM detection_runs "
-            "WHERE discovery_source = 'RULE' ORDER BY created_at DESC LIMIT 1))"
+            "WHERE source = 'RULE_SCAN' ORDER BY created_at DESC LIMIT 1))"
         ]
         parameters: list[object] = []
         if status is not None:
@@ -1169,15 +1198,16 @@ class CaseStore:
             else:
                 clauses.append("status = ?")
                 parameters.append(status)
-        if case_type is not None:
-            clauses.append("case_type = ?")
-            parameters.append(case_type)
+        if investigation_profile is not None:
+            clauses.append("investigation_profile = ?")
+            parameters.append(investigation_profile)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         parameters.append(limit)
         return self._fetch(
             f"""
-            SELECT case_id, discovery_source, case_type, entity_type, entity_id, entity_label,
-                   business_type, observation_date, status, priority, exposure_amount, summary,
+            SELECT case_id, source, subject_type, subject_id, subject_label,
+                   investigation_profile, business_type, observation_date, status, priority,
+                   exposure_amount, summary,
                    signal_count, source_set_version, source_snapshot_id, data_quality_status,
                    data_quality_warnings_json, updated_at,
                    COALESCE((
@@ -1200,12 +1230,13 @@ class CaseStore:
         )
 
     def fetch_case(self, case_id: str) -> QueryResult:
-        """返回一个案件的主体和内部实体上下文。"""
+        """返回一个案件的调查主体和内部上下文。"""
 
         return self._fetch(
             """
-            SELECT case_id, discovery_source, case_type, entity_type, entity_id, entity_label,
-                   business_type, entity_context_json, observation_date, status, priority,
+            SELECT case_id, source, subject_type, subject_id, subject_label,
+                   investigation_profile, business_type, subject_context_json, observation_date,
+                   status, priority,
                    exposure_amount, summary, signal_count, source_set_version, source_snapshot_id,
                    data_quality_status, data_quality_warnings_json, updated_at,
                    COALESCE((
@@ -1297,13 +1328,15 @@ class CaseStore:
                 COALESCE(SUM(exposure_amount) FILTER (
                     WHERE status != 'CLOSED'
                 ), 0) AS exposure_amount,
-                COUNT(*) FILTER (WHERE case_type = 'ACCOUNTS_RECEIVABLE') AS ar_cases,
-                COUNT(*) FILTER (WHERE case_type = 'INVENTORY') AS inventory_cases,
-                COUNT(*) FILTER (WHERE case_type = 'PRE_TRANSACTION') AS pre_transaction_cases
+                COUNT(*) FILTER (WHERE investigation_profile = 'RECEIVABLES') AS ar_cases,
+                COUNT(*) FILTER (WHERE investigation_profile = 'INVENTORY') AS inventory_cases,
+                COUNT(*) FILTER (
+                    WHERE investigation_profile = 'PRE_TRANSACTION'
+                ) AS pre_transaction_cases
             FROM investigation_cases
-            WHERE discovery_source <> 'RULE' OR source_set_version = (
+            WHERE source <> 'RULE_SCAN' OR source_set_version = (
                 SELECT source_set_version FROM detection_runs
-                WHERE discovery_source = 'RULE' ORDER BY created_at DESC LIMIT 1
+                WHERE source = 'RULE_SCAN' ORDER BY created_at DESC LIMIT 1
             )
             """
         )

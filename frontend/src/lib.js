@@ -7,18 +7,23 @@ export const labels = {
     CLOSED: "已关闭",
   },
   priority: { LOW: "低", MEDIUM: "一般", HIGH: "高" },
-  caseType: {
-    ACCOUNTS_RECEIVABLE: "应收",
+  investigationProfile: {
+    RECEIVABLES: "应收调查",
     INVENTORY: "库存",
     PRE_TRANSACTION: "事前交易",
   },
-  discoverySource: {
-    RULE: "规则扫描",
+  caseSource: {
+    RULE_SCAN: "规则扫描",
     EXTERNAL_ALERT: "外部预警",
-    PRE_TRANSACTION: "事前交易",
+    PRE_TRANSACTION_SIMULATION: "事前交易模拟",
     MANUAL: "人工发起",
   },
-  source: {
+  subjectType: {
+    CUSTOMER: "客户",
+    CONTRACT: "合同",
+    MATERIAL_INVENTORY_ORG: "物料库存",
+  },
+  evidenceSource: {
     ar_snapshots: "应收快照",
     customer_credit: "客户授信",
     sales: "销售明细",

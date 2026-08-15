@@ -21,8 +21,8 @@ def _notification(
     return CaseNotification(
         event_type=event_type,  # type: ignore[arg-type]
         case_id="case/001?x=1",
-        case_type="ACCOUNTS_RECEIVABLE",
-        entity_label="示例客户",
+        investigation_profile="RECEIVABLES",
+        subject_label="示例客户",
         priority="HIGH",
         status="PENDING_HUMAN_REVIEW",
         summary="应收风险需要人工复核",

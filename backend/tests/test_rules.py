@@ -62,9 +62,9 @@ def test_rule_scan_detects_single_and_composite_risks(store: DuckDBStore) -> Non
     assert "INV_OVERDUE_STOCK" in rule_ids
     assert "INV_STALE_RATIO_HIGH" in rule_ids
     # 同实体合并：C015 命中多条应收规则只生成一个案件
-    ar_cases = [c for c in draft.cases if c.case_type == "ACCOUNTS_RECEIVABLE"]
+    ar_cases = [c for c in draft.cases if c.investigation_profile == "RECEIVABLES"]
     assert len(ar_cases) == 1
-    assert ar_cases[0].entity_id == "C015"
+    assert ar_cases[0].subject_id == "C015"
     assert ar_cases[0].rule_hit_count == 2
     assert ar_cases[0].priority == "HIGH"
 
@@ -463,8 +463,8 @@ def test_v3_d3_amount_floor_and_customer_id(raw_data_dir: Path, database_path: P
     case_map = {c.case_id: c for c in draft.cases}
     term_cases = {h.case_id for h in draft.hits if h.rule_id == "CON_TERM_OVERAGE"}
     # 只有大额 C040 立案，小额 C041 不立案
-    assert any(case_map[cid].entity_id == "C040" for cid in term_cases)
-    assert not any(case_map[cid].entity_id == "C041" for cid in term_cases)
+    assert any(case_map[cid].subject_id == "C040" for cid in term_cases)
+    assert not any(case_map[cid].subject_id == "C041" for cid in term_cases)
 
 
 def test_v2_a4_e2_no_duplicate_case(raw_data_dir: Path, database_path: Path) -> None:
@@ -535,7 +535,7 @@ def test_v2_a4_e2_no_duplicate_case(raw_data_dir: Path, database_path: Path) -> 
     rebuild_database(data_dir, db)
     store = DuckDBStore(db)
     draft = build_rule_scan(store, _test_thresholds())
-    c050_cases = [c for c in draft.cases if c.entity_id == "C050"]
+    c050_cases = [c for c in draft.cases if c.subject_id == "C050"]
     # 只生成一个案件
     assert len(c050_cases) == 1
     c = c050_cases[0]
@@ -586,9 +586,9 @@ def test_v3_b4_large_overdue_hits_small_not(raw_data_dir: Path, database_path: P
     case_map = {c.case_id: c for c in draft.cases}
     overdue_cases = {h.case_id for h in draft.hits if h.rule_id == "INV_OVERDUE_STOCK"}
     # 大额短超期 BIG1（60万/68天 ≥ 阈值50万/60天）命中
-    assert any(case_map[cid].entity_id == "BIG1|W1" for cid in overdue_cases)
+    assert any(case_map[cid].subject_id == "BIG1|W1" for cid in overdue_cases)
     # 小额长超期 SMALL1（1000元/300天 < 金额阈值）不命中
-    assert not any(case_map[cid].entity_id == "SMALL1|W1" for cid in overdue_cases)
+    assert not any(case_map[cid].subject_id == "SMALL1|W1" for cid in overdue_cases)
 
 
 def test_v3_d2_weighted_margin(raw_data_dir: Path, database_path: Path) -> None:

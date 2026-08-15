@@ -9,16 +9,16 @@ import { formatMoney, labels, openCaseWorkspace, priorityColor, statusColor } fr
 import { runScan, workspace } from "../store";
 
 const route = useRoute();
-const type = ref("");
+const profile = ref("");
 const status = ref("");
 const priority = ref("");
 const query = ref("");
 const pageSize = ref("10");
 const currentPage = ref(1);
 const pageJump = ref("1");
-const typeOptions = [
-  { title: "全部类型", value: "" },
-  { title: "应收", value: "ACCOUNTS_RECEIVABLE" },
+const profileOptions = [
+  { title: "全部调查策略", value: "" },
+  { title: "应收调查", value: "RECEIVABLES" },
   { title: "库存", value: "INVENTORY" },
   { title: "事前交易", value: "PRE_TRANSACTION" },
 ];
@@ -34,18 +34,19 @@ const filtered = computed(() => {
   const keyword = String(query.value ?? "").trim().toLocaleLowerCase();
   return workspace.cases.filter((item) => {
     const matchesFilters =
-      (!type.value || item.case_type === type.value) &&
+      (!profile.value || item.investigation_profile === profile.value) &&
       (!status.value || item.status === status.value) &&
       (!priority.value || item.priority === priority.value);
     if (!matchesFilters || !keyword) return matchesFilters;
     const searchable = [
       item.case_id,
-      item.entity_label,
+      item.subject_label,
+      labels.subjectType[item.subject_type],
       item.signal_overview,
-      labels.caseType[item.case_type],
+      labels.investigationProfile[item.investigation_profile],
       labels.status[item.status],
       labels.priority[item.priority],
-      labels.discoverySource[item.discovery_source],
+      labels.caseSource[item.source],
       labels.businessType[item.business_type],
     ]
       .filter(Boolean)
@@ -69,7 +70,7 @@ const pageNumbers = computed(() => {
 const rangeStart = computed(() => (filtered.value.length ? (currentPage.value - 1) * pageSizeValue.value + 1 : 0));
 const rangeEnd = computed(() => Math.min(currentPage.value * pageSizeValue.value, filtered.value.length));
 
-watch([type, status, priority, query, pageSize], () => goToPage(1));
+watch([profile, status, priority, query, pageSize], () => goToPage(1));
 watch(totalPages, (total) => {
   if (currentPage.value > total) goToPage(total);
 });
@@ -102,7 +103,7 @@ async function scan() {
   <div class="space-y-5">
     <section class="card overflow-hidden">
       <div class="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
-        <SelectInput v-model="type" :options="typeOptions" class="w-[180px]" />
+        <SelectInput v-model="profile" :options="profileOptions" class="w-[180px]" />
         <SelectInput v-model="status" :options="statusOptions" class="w-[180px]" />
         <SelectInput v-model="priority" :options="priorityOptions" class="w-[180px]" />
         <TextInput v-model="query" search clearable class="w-[320px] max-w-full" placeholder="搜索案件、客户或物料" aria-label="搜索案件、客户或物料" @clear="query = ''" />
@@ -148,12 +149,13 @@ async function scan() {
               @keydown.enter="openCase(item.case_id)"
             >
               <td>
-                <strong class="block truncate text-[0.8125rem] text-ink" :title="item.entity_label">{{ item.entity_label }}</strong>
+                <strong class="block truncate text-[0.8125rem] text-ink" :title="item.subject_label">{{ item.subject_label }}</strong>
+                <span class="mt-1 block text-xs text-muted">{{ labels.subjectType[item.subject_type] || item.subject_type }}</span>
               </td>
               <td>
-                <Badge tone="neutral">{{ labels.discoverySource[item.discovery_source] || item.discovery_source }}</Badge>
+                <Badge tone="neutral">{{ labels.caseSource[item.source] || item.source }}</Badge>
                 <span class="mt-1 block text-xs text-muted">
-                  {{ labels.businessType[item.business_type] || labels.caseType[item.case_type] }}
+                  {{ labels.investigationProfile[item.investigation_profile] }}<template v-if="item.business_type"> · {{ labels.businessType[item.business_type] }}</template>
                 </span>
               </td>
               <td><span class="block truncate text-sm font-medium text-ink" :title="item.signal_overview">{{ item.signal_overview }}</span></td>

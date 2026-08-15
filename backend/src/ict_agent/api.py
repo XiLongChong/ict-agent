@@ -16,13 +16,13 @@ from ict_agent.config import load_frontend_dist_dir, load_settings
 from ict_agent.feishu import start_feishu_bot, stop_feishu_bot
 from ict_agent.models import (
     CaseStatus,
-    CaseType,
     DashboardResponse,
     DataSnapshotResponse,
     ErrorResponse,
     FeishuStatusResponse,
     FeishuTestResponse,
     HealthResponse,
+    InvestigationProfile,
     InvestigationProtocolDetail,
     PreTransactionSimulationRequest,
     PreTransactionSimulationResponse,
@@ -181,12 +181,12 @@ async def risk_overview() -> RiskOverviewResponse:
 )
 async def cases(
     status: CaseStatus | None = None,
-    case_type: CaseType | None = None,
+    investigation_profile: InvestigationProfile | None = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 200,
 ) -> list[RiskCaseSummary]:
     """查询风险案件队列。"""
 
-    return list_cases(status=status, case_type=case_type, limit=limit)
+    return list_cases(status=status, investigation_profile=investigation_profile, limit=limit)
 
 
 @app.get(

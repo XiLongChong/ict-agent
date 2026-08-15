@@ -4,6 +4,7 @@ import json
 from collections.abc import AsyncIterator
 
 import pytest
+from ict_agent import service as service_module
 from ict_agent.config import Settings
 from ict_agent.data import CaseStore, DuckDBStore
 from ict_agent.models import PreTransactionSimulationRequest, ReviewRequest, ToolResult
@@ -18,8 +19,10 @@ from ict_agent.service import (
     get_investigation_protocol,
     get_investigation_protocol_detail,
     investigate_case,
+    list_cases,
     list_pre_transaction_simulations,
     review_case,
+    run_rule_scan,
 )
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
@@ -76,7 +79,7 @@ QUERIES = [
 def test_legacy_anthropic_protocol_is_not_exposed_as_current() -> None:
     legacy_protocol = json.dumps(
         {
-            "schema_version": "3.0",
+            "schema_version": "4.0",
             "api_format": "anthropic_messages",
             "request": {"url": "https://api.deepseek.com/anthropic/v1/messages"},
         }
@@ -235,7 +238,7 @@ def _create_receivable_case(settings: Settings) -> str:
         ),
     )
     CaseStore(settings.case_database_path).save_rule_scan(draft.run, draft.cases, draft.hits)
-    return next(case.case_id for case in draft.cases if case.case_type == "ACCOUNTS_RECEIVABLE")
+    return next(case.case_id for case in draft.cases if case.investigation_profile == "RECEIVABLES")
 
 
 def test_dashboard_does_not_require_model(settings: Settings) -> None:
@@ -243,6 +246,31 @@ def test_dashboard_does_not_require_model(settings: Settings) -> None:
 
     assert response.latest_ar.period == "2026-07-31"
     assert response.inventory.period == "2026-06-30"
+
+
+async def test_rule_cases_keep_case_dimensions_independent(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    draft = build_rule_scan(
+        DuckDBStore(settings.database_path),
+        RuleThresholds(
+            deep_overdue_amount=100,
+            deep_overdue_days=90,
+            overdue_growth_amount=50,
+            stale_inventory_amount=100,
+            inventory_buildup_amount=500,
+            inventory_slowdown_amount=500,
+        ),
+    )
+    monkeypatch.setattr(service_module, "build_rule_scan", lambda _store: draft)
+    await run_rule_scan(settings=settings)
+
+    cases = list_cases(settings=settings)
+    rule_case = next(item for item in cases if item.source == "RULE_SCAN")
+
+    assert rule_case.investigation_profile in ("RECEIVABLES", "INVENTORY")
+    assert rule_case.subject_type in ("CUSTOMER", "CONTRACT", "MATERIAL_INVENTORY_ORG")
+    assert rule_case.business_type is None
 
 
 async def test_pre_transaction_simulation_enters_unified_case_queue(
@@ -261,10 +289,11 @@ async def test_pre_transaction_simulation_enters_unified_case_queue(
 
     assert simulation.simulated is True
     assert simulation.amount_yuan > simulation.distribution_summary["p90_yuan"]
-    assert detail.discovery_source == "PRE_TRANSACTION"
-    assert detail.case_type == "PRE_TRANSACTION"
+    assert detail.source == "PRE_TRANSACTION_SIMULATION"
+    assert detail.investigation_profile == "PRE_TRANSACTION"
     assert detail.business_type == "DISTRIBUTION"
-    assert detail.entity_context["simulated"] is True
+    assert "business_type" not in detail.subject_context
+    assert detail.subject_context["simulated"] is True
     assert detail.data_quality.status == simulation.data_quality_status
     assert detail.signals[0].signal_code == "PRE_TRANSACTION_REVIEW"
     assert list_pre_transaction_simulations(settings=settings)[0].case_id == detail.case_id

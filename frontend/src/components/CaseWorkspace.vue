@@ -79,12 +79,7 @@ const businessScopeLabel = computed(() => {
   if (caseItem.value.business_type) {
     return labels.businessType[caseItem.value.business_type] || caseItem.value.business_type;
   }
-  const availableTypes = String(caseItem.value.entity_context?.available_business_types || "")
-    .split(",")
-    .filter(Boolean)
-    .map((type) => labels.businessType[type] || type)
-    .join("、");
-  return availableTypes || labels.caseType[caseItem.value.case_type] || "客户整体";
+  return "不限单一业务类型";
 });
 const facts = computed(() =>
   caseItem.value
@@ -122,7 +117,7 @@ async function loadCase(id, { background = false } = {}) {
   error.value = "";
   try {
     caseItem.value = await api(`/api/v1/cases/${encodeURIComponent(id)}`);
-    document.title = `${caseItem.value.entity_label} · 案件处理`;
+    document.title = `${caseItem.value.subject_label} · 案件处理`;
   } catch (exception) {
     error.value = exception.message;
     if (!background) caseItem.value = null;
@@ -327,10 +322,11 @@ function toggleNavigation() {
           <section class="card overflow-hidden">
             <header class="flex flex-wrap items-center gap-3 border-b border-border px-5 py-5">
               <div class="leading-tight">
-                <h2 class="text-xl font-bold text-ink">{{ caseItem.entity_label }}</h2>
+                <h2 class="text-xl font-bold text-ink">{{ caseItem.subject_label }}</h2>
                 <span class="block text-sm text-muted">
-                  {{ businessScopeLabel }} ·
-                  {{ labels.discoverySource[caseItem.discovery_source] }}
+                  {{ labels.subjectType[caseItem.subject_type] || caseItem.subject_type }} ·
+                  {{ labels.investigationProfile[caseItem.investigation_profile] }} ·
+                  {{ labels.caseSource[caseItem.source] }} · {{ businessScopeLabel }}
                 </span>
               </div>
               <div class="flex-1"></div>
@@ -381,7 +377,7 @@ function toggleNavigation() {
                       </div>
                       <p class="mt-1 text-[0.8125rem] leading-6 text-muted">{{ hit.reason }}</p>
                       <span class="mt-1 block text-sm text-muted">
-                        来源：{{ hit.sources?.map((source) => labels.source[source] || source).join("、") || "业务数据" }}
+                        来源：{{ hit.sources?.map((source) => labels.evidenceSource[source] || source).join("、") || "业务数据" }}
                         · 观察期：{{ hit.period }}
                       </span>
                     </article>

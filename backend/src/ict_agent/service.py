@@ -44,18 +44,18 @@ from ict_agent.feishu import (
 )
 from ict_agent.models import (
     BusinessType,
+    CaseSource,
     CaseStatus,
-    CaseType,
     DashboardResponse,
     DataQualityStatus,
     DataSnapshotResponse,
     DataSourceSnapshot,
-    DiscoverySource,
     FeishuStatusResponse,
     FeishuTestResponse,
     GeneratedSimulationScenario,
     InvestigationCaseInput,
     InvestigationDataQuality,
+    InvestigationProfile,
     InvestigationProtocolDetail,
     InvestigationProtocolResponseSummary,
     InvestigationProtocolSnapshot,
@@ -72,6 +72,7 @@ from ict_agent.models import (
     RiskOverviewResponse,
     RiskPriority,
     RuleRunResponse,
+    SubjectType,
 )
 from ict_agent.pretransaction import Scenario, generate_simulated_order
 from ict_agent.rules import build_rule_scan
@@ -125,8 +126,8 @@ async def _notify_case_event(
             CaseNotification(
                 event_type=event_type,
                 case_id=case.case_id,
-                case_type=case.case_type,
-                entity_label=case.entity_label,
+                investigation_profile=case.investigation_profile,
+                subject_label=case.subject_label,
                 priority=case.priority,
                 status=case.status,
                 summary=case.summary,
@@ -255,11 +256,11 @@ def _case_summary(row: tuple[DatabaseScalar, ...]) -> RiskCaseSummary:
     business_type = str(row[6]) if row[6] is not None else None
     return RiskCaseSummary(
         case_id=str(row[0]),
-        discovery_source=cast(DiscoverySource, str(row[1])),
-        case_type=cast(CaseType, str(row[2])),
-        entity_type=str(row[3]),
-        entity_id=str(row[4]),
-        entity_label=str(row[5]),
+        source=cast(CaseSource, str(row[1])),
+        subject_type=cast(SubjectType, str(row[2])),
+        subject_id=str(row[3]),
+        subject_label=str(row[4]),
+        investigation_profile=cast(InvestigationProfile, str(row[5])),
         business_type=cast(BusinessType, business_type) if business_type else None,
         observation_date=str(row[7]).split("T", maxsplit=1)[0],
         status=_case_status(row[8]),
@@ -302,27 +303,15 @@ async def run_rule_scan(*, settings: Settings | None = None) -> RuleRunResponse:
         business_store.ensure_ready()
         draft = build_rule_scan(business_store)
         snapshot_id = business_store.get_snapshot().snapshot_id
-        segments = list_customer_business_segments(business_store)
-        types_by_customer: dict[str, set[BusinessType]] = {}
-        for customer_id, _customer_name, business_type, _count in segments:
-            types_by_customer.setdefault(customer_id, set()).add(business_type)
-        cases = []
-        for case in draft.cases:
-            available_types = sorted(types_by_customer.get(case.entity_id, set()))
-            case_business_type = available_types[0] if len(available_types) == 1 else None
-            context = dict(case.entity_context)
-            if available_types:
-                context["available_business_types"] = ",".join(available_types)
-            cases.append(
-                replace(
-                    case,
-                    entity_context=context,
-                    business_type=case_business_type,
-                    source_snapshot_id=snapshot_id,
-                    data_quality_status="PASS",
-                    data_quality_warnings=(),
-                )
+        cases = [
+            replace(
+                case,
+                source_snapshot_id=snapshot_id,
+                data_quality_status="PASS",
+                data_quality_warnings=(),
             )
+            for case in draft.cases
+        ]
         run = replace(draft.run, source_snapshot_id=snapshot_id)
         case_store = CaseStore(runtime_settings.case_database_path)
         created_case_ids = case_store.save_rule_scan(run, cases, draft.hits)
@@ -348,7 +337,7 @@ async def run_rule_scan(*, settings: Settings | None = None) -> RuleRunResponse:
 def list_cases(
     *,
     status: CaseStatus | None = None,
-    case_type: CaseType | None = None,
+    investigation_profile: InvestigationProfile | None = None,
     limit: int = 200,
     settings: Settings | None = None,
 ) -> list[RiskCaseSummary]:
@@ -358,7 +347,7 @@ def list_cases(
     try:
         runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
         result = CaseStore(runtime_settings.case_database_path).fetch_cases(
-            status=status, case_type=case_type, limit=limit
+            status=status, investigation_profile=investigation_profile, limit=limit
         )
         return [_case_summary(tuple(row)) for row in result.rows]
     except (ConfigurationError, DataAccessError) as exc:
@@ -383,8 +372,8 @@ def get_risk_overview(*, settings: Settings | None = None) -> RiskOverviewRespon
             closed_cases=_as_int(overview_row[4]),
             high_priority_cases=_as_int(overview_row[5]),
             exposure_amount=_as_float(overview_row[6]),
-            cases_by_type={
-                "ACCOUNTS_RECEIVABLE": _as_int(overview_row[7]),
+            cases_by_investigation_profile={
+                "RECEIVABLES": _as_int(overview_row[7]),
                 "INVENTORY": _as_int(overview_row[8]),
                 "PRE_TRANSACTION": _as_int(overview_row[9]),
             },
@@ -626,7 +615,7 @@ def get_case_detail(
         ]
         return RiskCaseDetail(
             **summary.model_dump(),
-            entity_context=json.loads(str(row[7])),
+            subject_context=json.loads(str(row[7])),
             signals=signals,
             latest_investigation=latest_investigation,
             reviews=reviews,
@@ -952,7 +941,12 @@ async def create_pre_transaction_simulation(
         customer_id, _customer_name, business_type, _count = random.Random(actual_seed).choice(
             candidates
         )
-        profile = get_historical_order_profile(business_store, customer_id, business_type)
+        profile = get_historical_order_profile(
+            business_store,
+            customer_id,
+            business_type,
+            sample_seed=actual_seed,
+        )
         simulated = generate_simulated_order(
             profile,
             Scenario(request.scenario),
@@ -989,7 +983,6 @@ async def create_pre_transaction_simulation(
             "simulation_id": simulated.simulation_id,
             "customer_id": simulated.customer_id,
             "customer_name": simulated.customer_name,
-            "business_type": simulated.business_type,
             "amount_yuan": simulated.amount_yuan,
             "proposed_term_days": simulated.proposed_term_days,
             "expected_margin_rate": simulated.expected_margin_rate,
@@ -1004,11 +997,11 @@ async def create_pre_transaction_simulation(
         source_version = "pre-transaction-simulator-1.0"
         case = CaseWrite(
             case_id=case_id,
-            case_type="PRE_TRANSACTION",
-            entity_type="CUSTOMER",
-            entity_id=simulated.customer_id,
-            entity_label=f"{simulated.customer_id} {simulated.customer_name}",
-            entity_context=context,
+            investigation_profile="PRE_TRANSACTION",
+            subject_type="CUSTOMER",
+            subject_id=simulated.customer_id,
+            subject_label=f"{simulated.customer_id} {simulated.customer_name}",
+            subject_context=context,
             observation_date=generated_date,
             priority=priority,
             exposure_amount=simulated.amount_yuan,
@@ -1016,7 +1009,7 @@ async def create_pre_transaction_simulation(
             rule_hit_count=1,
             rule_set_version=source_version,
             created_at=simulated.generated_at,
-            discovery_source="PRE_TRANSACTION",
+            source="PRE_TRANSACTION_SIMULATION",
             business_type=simulated.business_type,
             source_snapshot_id=simulated.source_snapshot_id,
             data_quality_status=simulated.data_quality_status,

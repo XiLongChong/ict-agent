@@ -1,6 +1,8 @@
 """固定分析工具的数值口径测试。"""
 
+import duckdb
 import pytest
+from ict_agent.config import Settings
 from ict_agent.data import DuckDBStore
 from ict_agent.models import BusinessRecordSearchQuery, EvidenceQuery
 from ict_agent.tools import (
@@ -11,6 +13,7 @@ from ict_agent.tools import (
     get_customer_credit_context,
     get_customer_extension_evidence,
     get_customer_flow_history,
+    get_historical_order_profile,
     get_inventory_health,
     get_latest_ar_summary,
     get_material_inventory_age_profile,
@@ -77,10 +80,43 @@ def test_receivable_investigation_tools_keep_evidence_granular(
     assert "不能抵消" in credit.metric_definitions[0]
 
 
+def test_historical_profile_aggregates_large_segments_in_database(
+    store: DuckDBStore, settings: Settings
+) -> None:
+    with duckdb.connect(str(settings.database_path)) as connection:
+        connection.execute(
+            """
+            INSERT INTO sales (
+                "客户编号", "客户名称", "销售订单号", "销售金额_折扣后_含税",
+                "出库成本金额", "订单类型", "核算大类名称"
+            )
+            SELECT 'C099', '大样本客户', 'L' || CAST(i AS VARCHAR),
+                   CAST(i + 1 AS DOUBLE), CAST(i + 1 AS DOUBLE) * 0.8,
+                   '信产常规销售订单', 'IPHONE'
+            FROM range(10001) AS generated(i)
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO payments ("客户编号", "销售订单号", "回款账龄")
+            SELECT 'C099', 'L' || CAST(i AS VARCHAR), CAST(i % 101 AS INTEGER)
+            FROM range(10001) AS generated(i)
+            """
+        )
+
+    profile = get_historical_order_profile(store, "C099", "DISTRIBUTION", sample_seed=17)
+
+    assert profile.historical_order_count == 10001
+    assert profile.distribution_summary["median_yuan"] == pytest.approx(5001)
+    assert profile.median_payment_days == pytest.approx(50)
+    assert profile.median_gross_margin_rate == pytest.approx(0.2)
+    assert 1 <= profile.sampled_order_amount <= 10001
+
+
 def test_receivable_catalog_exposes_live_semantics_not_sql(store: DuckDBStore) -> None:
     catalog = discover_evidence_capabilities(
         store,
-        "ACCOUNTS_RECEIVABLE",
+        "RECEIVABLES",
         {"customer_id": "C015", "customer_name": "测试客户"},
         "2026-07-31",
     )
@@ -109,7 +145,7 @@ def test_controlled_evidence_query_projects_metrics_and_scopes_customer(
 ) -> None:
     result = query_business_evidence(
         store,
-        "ACCOUNTS_RECEIVABLE",
+        "RECEIVABLES",
         {"customer_id": "C015"},
         EvidenceQuery(
             dataset="receivables",
@@ -131,7 +167,7 @@ def test_controlled_evidence_query_rejects_invalid_dataset_grain(
     with pytest.raises(ValueError, match="不支持数据集 credit/month"):
         query_business_evidence(
             store,
-            "ACCOUNTS_RECEIVABLE",
+            "RECEIVABLES",
             {"customer_id": "C015"},
             EvidenceQuery(
                 dataset="credit",
@@ -175,7 +211,7 @@ def test_inventory_uses_same_controlled_query_contract(store: DuckDBStore) -> No
 def test_business_record_search_is_scoped_to_current_case(store: DuckDBStore) -> None:
     result = search_business_records(
         store,
-        "ACCOUNTS_RECEIVABLE",
+        "RECEIVABLES",
         {"customer_id": "C015", "customer_name": "测试客户"},
         BusinessRecordSearchQuery(record_type="order", query="S1", limit=10),
     )

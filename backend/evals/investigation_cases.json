@@ -1,5 +1,5 @@
 {
-  "version": "3.0",
+  "version": "4.0",
   "scope": "案件已产生后的调查 Agent；不运行、不评价规则引擎",
   "data_contract": "赛事官方数据字典；金额单位按字段说明统一解释为元",
   "global_forbidden_unqualified_claims": [
@@ -25,14 +25,14 @@
       "eval_id": "AR-C015-BALANCED-EVIDENCE",
       "purpose": "白名单、回款等缓释信息不能覆盖实际逾期；历史展期必须与当前订单精确匹配。",
       "input": {
-        "schema_version": "3.0",
+        "schema_version": "4.0",
         "case_id": "eval-ar-c015",
-        "discovery_source": "RULE",
-        "case_type": "ACCOUNTS_RECEIVABLE",
-        "entity_type": "CUSTOMER",
-        "entity_id": "C015",
-        "entity_label": "C015 南京沛图商贸有限公司",
-        "entity_context": {
+        "source": "RULE_SCAN",
+        "investigation_profile": "RECEIVABLES",
+        "subject_type": "CUSTOMER",
+        "subject_id": "C015",
+        "subject_label": "C015 南京沛图商贸有限公司",
+        "subject_context": {
           "customer_id": "C015",
           "customer_name": "南京沛图商贸有限公司"
         },
@@ -97,14 +97,14 @@
       "eval_id": "AR-C061-WHITELIST-DETERIORATION",
       "purpose": "白名单经营客户存在大额深度超期时，应形成风险恶化判断，同时保留根因和最终回收结果未知。",
       "input": {
-        "schema_version": "3.0",
+        "schema_version": "4.0",
         "case_id": "eval-ar-c061",
-        "discovery_source": "RULE",
-        "case_type": "ACCOUNTS_RECEIVABLE",
-        "entity_type": "CUSTOMER",
-        "entity_id": "C061",
-        "entity_label": "C061 重庆澜图数字技术有限公司",
-        "entity_context": {
+        "source": "RULE_SCAN",
+        "investigation_profile": "RECEIVABLES",
+        "subject_type": "CUSTOMER",
+        "subject_id": "C061",
+        "subject_label": "C061 重庆澜图数字技术有限公司",
+        "subject_context": {
           "customer_id": "C061",
           "customer_name": "重庆澜图数字技术有限公司"
         },
@@ -169,14 +169,14 @@
       "eval_id": "AR-C007-EXPOSURE-BUILDUP",
       "purpose": "经营中客户新增销售高于回款且超期扩大时，应识别前瞻性敞口积累风险。",
       "input": {
-        "schema_version": "3.0",
+        "schema_version": "4.0",
         "case_id": "eval-ar-c007",
-        "discovery_source": "RULE",
-        "case_type": "ACCOUNTS_RECEIVABLE",
-        "entity_type": "CUSTOMER",
-        "entity_id": "C007",
-        "entity_label": "C007 杭州朔图信息技术有限公司",
-        "entity_context": {
+        "source": "RULE_SCAN",
+        "investigation_profile": "RECEIVABLES",
+        "subject_type": "CUSTOMER",
+        "subject_id": "C007",
+        "subject_label": "C007 杭州朔图信息技术有限公司",
+        "subject_context": {
           "customer_id": "C007",
           "customer_name": "杭州朔图信息技术有限公司"
         },
@@ -241,14 +241,14 @@
       "eval_id": "INV-83NN0001CD-MIXED-SIGNALS",
       "purpose": "库存显著增加且存在多条信号时，必须结合库存历史、库龄和销售速度区分事实与原因。",
       "input": {
-        "schema_version": "3.0",
+        "schema_version": "4.0",
         "case_id": "eval-inv-83nn0001cd-w008",
-        "discovery_source": "RULE",
-        "case_type": "INVENTORY",
-        "entity_type": "MATERIAL_INVENTORY_ORG",
-        "entity_id": "83NN0001CD|仓库W008",
-        "entity_label": "83NN0001CD",
-        "entity_context": {
+        "source": "RULE_SCAN",
+        "investigation_profile": "INVENTORY",
+        "subject_type": "MATERIAL_INVENTORY_ORG",
+        "subject_id": "83NN0001CD|仓库W008",
+        "subject_label": "83NN0001CD",
+        "subject_context": {
           "material_code": "83NN0001CD",
           "inventory_org": "仓库W008"
         },
@@ -328,14 +328,14 @@
       "eval_id": "INV-ZAG60265CN-STALE",
       "purpose": "库存金额稳定不等于没有呆滞风险，重点检查库龄证据和近期销售。",
       "input": {
-        "schema_version": "3.0",
+        "schema_version": "4.0",
         "case_id": "eval-inv-zag60265cn-w012",
-        "discovery_source": "RULE",
-        "case_type": "INVENTORY",
-        "entity_type": "MATERIAL_INVENTORY_ORG",
-        "entity_id": "ZAG60265CN|仓库W012",
-        "entity_label": "ZAG60265CN",
-        "entity_context": {
+        "source": "RULE_SCAN",
+        "investigation_profile": "INVENTORY",
+        "subject_type": "MATERIAL_INVENTORY_ORG",
+        "subject_id": "ZAG60265CN|仓库W012",
+        "subject_label": "ZAG60265CN",
+        "subject_context": {
           "material_code": "ZAG60265CN",
           "inventory_org": "仓库W012"
         },
@@ -396,14 +396,14 @@
       "eval_id": "INV-83LV0006CD-BUILDUP-SLOWDOWN",
       "purpose": "库存增长和销售下降方向一致时，应形成滞销早期预警，但不能虚构促销或下游因果。",
       "input": {
-        "schema_version": "3.0",
+        "schema_version": "4.0",
         "case_id": "eval-inv-83lv0006cd-w015",
-        "discovery_source": "RULE",
-        "case_type": "INVENTORY",
-        "entity_type": "MATERIAL_INVENTORY_ORG",
-        "entity_id": "83LV0006CD|仓库W015",
-        "entity_label": "83LV0006CD",
-        "entity_context": {
+        "source": "RULE_SCAN",
+        "investigation_profile": "INVENTORY",
+        "subject_type": "MATERIAL_INVENTORY_ORG",
+        "subject_id": "83LV0006CD|仓库W015",
+        "subject_label": "83LV0006CD",
+        "subject_context": {
           "material_code": "83LV0006CD",
           "inventory_org": "仓库W015"
         },

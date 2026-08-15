@@ -185,3 +185,11 @@ def test_removed_parallel_risk_apis_are_not_in_openapi() -> None:
     assert "/api/v1/lists" not in paths
     assert "/api/v1/projects" not in paths
     assert "/api/v1/alerts" not in paths
+
+
+def test_case_contract_uses_independent_dimensions() -> None:
+    schema = client.get("/openapi.json").json()["components"]["schemas"]["RiskCaseSummary"]
+    properties = schema["properties"]
+
+    assert {"source", "subject_type", "investigation_profile", "business_type"} <= properties.keys()
+    assert {"discovery_source", "entity_type", "case_type"}.isdisjoint(properties)

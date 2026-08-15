@@ -14,9 +14,17 @@ def profile() -> HistoricalOrderProfile:
         customer_id="C001",
         customer_name="客户一",
         business_type="DISTRIBUTION",
-        positive_order_amounts=(100, 200, 300, 400, 500, 600, 800, 1000),
-        gross_margin_rates=(0.10, 0.12, 0.14, 0.16),
-        payment_days=(30, 45, 60, 75),
+        historical_order_count=8,
+        distribution_summary={
+            "p25_yuan": 275,
+            "median_yuan": 450,
+            "p75_yuan": 650,
+            "p90_yuan": 860,
+        },
+        maximum_order_amount=1000,
+        sampled_order_amount=400,
+        median_gross_margin_rate=0.13,
+        median_payment_days=52.5,
         source_snapshot_id="snap-1",
     )
 
@@ -48,13 +56,24 @@ def test_random_can_select_all_scenarios(profile: HistoricalOrderProfile) -> Non
 
 
 def test_small_history_warns() -> None:
-    profile = HistoricalOrderProfile("C1", "客户", "PROJECT", (100, 200), (0.1,), (30,), "s")
+    profile = HistoricalOrderProfile(
+        "C1",
+        "客户",
+        "PROJECT",
+        2,
+        {"p25_yuan": 125, "median_yuan": 150, "p75_yuan": 175, "p90_yuan": 190},
+        200,
+        100,
+        0.1,
+        30,
+        "s",
+    )
     result = generate_simulated_order(profile, Scenario.NORMAL, seed=1)
     assert result.data_quality_status == "WARNING"
     assert result.warnings
 
 
 def test_no_positive_orders_raise() -> None:
-    profile = HistoricalOrderProfile("C1", "客户", "PROJECT", (-1, 0), (), (), "s")
+    profile = HistoricalOrderProfile("C1", "客户", "PROJECT", 0, {}, 0, 0, None, None, "s")
     with pytest.raises(ValueError, match="正订单金额"):
         generate_simulated_order(profile, seed=1)

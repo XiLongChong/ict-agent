@@ -1,7 +1,7 @@
 # 调查 Agent 评测机
 
 本评测只回答“案件已经进入调查后，Agent 做得怎么样”，不运行或评价规则引擎。3 个应收与 3 个库存
-样本都在 `investigation_cases.json` 中保存完整的 `InvestigationCaseInput 3.0`；运行器不读取案件库、
+样本都在 `investigation_cases.json` 中保存完整的 `InvestigationCaseInput 4.0`；运行器不读取案件库、
 不要求先执行规则扫描，也不写调查记录。因此同一输入可以在代码改造前后重复使用。
 
 ## 评价内容

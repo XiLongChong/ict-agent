@@ -52,8 +52,8 @@ class CaseNotification:
 
     event_type: CaseNotificationEvent
     case_id: str
-    case_type: str
-    entity_label: str
+    investigation_profile: str
+    subject_label: str
     priority: str
     status: str
     summary: str
@@ -139,7 +139,7 @@ def build_case_notification_card(notification: CaseNotification) -> dict[str, ob
         {"tag": "markdown", "content": f"**事件**：{event_title} · `{notification.event_type}`"},
         {
             "tag": "markdown",
-            "content": f"**风险等级**：{priority}\n**主体**：{notification.entity_label}",
+            "content": f"**风险等级**：{priority}\n**主体**：{notification.subject_label}",
         },
         {
             "tag": "markdown",

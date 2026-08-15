@@ -73,10 +73,17 @@ flowchart LR
 
 ### 4.2 冻结案件输入契约
 
-统一案件在进入 Agent 前映射为 `InvestigationCaseInput 3.0`：案件编号、发现来源、案件类型、交易级
-业务类型、主体、观察日、优先级、敞口、摘要、来源版本、数据快照、信号列表和数据质量状态。每条信号
-包含名称、原因、严重度、指标、阈值来源、数据来源和期间。规则案件使用 `discovery_source=RULE`，
-模拟新交易使用 `PRE_TRANSACTION`；数据质量 warning 必须进入报告限制。
+统一案件在进入 Agent 前映射为 `InvestigationCaseInput 4.0`。四个正交字段不得互相代替：
+
+- `source` 只记录创建入口：规则扫描为 `RULE_SCAN`，事前交易模拟为
+  `PRE_TRANSACTION_SIMULATION`，另保留 `EXTERNAL_ALERT` 和 `MANUAL`。
+- `subject_type` 只描述主体粒度：客户、合同或“物料 × 库存组织”；主体编号、名称和受控查询上下文
+  分别保存在 `subject_id`、`subject_label` 和 `subject_context`。
+- `investigation_profile` 只选择证据策略：`RECEIVABLES`、`INVENTORY` 或 `PRE_TRANSACTION`。
+- `business_type` 只在案件范围确实限定到单一交易业务时填写；客户级规则案件不得根据历史分布推断它。
+
+其余字段包括观察日、优先级、敞口、摘要、来源版本、数据快照、信号列表和数据质量状态。每条信号包含
+名称、原因、严重度、指标、阈值来源、数据来源和期间；数据质量 warning 必须进入报告限制。
 
 ### 4.3 统一证据查询网关
 
@@ -106,7 +113,7 @@ flowchart LR
 每个工具返回结构化表格、来源、期间、口径、warning 和唯一 `evidence_id`，完整保存在调查记录中。
 Pydantic AI 输出校验器拒绝以下报告并要求模型修正：
 
-- 未发现当前快照的证据能力或未达到案件类型/信号要求的最低证据覆盖；
+- 未发现当前快照的证据能力或未达到调查策略/信号要求的最低证据覆盖；
 - 缺少独立风险信号判断，或其证据编号无效；
 - 事实没有证据引用，或引用不存在的 `evidence_id`；
 - `SUPPORTED` 无支持证据、`WEAKENED` 无反驳证据；
@@ -161,7 +168,7 @@ trace 保存工具完成和报告校验轨迹，供刷新后回放。页面以�
 跟踪工单和具体处置流程。服务启动时会把上一个进程异常退出所遗留的 `AGENT_REVIEWING` 临时状态
 恢复为待调查，避免本地连接中断或服务重启后案件永久无法再次调查。
 
-案件队列的 `signal_overview` 来自该案件最高严重度信号的名称，不由前端根据案件类型硬编码。
+案件队列的 `signal_overview` 来自该案件最高严重度信号的名称，不由前端根据调查策略硬编码。
 公开风险等级只显示低、一般、高；规则引擎内部的 `CRITICAL` 在 API 输出时统一归并为高。
 
 ## 6. HTTP 接口

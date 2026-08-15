@@ -2,14 +2,34 @@
 
 from pathlib import Path
 
+import duckdb
 import pytest
 from ict_agent import data as data_module
 from ict_agent.data import (
     TABLE_SPECS,
+    CaseStore,
     DataAccessError,
     DuckDBStore,
     rebuild_database,
 )
+
+
+def test_case_store_rejects_legacy_mixed_case_schema(tmp_path: Path) -> None:
+    database = tmp_path / "legacy-cases.duckdb"
+    with duckdb.connect(str(database)) as connection:
+        connection.execute(
+            """
+            CREATE TABLE investigation_cases (
+                case_id VARCHAR PRIMARY KEY,
+                discovery_source VARCHAR,
+                case_type VARCHAR,
+                entity_type VARCHAR
+            )
+            """
+        )
+
+    with pytest.raises(DataAccessError, match="不迁移旧案件"):
+        CaseStore(database).ensure_ready()
 
 
 def test_rebuild_imports_all_tables(raw_data_dir: Path, tmp_path: Path) -> None:

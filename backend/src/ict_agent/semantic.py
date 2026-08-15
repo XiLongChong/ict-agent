@@ -6,11 +6,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from ict_agent.models import (
-    CaseType,
     EvidenceDataset,
     EvidenceGrain,
     EvidenceMetric,
     EvidenceTimeWindow,
+    InvestigationProfile,
 )
 
 _TIME_WINDOW_BREADTH: dict[EvidenceTimeWindow, int] = {
@@ -40,7 +40,7 @@ class SemanticCapability:
 
     dataset: EvidenceDataset
     grain: EvidenceGrain
-    case_types: tuple[CaseType, ...]
+    investigation_profiles: tuple[InvestigationProfile, ...]
     description: str
     metrics: tuple[EvidenceMetric, ...]
     time_windows: tuple[EvidenceTimeWindow, ...]
@@ -57,7 +57,7 @@ class SemanticCapability:
 def _capability(
     dataset: EvidenceDataset,
     grain: EvidenceGrain,
-    case_type: CaseType | tuple[CaseType, ...],
+    investigation_profile: InvestigationProfile | tuple[InvestigationProfile, ...],
     description: str,
     metrics: tuple[tuple[EvidenceMetric, str, str], ...],
     time_windows: tuple[EvidenceTimeWindow, ...],
@@ -67,7 +67,9 @@ def _capability(
     return SemanticCapability(
         dataset=dataset,
         grain=grain,
-        case_types=(case_type,) if isinstance(case_type, str) else case_type,
+        investigation_profiles=(investigation_profile,)
+        if isinstance(investigation_profile, str)
+        else investigation_profile,
         description=description,
         metrics=tuple(item[0] for item in metrics),
         time_windows=time_windows,
@@ -118,7 +120,7 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
     _capability(
         "receivables",
         "month",
-        ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"),
+        ("RECEIVABLES", "PRE_TRANSACTION"),
         "Inspect monthly receivable balances, overdue composition, and maximum overdue age.",
         (
             ("ar_amount", "应收余额_元", "应收金额_元"),
@@ -135,7 +137,7 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
     _capability(
         "receivables",
         "order",
-        ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"),
+        ("RECEIVABLES", "PRE_TRANSACTION"),
         (
             "Inspect receivables by contract, order, material, and promised payment date in the "
             "latest snapshot."
@@ -154,7 +156,7 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
     _capability(
         "sales_payments",
         "month",
-        ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"),
+        ("RECEIVABLES", "PRE_TRANSACTION"),
         "Align sales, payments, estimated gross profit, and overdue interest by calendar month.",
         (
             ("sales_amount", "销售额_元", "销售额_元"),
@@ -174,7 +176,7 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
     _capability(
         "extensions",
         "order",
-        ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"),
+        ("RECEIVABLES", "PRE_TRANSACTION"),
         (
             "Match current receivables to historical extensions by customer, contract, order, "
             "and material."
@@ -191,7 +193,7 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
     _capability(
         "credit",
         "customer",
-        ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"),
+        ("RECEIVABLES", "PRE_TRANSACTION"),
         "Inspect current credit, list status, financial profile, and credit-insurance master data.",
         (
             ("credit_limit", "授信额度", "授信额度"),
@@ -208,7 +210,7 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
     _capability(
         "contracts",
         "contract",
-        ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"),
+        ("RECEIVABLES", "PRE_TRANSACTION"),
         (
             "Inspect contract, invoice, shipment, payment, and receivable data for open project "
             "exposure."
@@ -289,10 +291,14 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
 _CAPABILITY_BY_KEY = {item.key: item for item in SEMANTIC_CAPABILITIES}
 
 
-def capabilities_for(case_type: CaseType) -> tuple[SemanticCapability, ...]:
-    """返回当前案件类型的全部受控语义能力。"""
+def capabilities_for(investigation_profile: InvestigationProfile) -> tuple[SemanticCapability, ...]:
+    """返回当前调查策略的全部受控语义能力。"""
 
-    return tuple(item for item in SEMANTIC_CAPABILITIES if case_type in item.case_types)
+    return tuple(
+        item
+        for item in SEMANTIC_CAPABILITIES
+        if investigation_profile in item.investigation_profiles
+    )
 
 
 def get_capability(dataset: EvidenceDataset, grain: EvidenceGrain) -> SemanticCapability | None:

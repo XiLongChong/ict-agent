@@ -130,12 +130,12 @@ PRE_TRANSACTION_QUERIES = [
 def _case() -> RiskCaseDetail:
     return RiskCaseDetail(
         case_id="case-test",
-        discovery_source="RULE",
-        case_type="ACCOUNTS_RECEIVABLE",
-        entity_type="CUSTOMER",
-        entity_id="C015",
-        entity_label="C015 测试客户",
-        entity_context={"customer_id": "C015", "customer_name": "测试客户"},
+        source="RULE_SCAN",
+        investigation_profile="RECEIVABLES",
+        subject_type="CUSTOMER",
+        subject_id="C015",
+        subject_label="C015 测试客户",
+        subject_context={"customer_id": "C015", "customer_name": "测试客户"},
         observation_date="2026-07-31",
         status="PENDING_AGENT_REVIEW",
         priority="HIGH",
@@ -169,17 +169,16 @@ def _case() -> RiskCaseDetail:
 def _pre_transaction_case() -> RiskCaseDetail:
     return RiskCaseDetail(
         case_id="pre-case-test",
-        discovery_source="PRE_TRANSACTION",
-        case_type="PRE_TRANSACTION",
-        entity_type="CUSTOMER",
-        entity_id="C015",
-        entity_label="C015 测试客户",
+        source="PRE_TRANSACTION_SIMULATION",
+        investigation_profile="PRE_TRANSACTION",
+        subject_type="CUSTOMER",
+        subject_id="C015",
+        subject_label="C015 测试客户",
         business_type="DISTRIBUTION",
-        entity_context={
+        subject_context={
             "simulation_id": "sim-test",
             "customer_id": "C015",
             "customer_name": "测试客户",
-            "business_type": "DISTRIBUTION",
             "amount_yuan": 180,
             "proposed_term_days": 45,
             "expected_margin_rate": 0.2,
@@ -419,9 +418,9 @@ async def _interrupted_stream_model(
 def test_rule_case_maps_to_frozen_investigation_input() -> None:
     contract = build_investigation_case_input(_case())
 
-    assert contract.schema_version == "3.0"
-    assert contract.discovery_source == "RULE"
-    assert contract.entity_context["customer_id"] == "C015"
+    assert contract.schema_version == "4.0"
+    assert contract.source == "RULE_SCAN"
+    assert contract.subject_context["customer_id"] == "C015"
     assert contract.signals[0].signal_id == "hit-test"
     assert contract.signals[0].signal_code == "AR_TEST"
     assert contract.data_quality.status == "PASS"
