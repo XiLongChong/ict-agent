@@ -1,7 +1,7 @@
-<script setup>
+﻿<script setup>
 import { reactive, ref } from "vue";
 import { useRouter } from "vue-router";
-import { ArrowRight, Dices, ShieldCheck } from "lucide-vue-next";
+import { ArrowRight, Dices, ShieldCheck, SlidersHorizontal } from "lucide-vue-next";
 import Button from "./ui/Button.vue";
 import SelectInput from "./ui/SelectInput.vue";
 import TextInput from "./ui/TextInput.vue";
@@ -61,28 +61,51 @@ function openCase() {
 </script>
 
 <template>
-  <div class="space-y-5">
-    <header>
-      <h1 class="text-2xl font-bold text-ink">事前交易模拟</h1>
-      <p class="mt-1 max-w-3xl text-sm leading-6 text-muted">
-        按客户同业务类型的历史订单分布生成一笔新交易，经统一准入与案件组装后进入 Agent 调查和人工复核链路。
-        当前为演示模式，所有有效模拟订单一律立案；模拟订单不会写入真实销售、合同、应收或授信数据。
-      </p>
+  <div class="space-y-6">
+    <!-- 页面头部 -->
+    <header class="space-y-3">
+      <div class="flex items-center gap-2">
+        <span class="inline-flex items-center gap-1.5 rounded-full bg-brand-wash px-2.5 py-0.5 text-xs font-semibold text-brand">
+          <Dices :size="11" />
+          演示模式
+        </span>
+      </div>
+      <h1 class="text-2xl font-bold text-ink">模拟交易</h1>
     </header>
 
+    <!-- 配置区 -->
     <section class="card p-5">
-      <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <TextInput v-model="form.customer_id" placeholder="可选：指定客户编号" />
-        <SelectInput v-model="form.business_type" :options="businesses" />
-        <SelectInput v-model="form.scenario" :options="scenarios" />
-        <TextInput v-model="form.seed" type="number" placeholder="可选：复现实验 seed" />
+      <div class="mb-4 flex items-center gap-2">
+        <SlidersHorizontal :size="15" class="text-brand" />
+        <h2 class="text-sm font-semibold text-ink">配置模拟参数</h2>
       </div>
-      <div class="mt-4 flex flex-wrap items-center gap-3">
+      <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted">客户编号</label>
+          <TextInput v-model="form.customer_id" placeholder="留空则随机选取" />
+        </div>
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted">业务类型</label>
+          <SelectInput v-model="form.business_type" :options="businesses" />
+        </div>
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted">模拟场景</label>
+          <SelectInput v-model="form.scenario" :options="scenarios" />
+        </div>
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted">
+            实验 Seed
+            <span class="ml-1 text-muted/60">（可选）</span>
+          </label>
+          <TextInput v-model="form.seed" type="number" placeholder="留空则随机" />
+        </div>
+      </div>
+      <div class="mt-4 flex flex-wrap items-center gap-3 border-t border-border pt-4">
         <Button :loading="loading" @click="simulate">
           <Dices :size="16" />
-          生成新交易并创建案件
+          生成模拟订单并立案
         </Button>
-        <span class="text-xs text-muted">未指定客户时，只会从存在正向历史订单的“客户 × 业务类型”中选择。</span>
+        <span class="text-xs text-muted">未指定客户时，只会从存在正向历史订单的"客户 × 业务类型"中选择。</span>
       </div>
     </section>
 
