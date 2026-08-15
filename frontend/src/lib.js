@@ -1,5 +1,7 @@
 export const labels = {
   businessType: { DISTRIBUTION: "分销", PROJECT: "项目", SERVICE_CLOUD: "服务云" },
+  simulationScenario: { NORMAL: "符合历史习惯", BORDERLINE: "临界偏高", ANOMALY: "明显异常" },
+  dataQuality: { PASS: "通过", WARNING: "存在提示", FAIL: "未通过", UNKNOWN: "待确认" },
   status: {
     PENDING_AGENT_REVIEW: "待调查",
     PENDING_HUMAN_REVIEW: "待复核",
@@ -31,7 +33,6 @@ export const labels = {
     extensions: "展期记录",
     contracts: "合同记录",
   },
-  hypothesis: { SUPPORTED: "证据支持", WEAKENED: "证据削弱", UNRESOLVED: "无法判断" },
   riskStage: { EARLY_WARNING: "早期预警", DETERIORATING: "风险恶化", LIMITED: "信息有限" },
   tool: {
     inspect_data: "查看可用数据",
@@ -51,7 +52,6 @@ export const labels = {
 export const priorityColor = (value) => ({ HIGH: "danger", MEDIUM: "warning", LOW: "neutral" }[value] || "neutral");
 export const statusColor = (value) => ({ PENDING_AGENT_REVIEW: "brand", PENDING_HUMAN_REVIEW: "warning", ACTION_IN_PROGRESS: "danger", CLOSED: "success" }[value] || "brand");
 export const stageColor = (value) => ({ DETERIORATING: "danger", EARLY_WARNING: "warning", LIMITED: "neutral" }[value] || "neutral");
-export const hypothesisColor = (value) => ({ SUPPORTED: "success", WEAKENED: "neutral", UNRESOLVED: "warning" }[value] || "neutral");
 
 export function formatMoney(value) {
   const number = Number(value || 0);

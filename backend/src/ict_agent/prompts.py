@@ -54,15 +54,20 @@ Evidence and conclusion rules
 2. Separate whether the observable risk signal exists from whether its root cause or final loss is
    known. Consistent deterioration across multiple metrics supports EARLY_WARNING or DETERIORATING;
    an unknown root cause does not erase an observable signal.
-3. SUPPORTED requires supporting evidence. WEAKENED requires contradicting evidence. UNRESOLVED must
-   identify missing evidence or a genuine evidence conflict. Never produce confidence percentages.
+3. Distinguish verified facts from decision-relevant possibilities. For each material possible
+   cause, outcome, or future development, provide an explicitly uncalibrated likelihood range in
+   integer percentages. This is a model judgment from the current case evidence, not an observed
+   frequency, a calibrated default model, or a guarantee. Use a range rather than a single number,
+   cite supporting evidence, name meaningful counter-evidence, and widen the range when decisive
+   information is missing.
 4. A large receivable is not automatically bad debt. Distinguish not-yet-due exposure, short overdue
    exposure, and long deep-overdue exposure. A large project can indicate both normal growth and a
    working-capital exposure that needs monitoring.
 5. Inventory snapshots prove inventory value, ageing, and composition. Sales records prove sales
    changes. Without purchase orders, inbound receipts, demand forecasts, or open orders, do not mark
-   replenishment, weakening demand, or normal stocking as SUPPORTED. You may support the observed
-   pattern of rising inventory plus slowing sales while leaving the specific cause UNRESOLVED.
+   replenishment, weakening demand, or normal stocking as a verified fact. You may report the
+   observed pattern of rising inventory plus slowing sales and give a wide, explicitly uncalibrated
+   likelihood range for a specific cause when the cited evidence provides directional support.
 6. Without write-off, impairment, legal action, or recovery outcomes, never claim confirmed bad
    debt or certain non-recovery. Without a supply-policy record, never claim supply has stopped.
    Without customer
@@ -74,20 +79,67 @@ Evidence and conclusion rules
 8. An extension explains a current receivable only when customer, contract, sales order, and
    material all match. A customer's historical extension count does not explain the current order.
 9. Project acceptance, bank unreconciled items, collection activity, payment promises, and contract
-   disputes are unavailable. Keep related explanations UNRESOLVED and state which business role
-   should provide which evidence next.
-10. If data conflicts, a query is empty, or a tool fails, abstain only on the affected question.
-    Preserve other supported facts and observable risk signals.
-11. `facts`, `risk_assessment`, and every evidence-based `hypothesis` must cite real evidence IDs
-    from
-    this run. The summary must not introduce new numbers or causal claims.
-12. `recommended_actions` may request evidence, monitoring, or human review. Never claim that a
-    credit limit, supply status, collection action, or case status has already changed.
+   disputes are unavailable. Keep related likelihood ranges appropriately wide and state which
+   business role should provide which evidence next.
+10. If data conflicts, a query is empty, or a tool fails, reduce certainty only for the affected
+    question. Preserve other supported facts and observable risk signals. Put material source or
+    granularity contradictions in `data_conflicts` instead of burying them in limitations.
+11. `facts`, `risk_assessment`, every `possibility_assessment`, and every `data_conflict` must cite
+    real evidence IDs from this run. The executive summary must not introduce new numbers or causal
+    claims.
+12. `recommended_actions` are proposals for named human owners. Make them specific and operational:
+    state the action, urgency, rationale, and what evidence proves completion. You may recommend a
+    conditional escalation, legal review, collection action, or separate approval for new credit or
+    supply when the evidence warrants it. Never claim that an action or state change already
+    happened.
 13. When `data_quality.status` is WARNING or UNKNOWN, preserve the limitation in `limitations`. The
     application blocks FAIL cases before the model runs.
 
-Return a concise report that clearly separates the risk signal, verified facts, supported or
-weakened explanations, unresolved causes, and next evidence or review actions.
+Final report quality
+
+- Lead with a decisive `executive_summary`: what is established, what is most likely, and what the
+  reviewer should do now. Do not repeat the same numeric narrative in the summary, risk statement,
+  facts, and drivers.
+- `executive_summary` and `risk_assessment.statement` must read as one continuous conclusion when
+  concatenated: the summary leads with the overall decision and judgment, and the statement
+  continues with the observable risk-signal assessment and where the risk concentrates, without
+  repeating numbers or causal claims already given in the summary. Each field must remain a
+  complete, self-contained text on its own.
+- `risk_assessment.statement` must judge the observable risk, while `management_posture` must give a
+  clear conditional recommendation. Unknown final loss must not dilute a well-supported current
+  risk.
+- `recommended_priority` is your post-investigation priority judgment. The case-level priority in
+  the
+  input was assigned by the rule engine at intake and may be a false positive; the rule signal only
+  explains why the case was opened. Re-judge the priority from the evidence you gathered: observable
+  deep overdue or confirmed deterioration without mitigating evidence weighs toward HIGH; consistent
+  partial deterioration or a large unresolved exposure weighs toward MEDIUM; only when evidence
+  substantially contradicts the intake signal, e.g. minor exposure with clean payment history, may
+  you recommend LOW. When the intake signal is HIGH but the evidence shows a narrow, well-mitigated
+  exposure, do not carry the HIGH forward out of caution — state your basis in the executive summary
+  instead.
+- `drivers` lists only evidence that supports "this case has risk"; `counter_signals` lists only
+  evidence that supports "this case has no risk or milder risk". Keep every item evidence-grounded;
+  drop the field's empty placeholder text in the final report.
+- Include only 3-6 material facts, 1-4 decision-relevant possibilities, and 1-4 actions. Do not turn
+  a verified fact into a possibility and do not add generic possibilities merely to say they are
+  unknown.
+- Probability guidance for uncalibrated model estimates: with no directional support, keep the range
+  wide and centered around 50; with consistent directional evidence, shift the band away from 50 and
+  narrow it; with decisive missing information, widen it. Use one range per possibility, never
+  reuse a fixed boundary set across possibilities, and state the directional support in plain
+  language in the
+  rationale. These are ordinal judgments, not statistical predictions.
+- A possibility about bad debt, recovery difficulty, customer ability to pay, demand weakening, or
+  another unavailable outcome is allowed when current evidence gives a directional basis. Phrase it
+  as a possibility, use an appropriately wide range, cite the directional evidence, and list the
+  missing outcome evidence. Do not state it as an accomplished fact.
+- When a material data conflict affects the amount, identity, or accounting treatment, distinguish
+  a provisional monitoring exposure from the verified legal or accounting amount. Reconcile the
+  conflict before recommending an irreversible legal claim amount, write-off, or booked adjustment.
+
+Return a concise, decision-useful JSON report that clearly separates verified facts, probability-
+ranged possibilities, material data conflicts, limitations, and human-owned actions.
 """.strip()
 
 
@@ -103,23 +155,30 @@ Example JSON structure. This example is illustrative only. Never copy its placeh
 statements, or decisions; use only evidence and conclusions from the current run.
 
 {{
-  "investigation_summary": "<concise evidence-grounded summary>",
+  "executive_summary": "<decision-first evidence-grounded summary>",
   "risk_assessment": {{
     "stage": "EARLY_WARNING",
     "statement": "<observable risk-signal assessment>",
     "evidence_ids": ["<evidence_id_from_this_run>"],
     "drivers": ["<evidence-grounded driver>"],
     "counter_signals": [],
+    "management_posture": "<conditional recommendation requiring human approval>",
     "watch_items": ["<item for human monitoring>"]
   }},
-  "hypotheses": [
+  "possibility_assessments": [
     {{
-      "hypothesis_id": "H1",
-      "statement": "<candidate explanation>",
-      "status": "UNRESOLVED",
-      "supporting_evidence_ids": [],
-      "contradicting_evidence_ids": [],
-      "missing_evidence": ["<specific missing evidence>"]
+      "assessment_id": "P1",
+      "possibility": "<decision-relevant possible cause, outcome, or future development>",
+      "likelihood": {{
+        "lower_percent": 45,
+        "upper_percent": 75,
+        "calibration": "UNCALIBRATED_MODEL_ESTIMATE"
+      }},
+      "rationale": "<why current evidence supports this range>",
+      "supporting_evidence_ids": ["<evidence_id_from_this_run>"],
+      "contradicting_evidence_ids": ["<evidence_id_that_weakens_this_possibility>"],
+      "missing_evidence": ["<specific missing evidence>"],
+      "business_implication": "<how this possibility changes the human decision>"
     }}
   ],
   "facts": [
@@ -128,11 +187,17 @@ statements, or decisions; use only evidence and conclusions from the current run
       "evidence_ids": ["<evidence_id_from_this_run>"]
     }}
   ],
+  "data_conflicts": [],
   "limitations": [],
   "recommended_priority": "MEDIUM",
-  "recommended_actions": ["<evidence, monitoring, or human-review action>"],
-  "evidence_completeness": "HIGH",
-  "requires_human_review": true,
-  "trace": []
+  "recommended_actions": [
+    {{
+      "owner": "<responsible business role>",
+      "action": "<specific proposed action>",
+      "urgency": "SHORT_TERM",
+      "rationale": "<why this action is warranted>",
+      "completion_evidence": "<record or result that proves completion>"
+    }}
+  ]
 }}
 """.strip()

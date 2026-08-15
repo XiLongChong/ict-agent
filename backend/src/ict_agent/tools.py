@@ -1360,14 +1360,20 @@ def get_customer_flow_history(
     )
 
 
-def get_current_receivable_details(store: DuckDBStore, customer_id: str) -> ToolResult:
+def get_current_receivable_details(
+    store: DuckDBStore,
+    customer_id: str,
+    *,
+    limit: int = 200,
+    sort_by: EvidenceMetric | None = None,
+    sort_direction: str = "desc",
+) -> ToolResult:
     """返回指定客户最新月末超期金额最大的应收订单明细。"""
 
     normalized_id = customer_id.strip().upper()
     if not re.fullmatch(r"C\d{3}", normalized_id):
         raise AnalysisInputError("客户编号必须采用 C015 这样的 C 加三位数字格式。")
-    result = store.fetch(
-        """
+    base_sql = """
         SELECT
             MAX("快照时间") OVER () AS snapshot_date,
             COALESCE("合同号", '') AS contract_number,
@@ -1385,9 +1391,25 @@ def get_current_receivable_details(store: DuckDBStore, customer_id: str) -> Tool
           AND "快照时间" = (SELECT MAX("快照时间") FROM ar_snapshots)
         GROUP BY "快照时间", "合同号", "销售订单号", "物料编码",
                  "最终承诺还款日期", "是否展期"
-        ORDER BY overdue_60_amount DESC, overdue_amount DESC, ar_amount DESC
-        """,
+        """
+    order_by = _bounded_order_clause(
+        sort_by,
+        sort_direction,
+        {
+            "ar_amount": "ar_amount",
+            "overdue_amount": "overdue_amount",
+            "overdue_30_amount": "overdue_30_amount",
+            "overdue_60_amount": "overdue_60_amount",
+            "max_overdue_days": "overdue_days",
+        },
+        "overdue_60_amount DESC, overdue_amount DESC, ar_amount DESC",
+    )
+    result, total_rows = _fetch_bounded_detail(
+        store,
+        base_sql,
         [normalized_id],
+        limit=limit,
+        order_by_sql=order_by,
     )
     rows = [
         [
@@ -1406,7 +1428,10 @@ def get_current_receivable_details(store: DuckDBStore, customer_id: str) -> Tool
     ]
     period = _period(result.rows[0][0]) if result.rows else ""
     return ToolResult(
-        summary=f"{normalized_id} 截至 {period} 的高金额应收明细共返回 {len(rows)} 行。",
+        summary=(
+            f"{normalized_id} 截至 {period} 共找到 {total_rows} 行应收明细，"
+            f"本次返回 {len(rows)} 行。"
+        ),
         columns=[
             "合同号",
             "销售订单号",
@@ -1424,6 +1449,8 @@ def get_current_receivable_details(store: DuckDBStore, customer_id: str) -> Tool
         period=period,
         metric_definitions=["仅取全表最新月末快照，按合同、订单和物料聚合。"],
         warnings=[],
+        total_rows=total_rows,
+        is_truncated=total_rows > len(rows),
     )
 
 
@@ -2215,7 +2242,13 @@ def query_business_evidence(
             store, normalized_id, months=_WINDOW_MONTHS[query.time_window]
         )
     elif key == ("receivables", "order"):
-        result = get_current_receivable_details(store, normalized_id)
+        result = get_current_receivable_details(
+            store,
+            normalized_id,
+            limit=query.limit,
+            sort_by=query.sort_by,
+            sort_direction=query.sort_direction,
+        )
     elif key == ("sales_payments", "month"):
         result = get_customer_flow_history(
             store,

@@ -50,4 +50,9 @@ html { font-size: clamp(16px, 0.6944vw + 7.667px, 22.5px); }
   .table-base tbody tr:hover { background: var(--color-canvas); }
   .empty-state { padding: 32px; text-align: center; color: var(--color-muted); }
   .money-cell { font-weight: 600; white-space: nowrap; }
+
+  /* 报告正文中的数字高亮：金额用品牌蓝，客户编号用橙，日期时长用青绿 */
+  .hl-money { color: var(--color-brand-deep); font-weight: 600; }
+  .hl-code { color: #c2410c; font-weight: 600; }
+  .hl-time { color: #0e9384; font-weight: 600; }
 }

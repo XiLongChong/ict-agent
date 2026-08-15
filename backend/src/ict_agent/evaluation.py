@@ -43,12 +43,14 @@ def logical_evidence_key(evidence: Evidence) -> tuple[str, str] | None:
 
 def _report_sentences(report: InvestigationReport) -> list[str]:
     parts = [
-        report.investigation_summary,
+        report.executive_summary,
         report.risk_assessment.statement,
         *report.risk_assessment.drivers,
         *report.risk_assessment.counter_signals,
         *(fact.statement for fact in report.facts),
-        *(hypothesis.statement for hypothesis in report.hypotheses),
+        *(item.possibility for item in report.possibility_assessments),
+        *(item.rationale for item in report.possibility_assessments),
+        *(item.statement for item in report.data_conflicts),
     ]
     return [item.strip() for item in re.split(r"[。！？;；\n]", "。".join(parts)) if item.strip()]
 
@@ -57,30 +59,23 @@ def _report_references(report: InvestigationReport) -> set[str]:
     references = set(report.risk_assessment.evidence_ids)
     for fact in report.facts:
         references.update(fact.evidence_ids)
-    for hypothesis in report.hypotheses:
-        references.update(hypothesis.supporting_evidence_ids)
-        references.update(hypothesis.contradicting_evidence_ids)
+    for item in report.possibility_assessments:
+        references.update(item.supporting_evidence_ids)
+        references.update(item.contradicting_evidence_ids)
+    for conflict in report.data_conflicts:
+        references.update(conflict.evidence_ids)
     return references
 
 
-def _hypothesis_errors(report: InvestigationReport) -> list[str]:
+def _possibility_errors(report: InvestigationReport) -> list[str]:
     errors: list[str] = []
-    for hypothesis in report.hypotheses:
-        if hypothesis.status == "SUPPORTED" and not hypothesis.supporting_evidence_ids:
-            errors.append(f"{hypothesis.hypothesis_id}: SUPPORTED 无支持证据")
-        if hypothesis.status == "WEAKENED" and not hypothesis.contradicting_evidence_ids:
-            errors.append(f"{hypothesis.hypothesis_id}: WEAKENED 无反驳证据")
-        overlap = set(hypothesis.supporting_evidence_ids) & set(
-            hypothesis.contradicting_evidence_ids
-        )
+    for item in report.possibility_assessments:
+        overlap = set(item.supporting_evidence_ids) & set(item.contradicting_evidence_ids)
         if overlap:
-            errors.append(f"{hypothesis.hypothesis_id}: 同一证据同时支持和反驳 {sorted(overlap)}")
-        if (
-            hypothesis.status == "UNRESOLVED"
-            and not hypothesis.missing_evidence
-            and not (hypothesis.supporting_evidence_ids and hypothesis.contradicting_evidence_ids)
-        ):
-            errors.append(f"{hypothesis.hypothesis_id}: UNRESOLVED 未说明缺失或冲突")
+            errors.append(f"{item.assessment_id}: 同一证据同时支持和反驳 {sorted(overlap)}")
+        width = item.likelihood.upper_percent - item.likelihood.lower_percent
+        if item.missing_evidence and width < 20:
+            errors.append(f"{item.assessment_id}: 缺少关键证据但概率区间过窄")
     return errors
 
 
@@ -176,7 +171,7 @@ def evaluate_investigation_run(
     if report is not None:
         facts_cited = facts_cited and all(fact.evidence_ids for fact in report.facts)
     risk_cited = bool(report and report.risk_assessment.evidence_ids)
-    hypothesis_errors = _hypothesis_errors(report) if report else ["没有报告"]
+    possibility_errors = _possibility_errors(report) if report else ["没有报告"]
     risk_reference_keys = {
         key
         for evidence_id in (report.risk_assessment.evidence_ids if report else [])
@@ -188,7 +183,7 @@ def evaluate_investigation_run(
         (10 if report and not bad_references else 0)
         + (5 if facts_cited else 0)
         + (5 if risk_cited else 0)
-        + (5 if report and not hypothesis_errors else 0)
+        + (5 if report and not possibility_errors else 0)
         + _ratio_score(min(len(risk_reference_keys), risk_variety_target), risk_variety_target, 5)
     )
 
@@ -205,7 +200,11 @@ def evaluate_investigation_run(
         not allowed_stages or report.risk_assessment.stage in allowed_stages
     )
     uncertainty_scoped = bool(
-        report and (report.limitations or any(item.missing_evidence for item in report.hypotheses))
+        report
+        and (
+            report.limitations
+            or any(item.missing_evidence for item in report.possibility_assessments)
+        )
     )
     boundary_score = (
         (6 if report and not claim_violations else 0)
@@ -236,7 +235,7 @@ def evaluate_investigation_run(
         "run_completed": report is not None and error is None and not partial,
         "required_evidence_coverage": not missing_keys,
         "citation_integrity": report is not None and not bad_references and facts_cited,
-        "hypothesis_status_integrity": report is not None and not hypothesis_errors,
+        "possibility_estimate_integrity": report is not None and not possibility_errors,
         "no_unqualified_forbidden_claims": report is not None and not claim_violations,
         "actionable_stage": report is not None
         and report.risk_assessment.stage != "LIMITED"
@@ -272,7 +271,7 @@ def evaluate_investigation_run(
             "actual_evidence": sorted(actual_keys),
             "missing_evidence": missing_keys,
             "bad_evidence_ids": bad_references,
-            "hypothesis_status_errors": hypothesis_errors,
+            "possibility_estimate_errors": possibility_errors,
             "claim_violations": claim_violations,
             "called_tools": sorted(called_tool_set),
             "evidence_calls": len(evidence),

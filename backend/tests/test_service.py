@@ -175,28 +175,39 @@ def _service_model(messages: list[ModelMessage], info: AgentInfo) -> ModelRespon
         if isinstance(part.content, ToolResult) and part.content.evidence_id
     ]
     output = {
-        "investigation_summary": "工具证据确认存在逾期事实，具体原因仍需人工复核。",
+        "executive_summary": "工具证据确认逾期风险已经恶化，长期未结清很可能需要升级人工复核。",
         "risk_assessment": {
             "stage": "DETERIORATING",
             "statement": "逾期风险已经恶化，但最终回收结果无法判断。",
             "evidence_ids": [evidence_ids[0]],
             "drivers": ["应收历史存在持续未结清记录。"],
             "counter_signals": [],
+            "management_posture": "建议升级人工复核并核对后续回款安排。",
             "watch_items": ["后续回款能否覆盖到期应收。"],
         },
-        "hypotheses": [
+        "possibility_assessments": [
             {
-                "hypothesis_id": "H1",
-                "statement": "现有数据支持长期应收尚未结清。",
-                "status": "SUPPORTED",
+                "assessment_id": "P1",
+                "possibility": "长期应收可能继续形成回款压力。",
+                "likelihood": {"lower_percent": 60, "upper_percent": 80},
+                "rationale": "应收历史显示持续未结清，但缺少外部处置记录。",
                 "supporting_evidence_ids": [evidence_ids[0]],
+                "missing_evidence": ["外部处置记录"],
+                "business_implication": "需要人工核对回款安排后决定是否升级处理。",
             }
         ],
         "facts": [{"statement": "已取得应收历史证据。", "evidence_ids": [evidence_ids[0]]}],
         "limitations": ["缺少外部处置记录。"],
         "recommended_priority": "HIGH",
-        "recommended_actions": ["人工复核。"],
-        "requires_human_review": True,
+        "recommended_actions": [
+            {
+                "owner": "案件复核人",
+                "action": "核对后续回款安排并完成人工复核。",
+                "urgency": "SHORT_TERM",
+                "rationale": "逾期风险已经恶化。",
+                "completion_evidence": "人工复核记录。",
+            }
+        ],
     }
     assert info.allow_text_output is True
     assert info.output_tools == []
@@ -364,7 +375,7 @@ async def test_investigation_service_persists_partial_report(settings: Settings)
     record = await investigate_case(case_id, settings=settings, model=model)
     detail = get_case_detail(case_id, settings=settings)
 
-    assert "无法判断" in record.report.investigation_summary
+    assert "不确定性" in record.report.executive_summary
     assert record.report.evidence_completeness == "LOW"
     assert record.report.risk_assessment is not None
     assert record.report.risk_assessment.stage == "LIMITED"
@@ -382,3 +393,23 @@ async def test_investigation_service_persists_partial_report(settings: Settings)
         settings=settings,
     )
     assert get_case_detail(case_id, settings=settings).status == "PENDING_AGENT_REVIEW"
+
+
+async def test_saved_report_is_not_misreported_as_investigation_failure(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case_id = _create_receivable_case(settings)
+    model = FunctionModel(stream_function=_service_stream_model)
+    prepared = service_module.prepare_investigation(case_id, settings=settings, model=model)
+
+    async def fail_after_save(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("post-save notification failed")
+
+    monkeypatch.setattr(service_module, "_notify_case_event", fail_after_save)
+    events = [event async for event in service_module.stream_prepared_investigation(prepared)]
+
+    assert not any(event.event_type == "ERROR" for event in events)
+    completed = next(event for event in events if event.event_type == "REPORT_COMPLETED")
+    assert completed.record is not None
+    assert completed.record.report.executive_summary
+    assert get_case_detail(case_id, settings=settings).status == "PENDING_HUMAN_REVIEW"

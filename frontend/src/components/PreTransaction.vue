@@ -100,9 +100,9 @@ function openCase() {
     <section v-if="result" class="card overflow-hidden">
       <header class="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
         <div>
-          <span class="text-xs font-semibold text-brand">已创建成交前调查案件</span>
+          <span class="text-xs font-semibold text-brand">已创建模拟订单</span>
           <h2 class="mt-1 text-lg font-bold text-ink">
-            {{ result.customer_name }} · {{ labels.businessType[result.business_type] }}
+            {{ result.customer_id }} · {{ result.customer_name }} · {{ labels.businessType[result.business_type] }}
           </h2>
         </div>
         <Button @click="openCase">
@@ -142,11 +142,10 @@ function openCase() {
         <aside class="rounded-lg bg-canvas p-4 text-sm leading-6">
           <div class="flex items-center gap-2 font-semibold text-ink">
             <ShieldCheck :size="17" class="text-brand" />
-            入口说明
+            模拟信息
           </div>
           <p class="mt-2 text-muted">
-            本次场景为 {{ result.scenario }}，数据质量为 {{ result.data_quality_status }}。
-            场景只决定模拟订单相对历史分布的位置，不直接判定客户风险。
+            模拟场景：{{ labels.simulationScenario[result.scenario] || result.scenario }}；数据质量：{{ labels.dataQuality[result.data_quality_status] || result.data_quality_status }}。
           </p>
           <p v-if="result.data_quality_warnings?.length" class="mt-2 text-warning-deep">
             {{ result.data_quality_warnings.join("；") }}

@@ -53,7 +53,7 @@ from ict_agent.models import (
     EvidenceQuery,
     InvestigationCaseInput,
     InvestigationFact,
-    InvestigationHypothesis,
+    InvestigationModelReport,
     InvestigationProfile,
     InvestigationProtocolSnapshot,
     InvestigationReport,
@@ -62,6 +62,9 @@ from ict_agent.models import (
     InvestigationTraceEvent,
     InvestigationTraceType,
     JsonScalar,
+    PossibilityAssessment,
+    ProbabilityRange,
+    RecommendedAction,
     RiskCaseDetail,
     RiskSignalAssessment,
     ToolResult,
@@ -534,13 +537,13 @@ def _create_model(
 def _create_investigation_agent(
     settings: Settings,
     model: Model | None = None,
-) -> Agent[InvestigationDependencies, InvestigationReport]:
+) -> Agent[InvestigationDependencies, InvestigationModelReport]:
     """创建只暴露检查、搜索和取证三项受治理能力的调查 Agent。"""
 
-    agent = Agent[InvestigationDependencies, InvestigationReport](
+    agent = Agent[InvestigationDependencies, InvestigationModelReport](
         _create_model(settings, model),
         output_type=PromptedOutput(
-            InvestigationReport,
+            InvestigationModelReport,
             name="investigation_report",
             description="Return the final evidence-grounded investigation report as JSON.",
             template=INVESTIGATION_OUTPUT_TEMPLATE,
@@ -638,8 +641,8 @@ def _create_investigation_agent(
 
     @agent.output_validator
     def validate_investigation_report(
-        ctx: RunContext[InvestigationDependencies], report: InvestigationReport
-    ) -> InvestigationReport:
+        ctx: RunContext[InvestigationDependencies], report: InvestigationModelReport
+    ) -> InvestigationModelReport:
         """Reject incomplete evidence, invalid citations, and unsupported conclusions."""
 
         missing = _missing_requirements(ctx.deps)
@@ -668,41 +671,37 @@ def _create_investigation_agent(
             invalid_ids = set(fact.evidence_ids) - valid_ids
             if invalid_ids:
                 raise ModelRetry(f"A fact cites unknown evidence IDs: {sorted(invalid_ids)}.")
-        for hypothesis in report.hypotheses:
-            refs = set(hypothesis.supporting_evidence_ids) | set(
-                hypothesis.contradicting_evidence_ids
+        for assessment in report.possibility_assessments:
+            refs = set(assessment.supporting_evidence_ids) | set(
+                assessment.contradicting_evidence_ids
             )
-            overlap = set(hypothesis.supporting_evidence_ids) & set(
-                hypothesis.contradicting_evidence_ids
+            overlap = set(assessment.supporting_evidence_ids) & set(
+                assessment.contradicting_evidence_ids
             )
             if overlap:
                 raise ModelRetry(
-                    f"Hypothesis {hypothesis.statement!r} uses the same evidence as both "
+                    f"Possibility {assessment.possibility!r} uses the same evidence as both "
                     "supporting "
                     f"and contradicting: {sorted(overlap)}. Keep each ID on the correct side only."
                 )
             invalid_ids = refs - valid_ids
             if invalid_ids:
-                raise ModelRetry(f"A hypothesis cites unknown evidence IDs: {sorted(invalid_ids)}.")
-            if hypothesis.status == "SUPPORTED" and not hypothesis.supporting_evidence_ids:
                 raise ModelRetry(
-                    f"SUPPORTED hypothesis {hypothesis.statement!r} has no supporting evidence."
+                    f"A possibility assessment cites unknown evidence IDs: {sorted(invalid_ids)}."
                 )
-            if hypothesis.status == "WEAKENED" and not hypothesis.contradicting_evidence_ids:
+            likelihood_width = (
+                assessment.likelihood.upper_percent - assessment.likelihood.lower_percent
+            )
+            if assessment.missing_evidence and likelihood_width < 20:
                 raise ModelRetry(
-                    f"WEAKENED hypothesis {hypothesis.statement!r} has no contradicting evidence."
+                    f"Possibility {assessment.possibility!r} has material missing evidence but an "
+                    "overly narrow likelihood range. Widen the uncalibrated estimate."
                 )
-            if (
-                hypothesis.status == "UNRESOLVED"
-                and not hypothesis.missing_evidence
-                and not (
-                    hypothesis.supporting_evidence_ids and hypothesis.contradicting_evidence_ids
-                )
-            ):
+        for conflict in report.data_conflicts:
+            invalid_ids = set(conflict.evidence_ids) - valid_ids
+            if invalid_ids:
                 raise ModelRetry(
-                    f"UNRESOLVED hypothesis {hypothesis.statement!r} must identify missing "
-                    "evidence "
-                    "or cite a genuine evidence conflict."
+                    f"A data conflict cites unknown evidence IDs: {sorted(invalid_ids)}."
                 )
         unsupported_definitive_claims = (
             "已确认坏账",
@@ -721,6 +720,10 @@ def _create_investigation_agent(
             "已进入诉讼程序",
         )
         abstention_markers = (
+            "可能",
+            "概率",
+            "估计",
+            "建议",
             "无法判断",
             "不能判断",
             "没有证据",
@@ -731,11 +734,15 @@ def _create_investigation_agent(
             "不得断言",
             "未确认",
         )
-        claim_texts = [report.investigation_summary, report.risk_assessment.statement]
+        claim_texts = [report.executive_summary, report.risk_assessment.statement]
         claim_texts.extend(report.risk_assessment.drivers)
         claim_texts.extend(report.risk_assessment.counter_signals)
+        claim_texts.append(report.risk_assessment.management_posture)
         claim_texts.extend(fact.statement for fact in report.facts)
-        claim_texts.extend(hypothesis.statement for hypothesis in report.hypotheses)
+        claim_texts.extend(item.possibility for item in report.possibility_assessments)
+        claim_texts.extend(item.rationale for item in report.possibility_assessments)
+        claim_texts.extend(item.statement for item in report.data_conflicts)
+        claim_texts.extend(item.action for item in report.recommended_actions)
         for text in claim_texts:
             if any(claim in text for claim in unsupported_definitive_claims) and not any(
                 marker in text for marker in abstention_markers
@@ -746,7 +753,12 @@ def _create_investigation_agent(
                     "final "
                     "outcome as unresolved."
                 )
-        _trace(ctx.deps, "REPORT_VALIDATED", "报告校验通过", "证据引用和结论状态已核验。")
+        _trace(
+            ctx.deps,
+            "REPORT_VALIDATED",
+            "报告校验通过",
+            "事实、概率区间、数据冲突、优先级和结论引用已核验。",
+        )
         return report
 
     return agent
@@ -769,52 +781,68 @@ def _evidence_completeness(
 
 
 def _normalize_investigation_report(
-    report: InvestigationReport,
+    report: InvestigationModelReport,
     dependencies: InvestigationDependencies,
 ) -> InvestigationReport:
-    return report.model_copy(
-        update={
-            "trace": list(dependencies.trace),
-            "evidence_completeness": _evidence_completeness(dependencies),
-            "requires_human_review": True,
-        }
+    """把模型生成的报告补上系统拥有的确定性审计字段。
+
+    recommended_priority 必须由模型基于调查证据给出；这里不再用规则建档时的案件优先级
+    做回退，避免把入口严重度误报成 AI 的审查结论。
+    """
+
+    return InvestigationReport(
+        **report.model_dump(),
+        trace=list(dependencies.trace),
+        evidence_completeness=_evidence_completeness(dependencies),
+        requires_human_review=True,
     )
 
 
 def _partial_investigation_report(
     dependencies: InvestigationDependencies,
 ) -> InvestigationReport:
-    missing_evidence = _missing_requirements(dependencies)
-    missing_evidence.append("模型未能生成通过证据校验的完整报告")
+    missing_requirements = _missing_requirements(dependencies)
+    missing_evidence = [*missing_requirements, "模型未能生成通过证据校验的完整报告"]
     facts = [
         InvestigationFact(statement=item.summary[:500], evidence_ids=[item.evidence_id])
-        for item in dependencies.evidence[:12]
+        for item in dependencies.evidence[:6]
     ]
-    risk_assessment = _fallback_risk_assessment(dependencies, missing_evidence)
+    risk_assessment = _fallback_risk_assessment(dependencies, missing_requirements)
     _trace(
         dependencies,
         "PARTIAL_REPORT",
         "保留部分调查结果",
-        "调查未完整完成；系统保留可验证事实，并将具体原因标记为无法判断。",
+        "调查未完整完成；系统保留可验证事实，并以宽概率区间表达当前不确定性。",
     )
     return InvestigationReport(
-        investigation_summary=(
+        executive_summary=(
             "调查未完整完成。系统已保留规则识别出的风险信号和已取得的工具事实；"
-            "具体形成原因及最终损失结果目前无法判断。"
+            "以下可能性区间仅用于标记当前不确定性，不能替代完整调查。"
         ),
         risk_assessment=risk_assessment,
-        hypotheses=[
-            InvestigationHypothesis(
-                hypothesis_id="H-UNRESOLVED",
-                statement="现有证据能否完整解释本案原因，目前无法判断。",
-                status="UNRESOLVED",
-                missing_evidence=missing_evidence,
+        possibility_assessments=[
+            PossibilityAssessment(
+                assessment_id="P-PARTIAL",
+                possibility="现有风险信号可能继续发展，但当前调查不足以判断具体原因和幅度。",
+                likelihood=ProbabilityRange(lower_percent=30, upper_percent=70),
+                rationale="调查中断前取得的证据只覆盖部分要求，因此只能给出宽区间估计。",
+                supporting_evidence_ids=[dependencies.evidence[0].evidence_id],
+                missing_evidence=missing_evidence[:3],
+                business_implication="补齐缺失证据并重新调查后，再决定是否升级处置。",
             )
         ],
         facts=facts,
         limitations=["调查运行中断或最终报告未通过证据校验，未补写任何推测性结论。"],
-        recommended_priority=dependencies.case.priority,
-        recommended_actions=["按监测项跟踪后续变化；补齐缺失证据后重新调查具体原因。"],
+        recommended_priority="MEDIUM",
+        recommended_actions=[
+            RecommendedAction(
+                owner="案件复核人",
+                action="补齐最低证据要求后重新发起调查。",
+                urgency="SHORT_TERM",
+                rationale="当前报告仅保留了部分可验证事实。",
+                completion_evidence="新的完整调查报告及其证据引用。",
+            )
+        ],
         evidence_completeness=_evidence_completeness(dependencies),
         requires_human_review=True,
         trace=list(dependencies.trace),
@@ -835,6 +863,7 @@ def _fallback_risk_assessment(
             statement="已取得部分可验证事实，但最低证据覆盖尚未完成，当前只能确认存在待核风险信号。",
             evidence_ids=evidence_ids,
             drivers=drivers,
+            management_posture="暂不作最终处置；补齐证据后由人工复核是否升级。",
             watch_items=["补齐缺失证据后，重新判断风险趋势和具体原因。"],
         )
 
@@ -864,6 +893,7 @@ def _fallback_risk_assessment(
         statement=statement,
         evidence_ids=evidence_ids,
         drivers=drivers,
+        management_posture="由人工复核现有风险信号，并根据业务影响决定是否升级处理。",
         watch_items=watch_items,
     )
 
@@ -893,8 +923,12 @@ async def stream_investigation_agent(
             _investigation_prompt(case),
             deps=dependencies,
             usage_limits=UsageLimits(
-                request_limit=12,
-                tool_calls_limit=10,
+                # 最低证据覆盖最多约 9 项（inspect_data + 8 组受控证据），
+                # 模型可能在一个批次里取完证据后再补查几项，12 次上限会把这种
+                # 合法调查在第二轮开始前直接中断成部分报告，因此放宽到 24。
+                # request_limit 同步放宽，给取证据后的最终报告请求留出余量。
+                request_limit=16,
+                tool_calls_limit=24,
                 output_tokens_limit=40_000,
             ),
         ) as events:

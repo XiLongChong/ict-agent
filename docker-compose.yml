@@ -12,6 +12,9 @@ services:
       ICT_DATA_DIR: /app/data/raw
       ICT_DATABASE_PATH: /app/data/processed/ict_agent.duckdb
       ICT_CASE_DATABASE_PATH: /app/data/processed/ict_agent_cases.duckdb
+      # 数据库结构/格式版本。升级代码需要强制重建数据库时，调高这个数字即可：
+      # 容器启动会自动删除旧库、重新导入 CSV 并重新扫描生成案件。
+      ICT_DATA_FORMAT_VERSION: ${ICT_DATA_FORMAT_VERSION:-1}
     ports:
       - "${ICT_PORT:-8000}:8000"
     volumes:

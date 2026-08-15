@@ -23,9 +23,10 @@ CaseStatus = Literal[
     "CLOSED",
 ]
 RiskPriority = Literal["LOW", "MEDIUM", "HIGH"]
-HypothesisStatus = Literal["SUPPORTED", "WEAKENED", "UNRESOLVED"]
 RiskSignalStage = Literal["EARLY_WARNING", "DETERIORATING", "LIMITED"]
 EvidenceCompleteness = Literal["LOW", "MEDIUM", "HIGH"]
+ProbabilityCalibration = Literal["UNCALIBRATED_MODEL_ESTIMATE"]
+ActionUrgency = Literal["IMMEDIATE", "SHORT_TERM", "MONITOR"]
 ReviewDecision = Literal["CONFIRMED_RISK", "NEEDS_MORE_EVIDENCE", "NO_RISK"]
 InvestigationToolName = Literal[
     "inspect_data",
@@ -356,15 +357,90 @@ class RiskCaseSummary(BaseModel):
     updated_at: str
 
 
-class InvestigationHypothesis(BaseModel):
-    """The evidence status of one candidate explanation."""
+class ProbabilityRange(BaseModel):
+    """An explicitly uncalibrated likelihood range inferred from current case evidence."""
 
-    hypothesis_id: Annotated[str, Field(min_length=1, max_length=100)]
-    statement: Annotated[str, Field(min_length=1, max_length=500)]
-    status: HypothesisStatus
-    supporting_evidence_ids: list[str] = []
-    contradicting_evidence_ids: list[str] = []
-    missing_evidence: list[str] = []
+    lower_percent: Annotated[
+        int,
+        Field(
+            ge=0,
+            le=100,
+            description=(
+                "Lower bound of the model-estimated likelihood range, as an integer percent."
+            ),
+        ),
+    ]
+    upper_percent: Annotated[
+        int,
+        Field(
+            ge=0,
+            le=100,
+            description=(
+                "Upper bound of the model-estimated likelihood range, as an integer percent."
+            ),
+        ),
+    ]
+    calibration: ProbabilityCalibration = "UNCALIBRATED_MODEL_ESTIMATE"
+
+    @model_validator(mode="after")
+    def validate_range(self) -> ProbabilityRange:
+        if self.lower_percent > self.upper_percent:
+            raise ValueError("概率区间下限不能高于上限。")
+        if self.lower_percent == self.upper_percent:
+            raise ValueError("未校准的模型估计必须使用区间，不能伪装成精确单点概率。")
+        return self
+
+
+class PossibilityAssessment(BaseModel):
+    """One decision-relevant possible cause, outcome, or future development."""
+
+    assessment_id: Annotated[str, Field(min_length=1, max_length=100)]
+    possibility: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=300,
+            description=(
+                "A concise possible cause, outcome, or future development; not a verified fact."
+            ),
+        ),
+    ]
+    likelihood: ProbabilityRange
+    rationale: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=500,
+            description=(
+                "Why the cited evidence supports this range; state the directional support "
+                "in plain language."
+            ),
+        ),
+    ]
+    supporting_evidence_ids: Annotated[
+        list[str],
+        Field(
+            min_length=1,
+            max_length=5,
+            description="Evidence IDs that support this possibility only.",
+        ),
+    ]
+    contradicting_evidence_ids: Annotated[
+        list[str],
+        Field(
+            max_length=3,
+            description="Evidence IDs that weaken this possibility only.",
+        ),
+    ] = []
+    missing_evidence: Annotated[list[str], Field(max_length=3)] = []
+    business_implication: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=300,
+            description="How this possibility changes the human review or next business decision.",
+        ),
+    ]
 
 
 class InvestigationFact(BaseModel):
@@ -374,15 +450,56 @@ class InvestigationFact(BaseModel):
     evidence_ids: list[str] = []
 
 
+class InvestigationDataConflict(BaseModel):
+    """A material contradiction or granularity mismatch found across evidence sources."""
+
+    statement: Annotated[str, Field(min_length=1, max_length=400)]
+    evidence_ids: Annotated[list[str], Field(min_length=2, max_length=5)]
+    decision_impact: Annotated[str, Field(min_length=1, max_length=300)]
+
+
+class RecommendedAction(BaseModel):
+    """A structured human-owned action proposed by the Agent but never auto-executed."""
+
+    owner: Annotated[str, Field(min_length=1, max_length=100)]
+    action: Annotated[str, Field(min_length=1, max_length=300)]
+    urgency: ActionUrgency
+    rationale: Annotated[str, Field(min_length=1, max_length=300)]
+    completion_evidence: Annotated[str, Field(min_length=1, max_length=300)]
+
+
 class RiskSignalAssessment(BaseModel):
     """An observable risk-signal assessment kept separate from unknown causes or outcomes."""
 
     stage: RiskSignalStage
-    statement: Annotated[str, Field(min_length=1, max_length=500)]
+    statement: Annotated[str, Field(min_length=1, max_length=400)]
     evidence_ids: Annotated[list[str], Field(min_length=1, max_length=9)]
-    drivers: Annotated[list[str], Field(min_length=1, max_length=5)]
-    counter_signals: Annotated[list[str], Field(max_length=5)] = []
-    watch_items: Annotated[list[str], Field(min_length=1, max_length=5)]
+    drivers: Annotated[
+        list[str],
+        Field(
+            min_length=1,
+            max_length=4,
+            description="Evidence-grounded points that support this case having risk.",
+        ),
+    ]
+    counter_signals: Annotated[
+        list[str],
+        Field(
+            max_length=3,
+            description=(
+                "Evidence-grounded points that support this case having no risk or milder risk."
+            ),
+        ),
+    ] = []
+    management_posture: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=300,
+            description="A clear conditional management recommendation requiring human approval.",
+        ),
+    ]
+    watch_items: Annotated[list[str], Field(min_length=1, max_length=3)]
 
 
 class InvestigationTraceEvent(BaseModel):
@@ -396,16 +513,42 @@ class InvestigationTraceEvent(BaseModel):
     created_at: str
 
 
-class InvestigationReport(BaseModel):
-    """The structured, evidence-grounded output of the investigation agent."""
+class InvestigationModelReport(BaseModel):
+    """Only the business judgment fields that the model is responsible for generating."""
 
-    investigation_summary: Annotated[str, Field(min_length=1, max_length=2_000)]
+    executive_summary: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=800,
+            description="A decision-first summary that does not repeat the fact list.",
+        ),
+    ]
     risk_assessment: RiskSignalAssessment
-    hypotheses: Annotated[list[InvestigationHypothesis], Field(min_length=1, max_length=8)]
-    facts: Annotated[list[InvestigationFact], Field(max_length=12)] = []
-    limitations: Annotated[list[str], Field(max_length=12)] = []
-    recommended_priority: RiskPriority
-    recommended_actions: Annotated[list[str], Field(min_length=1, max_length=5)]
+    possibility_assessments: Annotated[
+        list[PossibilityAssessment], Field(min_length=1, max_length=4)
+    ]
+    facts: Annotated[list[InvestigationFact], Field(min_length=1, max_length=6)]
+    data_conflicts: Annotated[list[InvestigationDataConflict], Field(max_length=3)] = []
+    limitations: Annotated[list[str], Field(max_length=5)] = []
+    recommended_priority: Annotated[
+        RiskPriority,
+        Field(
+            description=(
+                "Your post-investigation priority judgment from the gathered evidence. The "
+                "case-level priority in the input was assigned by the rule engine at intake and "
+                "may be a false "
+                "positive; re-judge it instead of echoing it."
+            ),
+        ),
+    ]
+    recommended_actions: Annotated[list[RecommendedAction], Field(min_length=1, max_length=4)]
+
+
+class InvestigationReport(InvestigationModelReport):
+    """The persisted report enriched with deterministic system-owned audit fields."""
+
+    report_schema_version: Literal["5.0"] = "5.0"
     evidence_completeness: EvidenceCompleteness = "LOW"
     requires_human_review: Literal[True] = True
     trace: Annotated[list[InvestigationTraceEvent], Field(max_length=30)] = []

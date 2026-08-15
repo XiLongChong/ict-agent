@@ -2,7 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { AlertCircle, CheckCircle2, Database, Download, PlayCircle, Search, ShieldCheck, Sparkles } from "lucide-vue-next";
 import Badge from "./ui/Badge.vue";
-import { api, hypothesisColor, labels, priorityColor, queryArguments, stageColor, streamNdjson } from "../lib";
+import HighlightText from "./HighlightText.vue";
+import { api, labels, priorityColor, queryArguments, streamNdjson } from "../lib";
 
 const props = defineProps({ caseItem: Object });
 const emit = defineEmits(["completed"]);
@@ -31,8 +32,55 @@ const protocolDownloadFilename = computed(() => {
   return `${caseId}-request-${requestIndex}-deepseek-chat-completions.json`;
 });
 const missingEvidence = computed(() => [
-  ...new Set((record.value?.report?.hypotheses || []).flatMap((item) => item.missing_evidence || [])),
+  ...new Set((record.value?.report?.possibility_assessments || []).flatMap((item) => item.missing_evidence || [])),
 ]);
+const report = computed(() => record.value?.report || null);
+const conclusionText = computed(() => {
+  const summary = String(report.value?.executive_summary || "").trim();
+  const statement = String(report.value?.risk_assessment?.statement || "").trim();
+  if (!statement || statement === summary) return summary;
+  return [summary, statement].join("\n\n");
+});
+
+function toolName(toolName) {
+  return labels.tool[toolName] || toolName || "";
+}
+function periodLabel(item) {
+  return item?.period || "";
+}
+function evidenceSignature(item) {
+  return [toolName(item?.tool_name), periodLabel(item)].filter(Boolean).join(" · ");
+}
+function evidenceRefs(ids) {
+  const index = new Map((record.value?.evidence || []).map((item) => [item.evidence_id, item]));
+  return (ids || []).map((id) => index.get(id) || id);
+}
+
+function likelihoodLabel(item) {
+  const lower = item?.likelihood?.lower_percent;
+  const upper = item?.likelihood?.upper_percent;
+  if (lower == null || upper == null) return "可能性未评估";
+  return `${lower}%–${upper}%`;
+}
+function likelihoodTone(lower, upper) {
+  const midpoint = (lower + upper) / 2;
+  if (midpoint >= 70) return "danger";
+  if (midpoint <= 30) return "success";
+  return "warning";
+}
+function likelihoodDescription(lower, upper) {
+  if (lower >= 60) return "可能性较高";
+  if (upper <= 40) return "可能性较低";
+  if (lower >= 40) return "可能性偏高，但不确定性大";
+  if (upper <= 60) return "可能性偏低，但不确定性大";
+  return "方向不明确";
+}
+function ownerLabel(value) {
+  return ({ customer_manager: "客户经理", risk_reviewer: "风险复核人", credit_manager: "授信经理", collection_specialist: "催收专员", legal_counsel: "法务", inventory_manager: "库存管理员", sales_manager: "销售经理", case_reviewer: "案件复核人", reviewer: "复核人" }[value]) || value;
+}
+function urgencyLabel(value) {
+  return ({ IMMEDIATE: "立即", SHORT_TERM: "短期", MONITOR: "持续监测" })[value] || value;
+}
 
 watch(
   () => props.caseItem,
@@ -129,9 +177,6 @@ const eventTone = {
 };
 function evidenceById(id) {  return record.value?.evidence?.find((item) => item.evidence_id === id);
 }
-function completenessLabel(value) {
-  return ({ LOW: "证据有限", MEDIUM: "证据基本充分", HIGH: "证据充分" })[value] || "证据待核验";
-}
 </script>
 
 <template>
@@ -199,62 +244,89 @@ function completenessLabel(value) {
       <article class="card overflow-hidden">
         <header class="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
           <CheckCircle2 :size="20" class="text-success" />
-          <h3 class="text-lg font-bold text-ink">AI审查结论</h3>
-          <div class="flex-1"></div>
-          <Badge :tone="stageColor(record.report.risk_assessment.stage)">
-            {{ labels.riskStage[record.report.risk_assessment.stage] }}
-          </Badge>
-          <Badge tone="neutral">{{ completenessLabel(record.report.evidence_completeness) }}</Badge>
+          <h3 class="text-lg font-bold text-ink">AI审查报告</h3>
         </header>
 
         <div class="space-y-6 p-5">
-          <p class="text-[0.9375rem] leading-7 text-ink">
-            {{ record.report.risk_assessment.statement }}
-          </p>
-          <p class="border-l-2 border-brand pl-4 text-sm leading-6 text-muted">
-            {{ record.report.investigation_summary }}
-          </p>
-
-          <section class="border-t border-border pt-5">
-            <h4 class="text-[0.9375rem] font-bold text-ink">关键发现</h4>
-
-            <div class="mt-3 divide-y divide-border border-y border-border">
-              <article v-for="fact in record.report.facts" :key="fact.statement" class="py-3">
-                <p class="text-sm leading-6 text-ink">{{ fact.statement }}</p>
-                <div class="mt-2 flex flex-wrap gap-1.5">
-                  <Badge v-for="id in fact.evidence_ids" :key="id" tone="brand">
-                    {{ labels.tool[evidenceById(id)?.tool_name] || "证据" }} · {{ evidenceById(id)?.period }}
-                  </Badge>
-                </div>
-              </article>
-            </div>
-
-            <div class="mt-4 grid grid-cols-1 gap-5 md:grid-cols-2">
-              <div>
-                <strong class="text-sm text-ink">风险驱动</strong>
-                <ul class="mt-1 space-y-1 text-sm leading-6 text-muted">
-                  <li v-for="item in record.report.risk_assessment.drivers" :key="item">· {{ item }}</li>
-                </ul>
-              </div>
-              <div>
-                <strong class="text-sm text-ink">缓释与反向信号</strong>
-                <ul class="mt-1 space-y-1 text-sm leading-6 text-muted">
-                  <li v-for="item in record.report.risk_assessment.counter_signals" :key="item">· {{ item }}</li>
-                  <li v-if="!record.report.risk_assessment.counter_signals.length">· 暂无</li>
-                </ul>
-              </div>
-            </div>
+          <section>
+            <h4 class="text-[0.9375rem] font-bold text-ink">审查结论</h4>
+            <p class="mt-2 whitespace-pre-line text-[0.9375rem] leading-7 text-ink">
+              <HighlightText :text="conclusionText" />
+            </p>
           </section>
 
           <section class="border-t border-border pt-5">
-            <h4 class="text-[0.9375rem] font-bold text-ink">原因判断</h4>
+            <div class="flex items-center gap-2">
+              <h4 class="text-[0.9375rem] font-bold text-ink">处置建议</h4>
+              <Badge :tone="priorityColor(record.report.recommended_priority)">
+                建议{{ labels.priority[record.report.recommended_priority] }}优先级
+              </Badge>
+            </div>
+            <div class="mt-3 rounded-lg bg-brand-wash px-4 py-3 text-sm leading-6 text-brand-deep">
+              <b>总体处置：</b>{{ record.report.risk_assessment.management_posture }}
+            </div>
+            <ol class="mt-3 space-y-3">
+              <li
+                v-for="(item, index) in record.report.recommended_actions"
+                :key="item.action + item.owner"
+                class="grid grid-cols-[24px_minmax(0,1fr)] gap-2 text-sm leading-6 text-muted"
+              >
+                <span class="grid h-6 w-6 place-items-center rounded-full bg-brand-wash text-sm font-semibold text-brand-deep">
+                  {{ index + 1 }}
+                </span>
+                <span>
+                  <b>{{ ownerLabel(item.owner) }} · {{ urgencyLabel(item.urgency) }}：</b>{{ item.action }}
+                  <span class="block text-muted">{{ item.rationale }}</span>
+                  <span class="block text-muted"><b>完成依据：</b>{{ item.completion_evidence }}</span>
+                </span>
+              </li>
+            </ol>
+            <ul class="mt-3 space-y-1 text-sm leading-6 text-muted">
+              <li v-for="item in record.report.risk_assessment.watch_items" :key="item">
+                <b>持续监测：</b>{{ item }}
+              </li>
+              <li v-if="!record.report.risk_assessment.watch_items?.length">
+                <b>持续监测：</b>暂无
+              </li>
+            </ul>
+          </section>
+
+          <section v-if="report?.possibility_assessments?.length" class="border-t border-border pt-5">
+            <h4 class="text-[0.9375rem] font-bold text-ink">可能性分析</h4>
+            <p class="mt-1 text-xs leading-5 text-muted">AI基于本案证据的推断，可能性为未校准模型估计，不是历史统计违约率。</p>
             <div class="mt-2 divide-y divide-border">
-              <article v-for="item in record.report.hypotheses" :key="item.hypothesis_id" class="py-3">
-                <div class="flex items-start gap-2">
-                  <Badge :tone="hypothesisColor(item.status)">{{ labels.hypothesis[item.status] }}</Badge>
-                  <strong class="text-sm leading-6 text-ink">{{ item.statement }}</strong>
+              <article v-for="item in report.possibility_assessments" :key="item.assessment_id" class="py-3">
+                <div class="flex flex-wrap items-start gap-2">
+                  <Badge :tone="likelihoodTone(item.likelihood?.lower_percent ?? 50, item.likelihood?.upper_percent ?? 50)">
+                    {{ likelihoodDescription(item.likelihood?.lower_percent ?? 50, item.likelihood?.upper_percent ?? 50) }} · {{ likelihoodLabel(item) }}
+                  </Badge>
+                  <strong class="text-sm leading-6 text-ink">{{ item.possibility }}</strong>
                 </div>
-                <p v-if="item.missing_evidence.length" class="mt-1.5 pl-0 text-sm leading-6 text-warning-deep md:pl-[4.75rem]">
+                <p class="mt-1.5 text-sm leading-6 text-muted">{{ item.rationale }}</p>
+                <div class="mt-1.5 space-y-1 text-sm leading-6">
+                  <p
+                    v-for="entry in evidenceRefs(item.supporting_evidence_ids)"
+                    :key="'support-' + (entry?.evidence_id || entry)"
+                    class="flex flex-wrap items-center gap-1.5"
+                  >
+                    <Badge tone="danger">支持</Badge>
+                    <span class="text-muted">{{ evidenceSignature(entry) }}</span>
+                    <span v-if="entry?.summary" class="text-muted">· {{ entry.summary }}</span>
+                  </p>
+                  <p
+                    v-for="entry in evidenceRefs(item.contradicting_evidence_ids)"
+                    :key="'contra-' + (entry?.evidence_id || entry)"
+                    class="flex flex-wrap items-center gap-1.5"
+                  >
+                    <Badge tone="success">反驳</Badge>
+                    <span class="text-muted">{{ evidenceSignature(entry) }}</span>
+                    <span v-if="entry?.summary" class="text-muted">· {{ entry.summary }}</span>
+                  </p>
+                </div>
+                <p class="mt-1.5 text-sm leading-6 text-ink">
+                  <b>业务影响：</b>{{ item.business_implication }}
+                </p>
+                <p v-if="item.missing_evidence?.length" class="mt-1.5 text-sm leading-6 text-warning-deep">
                   <b>仍需补证：</b>{{ item.missing_evidence.join("；") }}
                 </p>
               </article>
@@ -262,35 +334,52 @@ function completenessLabel(value) {
           </section>
 
           <section class="border-t border-border pt-5">
-            <div class="flex items-center gap-2">
-              <h4 class="text-[0.9375rem] font-bold text-ink">后续处理建议</h4>
-              <Badge :tone="priorityColor(record.report.recommended_priority)">
-                {{ labels.priority[record.report.recommended_priority] }}优先级
-              </Badge>
+            <h4 class="text-[0.9375rem] font-bold text-ink">证据分析</h4>
+            <div class="mt-3 grid grid-cols-1 gap-5 md:grid-cols-2">
+              <div>
+                <strong class="text-sm text-danger">支持本案存在风险</strong>
+                <ul class="mt-1 space-y-1 text-sm leading-6 text-muted">
+                  <li v-for="item in record.report.risk_assessment.drivers" :key="item">· {{ item }}</li>
+                  <li v-if="!record.report.risk_assessment.drivers?.length">· 暂无</li>
+                </ul>
+              </div>
+              <div>
+                <strong class="text-sm text-success">支持本案不存在或风险较轻</strong>
+                <ul class="mt-1 space-y-1 text-sm leading-6 text-muted">
+                  <li v-for="item in record.report.risk_assessment.counter_signals" :key="item">· {{ item }}</li>
+                  <li v-if="!record.report.risk_assessment.counter_signals?.length">· 暂无</li>
+                </ul>
+              </div>
             </div>
-            <ol class="mt-3 space-y-3">
-              <li
-                v-for="(item, index) in record.report.recommended_actions"
-                :key="item"
-                class="grid grid-cols-[24px_minmax(0,1fr)] gap-2 text-sm leading-6 text-muted"
-              >
-                <span class="grid h-6 w-6 place-items-center rounded-full bg-brand-wash text-sm font-semibold text-brand-deep">
-                  {{ index + 1 }}
-                </span>
-                <span>{{ item }}</span>
-              </li>
-            </ol>
           </section>
 
           <section class="border-t border-border pt-5">
-            <h4 class="text-[0.9375rem] font-bold text-ink">待补信息与限制</h4>
-            <div class="mt-3 grid grid-cols-1 gap-5 md:grid-cols-3">
-              <div>
-                <strong class="text-sm text-ink">后续监测</strong>
-                <ul class="mt-1 space-y-1 text-sm leading-6 text-muted">
-                  <li v-for="item in record.report.risk_assessment.watch_items" :key="item">· {{ item }}</li>
-                </ul>
-              </div>
+            <h4 class="text-[0.9375rem] font-bold text-ink">关键事实</h4>
+            <div class="mt-3 divide-y divide-border border-y border-border">
+              <article v-for="fact in record.report.facts" :key="fact.statement" class="py-3">
+                <p class="text-sm leading-6 text-ink">{{ fact.statement }}</p>
+                <div class="mt-2 flex flex-wrap gap-1.5">
+                  <Badge v-for="id in fact.evidence_ids" :key="id" tone="brand">
+                    {{ evidenceSignature(evidenceById(id)) || "证据" }}
+                  </Badge>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section v-if="record.report.data_conflicts?.length" class="border-t border-border pt-5">
+            <h4 class="text-[0.9375rem] font-bold text-ink">关键数据冲突</h4>
+            <div class="mt-2 divide-y divide-border">
+              <article v-for="item in record.report.data_conflicts" :key="item.statement" class="py-3">
+                <strong class="text-sm leading-6 text-ink">{{ item.statement }}</strong>
+                <p class="mt-1 text-sm leading-6 text-warning-deep"><b>决策影响：</b>{{ item.decision_impact }}</p>
+              </article>
+            </div>
+          </section>
+
+          <section class="border-t border-border pt-5">
+            <h4 class="text-[0.9375rem] font-bold text-ink">待补证据与限制</h4>
+            <div class="mt-3 grid grid-cols-1 gap-5 md:grid-cols-2">
               <div>
                 <strong class="text-sm text-ink">待补证据</strong>
                 <ul class="mt-1 space-y-1 text-sm leading-6 text-muted">

@@ -80,7 +80,7 @@ from ict_agent.models import (
 )
 from ict_agent.pretransaction import Scenario, SimulatedOrder, generate_simulated_order
 from ict_agent.rule_engine import build_rule_scan
-from ict_agent.rule_models import RuleHit, RuleSubject
+from ict_agent.rules import RULE_SET_VERSION, pre_transaction_review_hit
 from ict_agent.tools import (
     AnalysisInputError,
     get_ar_trend,
@@ -753,6 +753,7 @@ async def stream_prepared_investigation(
 
     sequence = 1
     report_saved = False
+    saved_record: InvestigationRecord | None = None
     try:
         yield InvestigationStreamEvent(
             sequence=sequence,
@@ -774,12 +775,13 @@ async def stream_prepared_investigation(
                 continue
             record = _save_investigation(prepared, event)
             report_saved = True
+            saved_record = record
             updated_case = get_case_detail(prepared.case.case_id, settings=prepared.settings)
             await _notify_case_event(
                 "PARTIAL_REPORT" if event.partial else "INVESTIGATION_COMPLETED",
                 updated_case,
                 prepared.settings,
-                detail=record.report.investigation_summary,
+                detail=record.report.executive_summary,
             )
             yield InvestigationStreamEvent(
                 sequence=sequence,
@@ -794,6 +796,14 @@ async def stream_prepared_investigation(
     except Exception as exc:
         logger.exception("调查事件流执行失败：case_id=%s", prepared.case.case_id)
         sequence += 1
+        if saved_record is not None:
+            yield InvestigationStreamEvent(
+                sequence=sequence,
+                event_type="REPORT_COMPLETED",
+                message="调查报告已保存；后续通知或页面回传未完整完成，请刷新案件页面。",
+                record=saved_record,
+            )
+            return
         yield InvestigationStreamEvent(
             sequence=sequence,
             event_type="ERROR",
@@ -930,73 +940,34 @@ def _simulation_response(row: tuple[DatabaseScalar, ...]) -> PreTransactionSimul
 def _assemble_simulated_order_case(
     simulated: SimulatedOrder,
     *,
-    priority: RiskPriority,
-    reason: str,
     list_status: str,
 ) -> tuple[CaseWrite, RuleHitWrite]:
-    """把演示订单转换为统一原始信号，再走准入和案件组装。"""
+    """把模拟订单转换为成交前必查入口信号，再走准入和案件组装。
+
+    信号、入口评分和文案均由规则层（pre_transaction_review_hit）给出；本函数只负责
+    组装，不在此处打分或拼写规则文案。所有模拟订单一律进入统一案件流程，由 Agent
+    调查后重新给出优先级。
+    """
 
     case_id = f"pre_{simulated.simulation_id.replace('-', '')[:20]}"
-    generated_date = simulated.generated_at.split("T", maxsplit=1)[0]
-    context: dict[str, DatabaseScalar] = {
-        "simulation_id": simulated.simulation_id,
-        "customer_id": simulated.customer_id,
-        "customer_name": simulated.customer_name,
-        "amount_yuan": simulated.amount_yuan,
-        "proposed_term_days": simulated.proposed_term_days,
-        "expected_margin_rate": simulated.expected_margin_rate,
-        "scenario": simulated.scenario.value,
-        "historical_order_count": simulated.historical_order_count,
-        "historical_median_amount_yuan": simulated.distribution_summary["median_yuan"],
-        "historical_p90_amount_yuan": simulated.distribution_summary["p90_yuan"],
-        "list_status_at_intake": list_status,
-        "generated_at": simulated.generated_at,
-        "simulated": True,
-    }
-    source_version = "pre-transaction-simulator-1.0"
-    hit = RuleHit(
-        rule_hit_id=f"sig_{simulated.simulation_id.replace('-', '')[:20]}",
-        subject=RuleSubject(
-            admission_key=case_id,
-            investigation_profile="PRE_TRANSACTION",
-            subject_type="CUSTOMER",
-            subject_id=simulated.customer_id,
-            subject_label=f"{simulated.customer_id} {simulated.customer_name}",
-            subject_context=context,
-            observation_date=generated_date,
-            exposure_amount=simulated.amount_yuan,
-        ),
-        rule_id="PRE_TRANSACTION_REVIEW",
-        rule_name="新交易事前调查",
-        rule_version=source_version,
-        severity=priority,
-        exposure_amount=simulated.amount_yuan,
-        reason=reason,
-        metrics={
-            "proposed_amount_yuan": simulated.amount_yuan,
-            "historical_median_yuan": simulated.distribution_summary["median_yuan"],
-            "historical_p90_yuan": simulated.distribution_summary["p90_yuan"],
-            "scenario": simulated.scenario.value,
-            "historical_order_count": simulated.historical_order_count,
-            "list_status_at_intake": list_status,
-        },
-        threshold_source="客户同业务类型历史分布与成交前必查流程",
-        threshold_version=simulated.source_snapshot_id,
-        sources=("sales", "payments", "customer_credit"),
-        period=generated_date,
+    hit = pre_transaction_review_hit(
+        simulated,
+        case_id=case_id,
+        list_status=list_status,
     )
-    # 当前系统是演示模式：所有生成的有效模拟订单都应通过准入。
+    # 所有生成的模拟订单都必须进入案件流程接受 Agent 调查，这是成交前硬性要求，
+    # 不是按规则命中数量决定是否成案。
     admission = AdmissionFunnel().admit((hit,))
     assembly = CaseAssembler().assemble(
         admission,
-        rule_set_version=source_version,
+        rule_set_version=RULE_SET_VERSION,
         created_at=simulated.generated_at,
         source="PRE_TRANSACTION_SIMULATION",
         business_type=simulated.business_type,
         source_snapshot_id=simulated.source_snapshot_id,
         data_quality_status=simulated.data_quality_status,
         data_quality_warnings=tuple(simulated.warnings),
-        summary=reason,
+        summary=hit.reason,
     )
     if len(assembly.cases) != 1 or len(assembly.hits) != 1:
         raise AnalysisInputError("模拟订单未通过统一案件准入，无法创建演示案件。")
@@ -1064,30 +1035,8 @@ async def create_pre_transaction_simulation(
             (str(row[1]) for row in credit_context.rows if str(row[0]) == "名单状态"),
             "未知",
         )
-        priority = cast(
-            RiskPriority,
-            {
-                Scenario.NORMAL: "LOW",
-                Scenario.BORDERLINE: "MEDIUM",
-                Scenario.ANOMALY: "HIGH",
-            }[simulated.scenario],
-        )
-        reason = (
-            "新交易在成交前进入Agent基线调查。"
-            if simulated.scenario is Scenario.NORMAL
-            else (
-                "拟交易金额处于客户同业务历史分布的偏高区间，需要核对回款和敞口。"
-                if simulated.scenario is Scenario.BORDERLINE
-                else "拟交易金额显著高于客户同业务历史P90，需要在成交前调查。"
-            )
-        )
-        if list_status == "黑名单":
-            priority = "HIGH"
-            reason += " 当前授信主数据标记为黑名单，必须人工复核。"
         case, signal = _assemble_simulated_order_case(
             simulated,
-            priority=priority,
-            reason=reason,
             list_status=list_status,
         )
         case_id = case.case_id

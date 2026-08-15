@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 
 from ict_agent.data import DatabaseScalar, DuckDBStore
+from ict_agent.pretransaction import SimulatedOrder
 from ict_agent.rule_models import RuleHit, RuleHitBatch, RuleSubject
 from ict_agent.tools import (
     get_aging_payment_features,
@@ -1280,3 +1281,89 @@ def collect_rule_hits(
         borrow_period,
     )
     return RuleHitBatch(hits=tuple(hits), observation_date=observation_date)
+
+
+# 成交前入口信号的版本和口径来源；与批量扫描规则同库维护。
+PRE_TRANSACTION_REVIEW_VERSION = "2.0.0"
+PRE_TRANSACTION_THRESHOLD_SOURCE = "客户同业务类型历史分布与成交前必查流程"
+
+# 订单场景到入口优先级的映射。场景描述的是演示输入的生成方式，映射只用于让案件
+# 队列按风险高低排序，最终优先级由 Agent 调查后重新给出。
+_SCENARIO_PRIORITY = {
+    "NORMAL": "LOW",
+    "BORDERLINE": "MEDIUM",
+    "ANOMALY": "HIGH",
+}
+
+
+def pre_transaction_review_hit(
+    simulated: SimulatedOrder,
+    *,
+    case_id: str,
+    list_status: str,
+) -> RuleHit:
+    """生成模拟新交易的成交前必查入口信号，并给出规则层的入口评分。
+
+    所有模拟订单一律需要进入统一案件流程接受 Agent 调查，这是硬性要求；本信号只表达
+    "该订单需要成交前审查"。severity 是规则层的入口评分（订单场景 + 名单状态），
+    不替代后续 Agent 对风险程度的判断。
+    """
+
+    scenario_value = simulated.scenario.value
+    priority = _SCENARIO_PRIORITY[scenario_value]
+    if scenario_value == "NORMAL":
+        reason = "新交易在成交前进入Agent基线调查。"
+    elif scenario_value == "BORDERLINE":
+        reason = "拟交易金额处于客户同业务历史分布的偏高区间，需要核对回款和敞口。"
+    else:
+        reason = "拟交易金额显著高于客户同业务历史P90，需要在成交前调查。"
+    if list_status == "黑名单":
+        priority = "HIGH"
+        reason += " 当前授信主数据标记为黑名单，必须人工复核。"
+    generated_date = simulated.generated_at.split("T", maxsplit=1)[0]
+    context: dict[str, DatabaseScalar] = {
+        "simulation_id": simulated.simulation_id,
+        "customer_id": simulated.customer_id,
+        "customer_name": simulated.customer_name,
+        "amount_yuan": simulated.amount_yuan,
+        "proposed_term_days": simulated.proposed_term_days,
+        "expected_margin_rate": simulated.expected_margin_rate,
+        "scenario": simulated.scenario.value,
+        "historical_order_count": simulated.historical_order_count,
+        "historical_median_amount_yuan": simulated.distribution_summary["median_yuan"],
+        "historical_p90_amount_yuan": simulated.distribution_summary["p90_yuan"],
+        "list_status_at_intake": list_status,
+        "generated_at": simulated.generated_at,
+        "simulated": True,
+    }
+    return RuleHit(
+        rule_hit_id=_short_id("hit", f"{case_id}|PRE_TRANSACTION_REVIEW|{RULE_VERSION}"),
+        subject=RuleSubject(
+            admission_key=case_id,
+            investigation_profile="PRE_TRANSACTION",
+            subject_type="CUSTOMER",
+            subject_id=simulated.customer_id,
+            subject_label=f"{simulated.customer_id} {simulated.customer_name}",
+            subject_context=context,
+            observation_date=generated_date,
+            exposure_amount=simulated.amount_yuan,
+        ),
+        rule_id="PRE_TRANSACTION_REVIEW",
+        rule_name="新交易事前调查",
+        rule_version=RULE_VERSION,
+        severity=priority,
+        exposure_amount=simulated.amount_yuan,
+        reason=reason,
+        metrics={
+            "proposed_amount_yuan": simulated.amount_yuan,
+            "historical_median_yuan": simulated.distribution_summary["median_yuan"],
+            "historical_p90_yuan": simulated.distribution_summary["p90_yuan"],
+            "scenario": simulated.scenario.value,
+            "historical_order_count": simulated.historical_order_count,
+            "list_status_at_intake": list_status,
+        },
+        threshold_source=PRE_TRANSACTION_THRESHOLD_SOURCE,
+        threshold_version=simulated.source_snapshot_id,
+        sources=("sales", "payments", "customer_credit"),
+        period=generated_date,
+    )

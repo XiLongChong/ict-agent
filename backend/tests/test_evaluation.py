@@ -12,23 +12,26 @@ from ict_agent.models import Evidence, InvestigationReport
 def _report() -> InvestigationReport:
     return InvestigationReport.model_validate(
         {
-            "investigation_summary": "库存增长与近期销售放缓构成早期风险信号。",
+            "executive_summary": "库存增长与近期销售放缓构成早期风险信号，建议核对补货依据。",
             "risk_assessment": {
                 "stage": "EARLY_WARNING",
                 "statement": "库存和销售证据共同支持早期预警。",
                 "evidence_ids": ["ev-history", "ev-sales"],
                 "drivers": ["库存增加。", "近期销售下降。"],
                 "counter_signals": [],
+                "management_posture": "建议人工核对补货计划并持续监测销售。",
                 "watch_items": ["后续销售能否消化当前库存。"],
             },
-            "hypotheses": [
+            "possibility_assessments": [
                 {
-                    "hypothesis_id": "H1",
-                    "statement": "具体形成原因目前无法判断。",
-                    "status": "UNRESOLVED",
+                    "assessment_id": "P1",
+                    "possibility": "补货超过近期销售消化能力可能是库存增长原因。",
+                    "likelihood": {"lower_percent": 40, "upper_percent": 70},
+                    "rationale": "库存增加与销售下降方向一致，但缺少补货计划。",
                     "supporting_evidence_ids": ["ev-history"],
                     "contradicting_evidence_ids": [],
                     "missing_evidence": ["促销和补货计划"],
+                    "business_implication": "需要核对补货计划后决定是否调整库存。",
                 }
             ],
             "facts": [
@@ -37,7 +40,15 @@ def _report() -> InvestigationReport:
             ],
             "limitations": ["没有促销和补货计划，不能证明具体原因。"],
             "recommended_priority": "HIGH",
-            "recommended_actions": ["人工核对补货计划并持续监测销售。"],
+            "recommended_actions": [
+                {
+                    "owner": "库存管理人员",
+                    "action": "人工核对补货计划并持续监测销售。",
+                    "urgency": "SHORT_TERM",
+                    "rationale": "库存增加与销售下降同时出现。",
+                    "completion_evidence": "补货计划核对记录。",
+                }
+            ],
             "requires_human_review": True,
         }
     )
@@ -105,7 +116,7 @@ def test_complete_grounded_run_reaches_full_score() -> None:
 
 
 def test_missing_evidence_and_unqualified_claim_fail_hard_gates() -> None:
-    report = _report().model_copy(update={"investigation_summary": "促销导致库存增长。"})
+    report = _report().model_copy(update={"executive_summary": "促销导致库存增长。"})
     evaluation = evaluate_investigation_run(
         _spec(),
         report=report,
@@ -124,9 +135,9 @@ def test_missing_evidence_and_unqualified_claim_fail_hard_gates() -> None:
     assert evaluation["hard_gates"]["no_unqualified_forbidden_claims"] is False
 
 
-def test_semantic_duplicate_and_conflicting_hypothesis_reference_are_detected() -> None:
+def test_semantic_duplicate_and_conflicting_possibility_reference_are_detected() -> None:
     report = _report()
-    report.hypotheses[0].contradicting_evidence_ids = ["ev-history"]
+    report.possibility_assessments[0].contradicting_evidence_ids = ["ev-history"]
     duplicate = _evidence()[0].model_copy(update={"evidence_id": "ev-history-duplicate"})
     evaluation = evaluate_investigation_run(
         _spec(),
@@ -141,7 +152,7 @@ def test_semantic_duplicate_and_conflicting_hypothesis_reference_are_detected() 
     )
 
     assert evaluation["score_breakdown"]["investigation_strategy"]["duplicate_queries"] == 1
-    assert evaluation["hard_gates"]["hypothesis_status_integrity"] is False
+    assert evaluation["hard_gates"]["possibility_estimate_integrity"] is False
 
 
 def test_broader_time_window_evidence_counts_as_duplicate() -> None:
@@ -185,7 +196,7 @@ def test_broader_time_window_evidence_counts_as_duplicate() -> None:
 
 def test_explicit_negation_is_not_treated_as_forbidden_claim() -> None:
     report = _report().model_copy(
-        update={"investigation_summary": "大额应收不等于已确认坏账，不能断言已无法回收。"}
+        update={"executive_summary": "大额应收不等于已确认坏账，不能断言已无法回收。"}
     )
     evaluation = evaluate_investigation_run(
         _spec(),

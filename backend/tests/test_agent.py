@@ -19,8 +19,10 @@ from ict_agent.config import Settings
 from ict_agent.models import (
     EvidenceQuery,
     InvestigationDataQuality,
+    InvestigationModelReport,
     InvestigationReport,
     InvestigationSignalInput,
+    ProbabilityRange,
     RiskCaseDetail,
     ToolResult,
 )
@@ -42,6 +44,21 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.deepseek import DeepSeekProvider
 
 pytestmark = pytest.mark.anyio
+
+
+def test_model_report_schema_excludes_system_owned_audit_fields() -> None:
+    properties = InvestigationModelReport.model_json_schema()["properties"]
+
+    assert "trace" not in properties
+    assert "evidence_completeness" not in properties
+    assert "requires_human_review" not in properties
+    assert "report_schema_version" not in properties
+
+
+def test_probability_range_rejects_fake_point_precision() -> None:
+    with pytest.raises(ValueError, match="不能伪装成精确单点概率"):
+        ProbabilityRange(lower_percent=60, upper_percent=60)
+
 
 QUERIES = [
     {
@@ -254,30 +271,40 @@ def _investigation_model(messages: list[ModelMessage], info: AgentInfo) -> Model
         if isinstance(part.content, ToolResult) and part.content.evidence_id
     ]
     output = {
-        "investigation_summary": "证据确认存在超期事实，并支持进一步核查项目回款背景。",
+        "executive_summary": "证据确认存在超期事实，项目回款压力很可能需要升级人工复核。",
         "risk_assessment": {
             "stage": "DETERIORATING",
             "statement": "应收和订单证据支持风险敞口需要持续复核。",
             "evidence_ids": evidence_ids[:2],
             "drivers": ["应收历史存在持续未结清记录。"],
             "counter_signals": ["部分应收尚未到期。"],
+            "management_posture": "建议人工复核项目到期计划并升级回款跟踪。",
             "watch_items": ["后续回款能否覆盖到期应收。"],
         },
-        "hypotheses": [
+        "possibility_assessments": [
             {
-                "hypothesis_id": "H1",
-                "statement": "现有数据支持应收由项目合同和既有逾期共同构成。",
-                "status": "SUPPORTED",
+                "assessment_id": "P1",
+                "possibility": "项目合同和既有逾期可能共同形成当前回款压力。",
+                "likelihood": {"lower_percent": 60, "upper_percent": 80},
+                "rationale": "合同与应收证据方向一致，但缺少项目验收记录。",
                 "supporting_evidence_ids": [evidence_ids[2], evidence_ids[3]],
                 "contradicting_evidence_ids": [],
-                "missing_evidence": [],
+                "missing_evidence": ["项目验收记录"],
+                "business_implication": "需要人工核对项目回款条件后决定催收节奏。",
             }
         ],
         "facts": [{"statement": "已取得可复核的应收月度趋势。", "evidence_ids": [evidence_ids[0]]}],
         "limitations": ["数据不包含项目验收和最终回收结果。"],
         "recommended_priority": "HIGH",
-        "recommended_actions": ["人工复核项目到期计划和后续回款。"],
-        "requires_human_review": True,
+        "recommended_actions": [
+            {
+                "owner": "应收管理人员",
+                "action": "人工复核项目到期计划和后续回款。",
+                "urgency": "SHORT_TERM",
+                "rationale": "当前应收存在持续未结清记录。",
+                "completion_evidence": "项目到期计划和回款核对记录。",
+            }
+        ],
     }
     assert info.allow_text_output is True
     assert info.output_tools == []
@@ -317,22 +344,25 @@ def _pre_transaction_model(messages: list[ModelMessage], info: AgentInfo) -> Mod
         if isinstance(part.content, ToolResult) and part.content.evidence_id
     ]
     output = {
-        "investigation_summary": "拟交易显著高于同业务历史基线，需要人工核对成交条件。",
+        "executive_summary": "拟交易显著高于同业务历史基线，短期敞口上升可能性较高。",
         "risk_assessment": {
             "stage": "EARLY_WARNING",
             "statement": "拟交易与历史分布存在偏离，但不能据此判断客户将违约。",
             "evidence_ids": evidence_ids[:3],
             "drivers": ["拟金额高于同业务历史订单基线。"],
             "counter_signals": ["当前数据仍显示存在正常回款记录。"],
+            "management_posture": "建议成交前单独核对账期、额度和增信条件。",
             "watch_items": ["成交前核对拟账期与当前授信敞口。"],
         },
-        "hypotheses": [
+        "possibility_assessments": [
             {
-                "hypothesis_id": "H1",
-                "statement": "拟交易金额偏离可能增加短期敞口。",
-                "status": "SUPPORTED",
+                "assessment_id": "P1",
+                "possibility": "拟交易金额偏离可能增加短期敞口。",
+                "likelihood": {"lower_percent": 65, "upper_percent": 85},
+                "rationale": "拟交易金额高于同业务历史基线，但仍存在正常回款记录。",
                 "supporting_evidence_ids": evidence_ids[:3],
-                "missing_evidence": [],
+                "missing_evidence": ["最终成交条件"],
+                "business_implication": "成交前需要附加额度或账期复核。",
             }
         ],
         "facts": [
@@ -343,8 +373,15 @@ def _pre_transaction_model(messages: list[ModelMessage], info: AgentInfo) -> Mod
         ],
         "limitations": ["历史正订单少于 5 笔，分布稳定性有限。"],
         "recommended_priority": "HIGH",
-        "recommended_actions": ["由业务人员核对账期、额度和本次交易背景。"],
-        "requires_human_review": True,
+        "recommended_actions": [
+            {
+                "owner": "业务人员",
+                "action": "核对账期、额度和本次交易背景。",
+                "urgency": "IMMEDIATE",
+                "rationale": "拟交易显著偏离历史基线。",
+                "completion_evidence": "成交条件复核记录。",
+            }
+        ],
     }
     assert info.allow_text_output is True
     assert info.output_tools == []
@@ -736,7 +773,7 @@ async def test_interrupted_investigation_preserves_evidence_and_abstains(
 
     assert outcome.partial is True
     assert len(outcome.evidence) == 1
-    assert "无法判断" in outcome.report.investigation_summary
-    assert outcome.report.hypotheses[0].status == "UNRESOLVED"
+    assert "不确定性" in outcome.report.executive_summary
+    assert outcome.report.possibility_assessments[0].likelihood.lower_percent == 30
     assert outcome.report.facts[0].evidence_ids == [outcome.evidence[0].evidence_id]
     assert outcome.report.risk_assessment.stage == "LIMITED"

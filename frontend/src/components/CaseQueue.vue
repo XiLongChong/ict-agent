@@ -9,18 +9,23 @@ import { formatMoney, labels, openCaseWorkspace, priorityColor, statusColor } fr
 import { runScan, workspace } from "../store";
 
 const route = useRoute();
-const profile = ref("");
+const source = ref("");
+const caseType = ref("");
 const status = ref("");
 const priority = ref("");
 const query = ref("");
 const pageSize = ref("10");
 const currentPage = ref(1);
 const pageJump = ref("1");
-const profileOptions = [
-  { title: "全部调查策略", value: "" },
-  { title: "应收调查", value: "RECEIVABLES" },
-  { title: "库存", value: "INVENTORY" },
-  { title: "事前交易", value: "PRE_TRANSACTION" },
+const sourceOptions = [
+  { title: "全部来源", value: "" },
+  ...Object.entries(labels.caseSource)
+    .filter(([value]) => value !== "MANUAL")
+    .map(([value, title]) => ({ title, value })),
+];
+const caseTypeOptions = [
+  { title: "全部类型", value: "" },
+  ...Object.entries(labels.investigationProfile).map(([value, title]) => ({ title, value })),
 ];
 const statusOptions = [{ title: "全部状态", value: "" }, ...Object.entries(labels.status).map(([value, title]) => ({ title, value }))];
 const priorityOptions = [
@@ -34,7 +39,8 @@ const filtered = computed(() => {
   const keyword = String(query.value ?? "").trim().toLocaleLowerCase();
   return workspace.cases.filter((item) => {
     const matchesFilters =
-      (!profile.value || item.investigation_profile === profile.value) &&
+      (!source.value || item.source === source.value) &&
+      (!caseType.value || item.investigation_profile === caseType.value) &&
       (!status.value || item.status === status.value) &&
       (!priority.value || item.priority === priority.value);
     if (!matchesFilters || !keyword) return matchesFilters;
@@ -70,7 +76,7 @@ const pageNumbers = computed(() => {
 const rangeStart = computed(() => (filtered.value.length ? (currentPage.value - 1) * pageSizeValue.value + 1 : 0));
 const rangeEnd = computed(() => Math.min(currentPage.value * pageSizeValue.value, filtered.value.length));
 
-watch([profile, status, priority, query, pageSize], () => goToPage(1));
+watch([source, caseType, status, priority, query, pageSize], () => goToPage(1));
 watch(totalPages, (total) => {
   if (currentPage.value > total) goToPage(total);
 });
@@ -103,7 +109,8 @@ async function scan() {
   <div class="space-y-5">
     <section class="card overflow-hidden">
       <div class="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
-        <SelectInput v-model="profile" :options="profileOptions" class="w-[180px]" />
+        <SelectInput v-model="source" :options="sourceOptions" class="w-[180px]" />
+        <SelectInput v-model="caseType" :options="caseTypeOptions" class="w-[180px]" />
         <SelectInput v-model="status" :options="statusOptions" class="w-[180px]" />
         <SelectInput v-model="priority" :options="priorityOptions" class="w-[180px]" />
         <TextInput v-model="query" search clearable class="w-[320px] max-w-full" placeholder="搜索案件、客户或物料" aria-label="搜索案件、客户或物料" @clear="query = ''" />

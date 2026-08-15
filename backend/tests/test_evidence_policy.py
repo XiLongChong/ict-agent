@@ -220,6 +220,19 @@ def test_high_cardinality_details_are_counted_before_sql_limit(
         )
         connection.execute(
             """
+            INSERT INTO ar_snapshots (
+                "快照时间", "客户编号", "客户名称", "合同号", "销售订单号",
+                "物料编码", "最终承诺还款日期", "是否展期", "超期天数",
+                "应收金额", "超期应收金额", "超期30天以上金额", "超期60天以上金额"
+            )
+            SELECT DATE '2026-07-31', 'C015', '南京沛图商贸有限公司', 'X1',
+                   'BULK-AR' || CAST(i AS VARCHAR), 'M1', DATE '2026-06-30', 'N',
+                   CAST(i AS INTEGER), CAST(i + 1 AS DOUBLE), 0, 0, 0
+            FROM range(250) AS generated(i)
+            """
+        )
+        connection.execute(
+            """
             INSERT INTO payments (
                 "回款日期", "客户编号", "合同号", "销售订单号", "回款金额", "回款账龄"
             )
@@ -251,7 +264,24 @@ def test_high_cardinality_details_are_counted_before_sql_limit(
             limit=3,
         ),
     )
+    receivables = query_business_evidence(
+        store,
+        "RECEIVABLES",
+        context,
+        EvidenceQuery(
+            dataset="receivables",
+            grain="order",
+            metrics=["ar_amount", "overdue_amount", "max_overdue_days"],
+            time_window="latest",
+            sort_by="ar_amount",
+            sort_direction="desc",
+            limit=3,
+        ),
+    )
 
+    assert catalog_by_key[("receivables", "order")].total_rows == 251
+    assert catalog_by_key[("receivables", "order")].returned_rows == 1
+    assert catalog_by_key[("receivables", "order")].is_truncated is True
     assert catalog_by_key[("sales_returns", "order")].total_rows == 252
     assert catalog_by_key[("sales_returns", "order")].returned_rows == 1
     assert catalog_by_key[("sales_returns", "order")].is_truncated is True
@@ -261,6 +291,11 @@ def test_high_cardinality_details_are_counted_before_sql_limit(
     assert returns.returned_rows == 3
     assert returns.is_truncated is True
     assert returns.rows[0][4] == 250
+    assert receivables.total_rows == 251
+    assert receivables.returned_rows == 3
+    assert receivables.is_truncated is True
+    assert receivables.rows[0][1] == "S1"
+    assert receivables.rows[0][-3] == 1000
 
 
 def test_fixed_snapshot_and_rule_observation_date_are_validated(store: DuckDBStore) -> None:
