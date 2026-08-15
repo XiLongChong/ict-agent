@@ -1650,13 +1650,13 @@ def discover_evidence_capabilities(
             )
         )
     if case_type in ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"):
-        entity_scope = f"客户 {entity_context.get('customer_id', '')}"
+        entity_scope = f"Customer {entity_context.get('customer_id', '')}"
         if case_type == "PRE_TRANSACTION":
-            entity_scope += f" / 业务类型 {entity_context.get('business_type', '')}"
+            entity_scope += f" / Business type {entity_context.get('business_type', '')}"
     else:
         entity_scope = (
-            f"物料 {entity_context.get('material_code', '')} / "
-            f"库存组织 {entity_context.get('inventory_org', '')}"
+            f"Material {entity_context.get('material_code', '')} / "
+            f"Inventory organization {entity_context.get('inventory_org', '')}"
         )
     return BusinessDataCatalog(
         case_type=case_type,
@@ -1664,10 +1664,12 @@ def discover_evidence_capabilities(
         observation_date=observation_date,
         datasets=datasets,
         global_rules=[
-            "目录中的 available 来自当前数据快照的真实探测，不保证返回行数代表全部记录。",
-            "所有搜索和查询自动限定当前案件主体，不能改查其他无关主体。",
-            "金额、日期、比例和状态必须引用 query_business_evidence 返回的 evidence_id。",
-            "模型不能提交 SQL、文件路径、正则表达式或代码。",
+            "Each available value comes from a live probe of the current data snapshot; "
+            "returned_rows "
+            "does not represent the total record count.",
+            "Every search and query is automatically restricted to the current case entity.",
+            "Amounts, dates, ratios, and states must cite an evidence_id returned by get_evidence.",
+            "Never submit SQL, file paths, regular expressions, or code.",
         ],
     )
 

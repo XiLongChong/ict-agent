@@ -30,9 +30,9 @@ export const labels = {
   hypothesis: { SUPPORTED: "证据支持", WEAKENED: "证据削弱", UNRESOLVED: "无法判断" },
   riskStage: { EARLY_WARNING: "早期预警", DETERIORATING: "风险恶化", LIMITED: "信息有限" },
   tool: {
-    discover_evidence_capabilities: "发现证据能力",
-    search_business_records: "搜索业务记录",
-    query_business_evidence: "受控证据查询",
+    inspect_data: "查看可用数据",
+    find_records: "查找业务记录",
+    get_evidence: "获取业务证据",
   },
   event: {
     RUN_STARTED: "调查已启动", TOOL_STARTED: "正在查询", TOOL_COMPLETED: "证据已返回",

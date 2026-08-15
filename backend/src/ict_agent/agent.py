@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -10,8 +11,16 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import uuid4
 
+import httpx
 from pydantic import JsonValue
-from pydantic_ai import Agent, AgentRunResultEvent, ModelRetry, RunContext, UsageLimits
+from pydantic_ai import (
+    Agent,
+    AgentRunResultEvent,
+    ModelRetry,
+    PromptedOutput,
+    RunContext,
+    UsageLimits,
+)
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -20,9 +29,15 @@ from pydantic_ai.messages import (
     ModelResponse,
     ToolReturnPart,
 )
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    create_async_http_client,
+)
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.deepseek import DeepSeekProvider
 from pydantic_ai.settings import ModelSettings
 from pydantic_core import to_jsonable_python
@@ -50,15 +65,15 @@ from ict_agent.models import (
     RiskSignalAssessment,
     ToolResult,
 )
-from ict_agent.prompts import INVESTIGATION_INSTRUCTIONS
+from ict_agent.prompts import INVESTIGATION_INSTRUCTIONS, INVESTIGATION_OUTPUT_TEMPLATE
 from ict_agent.semantic import time_window_covers
 
 logger = logging.getLogger(__name__)
 
 INVESTIGATION_TOOLS: tuple[InvestigationToolName, ...] = (
-    "discover_evidence_capabilities",
-    "search_business_records",
-    "query_business_evidence",
+    "inspect_data",
+    "find_records",
+    "get_evidence",
 )
 AR_CORE_EVIDENCE = {
     ("receivables", "month"),
@@ -132,11 +147,173 @@ def _serialize_messages(messages: Sequence[ModelMessage]) -> list[dict[str, Json
     )
 
 
-class InvestigationProtocolRecorder(WrapperModel):
-    """保留最后一次完整模型请求，避免重复保存累计历史。"""
+SENSITIVE_HTTP_HEADERS = {
+    "authorization",
+    "cookie",
+    "proxy-authorization",
+    "set-cookie",
+    "x-api-key",
+}
 
-    def __init__(self, wrapped: Model) -> None:
+
+def _capture_headers(headers: httpx.Headers) -> dict[str, str]:
+    """保留真实 HTTP 头字段，同时遮蔽凭据和会话信息。"""
+
+    return {
+        name: "[REDACTED]" if name.lower() in SENSITIVE_HTTP_HEADERS else value
+        for name, value in headers.multi_items()
+    }
+
+
+def _is_chat_completions_url(url: httpx.URL) -> bool:
+    return url.path.rstrip("/").endswith("/chat/completions")
+
+
+@dataclass
+class DeepSeekWireCapture:
+    """抓取最后一次 DeepSeek Chat Completions HTTP 事务。"""
+
+    request: dict[str, JsonValue] | None = None
+    response: dict[str, JsonValue] | None = None
+
+    async def capture_request(self, request: httpx.Request) -> None:
+        if not _is_chat_completions_url(request.url):
+            return
+        body = await request.aread()
+        parsed = json.loads(body)
+        if not isinstance(parsed, dict):
+            raise ValueError("DeepSeek Chat Completions 请求体必须是 JSON 对象。")
+        self.request = cast(
+            dict[str, JsonValue],
+            to_jsonable_python(
+                {
+                    "method": request.method,
+                    "url": str(request.url),
+                    "headers": _capture_headers(request.headers),
+                    "body": parsed,
+                }
+            ),
+        )
+        self.response = None
+
+    async def capture_response(self, response: httpx.Response) -> None:
+        if not _is_chat_completions_url(response.request.url):
+            return
+        self.response = cast(
+            dict[str, JsonValue],
+            to_jsonable_python(
+                {
+                    "status_code": response.status_code,
+                    "headers": _capture_headers(response.headers),
+                    "body": None,
+                }
+            ),
+        )
+        response.stream = _CapturedResponseStream(
+            cast(httpx.AsyncByteStream, response.stream), self
+        )
+
+    def record_response_body(self, body: bytes) -> None:
+        """保存完整 JSON 响应，或把 Chat Completions SSE 解析为事件列表。"""
+
+        try:
+            parsed = json.loads(body)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            self._set_response_body(cast(JsonValue, to_jsonable_python(parsed)))
+            return
+
+        events: list[dict[str, JsonValue]] = []
+        normalized = body.replace(b"\r\n", b"\n")
+        for block in normalized.split(b"\n\n"):
+            event_name = next(
+                (
+                    line[6:].lstrip().decode("utf-8", errors="replace")
+                    for line in block.splitlines()
+                    if line.startswith(b"event:")
+                ),
+                "message",
+            )
+            data_lines = [
+                line[5:].lstrip() for line in block.splitlines() if line.startswith(b"data:")
+            ]
+            if not data_lines:
+                continue
+            event_payload = b"\n".join(data_lines)
+            if event_payload == b"[DONE]":
+                events.append({"event": event_name, "data": "[DONE]"})
+                continue
+            try:
+                event_data = json.loads(event_payload)
+            except json.JSONDecodeError:
+                continue
+            events.append(
+                cast(
+                    dict[str, JsonValue],
+                    to_jsonable_python({"event": event_name, "data": event_data}),
+                )
+            )
+        self._set_response_body(
+            cast(JsonValue, {"format": "sse", "events": events})
+            if events
+            else body.decode("utf-8", errors="replace")
+        )
+
+    def _set_response_body(self, body: JsonValue) -> None:
+        if self.response is None:
+            self.response = {"status_code": 0, "headers": {}, "body": body}
+        else:
+            self.response["body"] = body
+
+
+class _CapturedResponseStream(httpx.AsyncByteStream):
+    """旁路复制流式响应，不延迟或消费 Pydantic AI 正在读取的 SSE。"""
+
+    def __init__(self, wrapped: httpx.AsyncByteStream, capture: DeepSeekWireCapture) -> None:
+        self._wrapped = wrapped
+        self._capture = capture
+        self._chunks: list[bytes] = []
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        try:
+            async for chunk in self._wrapped:
+                self._chunks.append(chunk)
+                yield chunk
+        finally:
+            self._capture.record_response_body(b"".join(self._chunks))
+
+    async def aclose(self) -> None:
+        await self._wrapped.aclose()
+
+
+def _create_capture_http_client(capture: DeepSeekWireCapture) -> httpx.AsyncClient:
+    client = create_async_http_client()
+    client.event_hooks["request"].append(capture.capture_request)
+    client.event_hooks["response"].append(capture.capture_response)
+    return client
+
+
+class _CapturedDeepSeekProvider(DeepSeekProvider):
+    """使用 DeepSeek 官方 OpenAI 格式端点，并管理带抓取钩子的客户端生命周期。"""
+
+    def __init__(self, api_key: str, capture: DeepSeekWireCapture) -> None:
+        self._capture = capture
+        http_client = _create_capture_http_client(capture)
+        super().__init__(api_key=api_key, http_client=http_client)
+        self._own_http_client = http_client
+        self._http_client_factory = self._new_http_client
+
+    def _new_http_client(self) -> httpx.AsyncClient:
+        return _create_capture_http_client(self._capture)
+
+
+class InvestigationProtocolRecorder(WrapperModel):
+    """保留最后一次完整 DeepSeek Chat Completions HTTP 事务。"""
+
+    def __init__(self, wrapped: Model, capture: DeepSeekWireCapture | None = None) -> None:
         super().__init__(wrapped)
+        self._capture = capture
         self._request_index = 0
         self._model_settings: dict[str, JsonValue] = {}
         self._request_parameters: dict[str, JsonValue] = {}
@@ -168,13 +345,34 @@ class InvestigationProtocolRecorder(WrapperModel):
 
         if self._request_index == 0:
             return None
-        serialized_response = _serialize_messages([response])[0] if response is not None else None
+
+        if self._capture is not None and self._capture.request is not None:
+            capture_source: Literal["wire", "pydantic_ai_test"] = "wire"
+            request = self._capture.request
+            serialized_response = self._capture.response
+        else:
+            capture_source = "pydantic_ai_test"
+            request = {
+                "method": "POST",
+                "url": f"pydantic-ai://{self.system}/chat/completions",
+                "headers": {},
+                "body": {
+                    "model": self.model_name,
+                    "messages": cast(JsonValue, _serialize_messages(self._messages)),
+                    "stream": True,
+                    "model_settings": self._model_settings,
+                    "model_request_parameters": self._request_parameters,
+                },
+            }
+            serialized_response = (
+                {"pydantic_ai_model_response": _serialize_messages([response])[0]}
+                if response is not None
+                else None
+            )
         return InvestigationProtocolSnapshot(
             request_index=self._request_index,
-            model_name=self.model_name,
-            model_settings=self._model_settings,
-            model_request_parameters=self._request_parameters,
-            messages=_serialize_messages(self._messages),
+            capture_source=capture_source,
+            request=request,
             response=serialized_response,
         )
 
@@ -241,7 +439,7 @@ def _evidence_query_keys(dependencies: InvestigationDependencies) -> set[tuple[s
     return {
         (str(item.arguments.get("dataset")), str(item.arguments.get("grain")))
         for item in dependencies.evidence
-        if item.tool_name == "query_business_evidence"
+        if item.tool_name == "get_evidence"
     }
 
 
@@ -313,44 +511,60 @@ def build_investigation_case_input(case: RiskCaseDetail) -> InvestigationCaseInp
     )
 
 
-def _create_model(settings: Settings, model: Model | None) -> Model:
+def _create_model(
+    settings: Settings,
+    model: Model | None,
+    capture: DeepSeekWireCapture | None = None,
+) -> Model:
     if model is not None:
         return model
     if settings.deepseek_base_url != OFFICIAL_DEEPSEEK_BASE_URL:
         raise ValueError("当前 Agent 只允许使用 DeepSeek 官方 Provider。")
     if settings.deepseek_api_key is None:
         raise ValueError("缺少 DeepSeek API Key。")
-    provider = DeepSeekProvider(api_key=settings.deepseek_api_key.get_secret_value())
-    return OpenAIChatModel(settings.deepseek_model, provider=provider)
+    provider = _CapturedDeepSeekProvider(
+        api_key=settings.deepseek_api_key.get_secret_value(),
+        capture=capture or DeepSeekWireCapture(),
+    )
+    return OpenAIChatModel(
+        settings.deepseek_model,
+        provider=provider,
+        profile=OpenAIModelProfile(openai_chat_supports_max_completion_tokens=False),
+    )
 
 
 def _create_investigation_agent(
     settings: Settings,
     model: Model | None = None,
 ) -> Agent[InvestigationDependencies, InvestigationReport]:
-    """创建只暴露发现、搜索和查询三项受治理能力的调查 Agent。"""
+    """创建只暴露检查、搜索和取证三项受治理能力的调查 Agent。"""
 
     agent = Agent[InvestigationDependencies, InvestigationReport](
         _create_model(settings, model),
-        output_type=InvestigationReport,
+        output_type=PromptedOutput(
+            InvestigationReport,
+            name="investigation_report",
+            description="Return the final evidence-grounded investigation report as JSON.",
+            template=INVESTIGATION_OUTPUT_TEMPLATE,
+        ),
         deps_type=InvestigationDependencies,
         instructions=INVESTIGATION_INSTRUCTIONS,
         model_settings=OpenAIChatModelSettings(
             max_tokens=5_000,
-            thinking="high",
-            parallel_tool_calls=False,
+            openai_reasoning_effort="high",
+            extra_body={"thinking": {"type": "enabled"}},
         ),
         retries=3,
     )
 
     @agent.tool(sequential=True)
-    def discover_evidence_capabilities(
+    def inspect_data(
         ctx: RunContext[InvestigationDependencies],
     ) -> BusinessDataCatalog:
-        """发现当前案件真实可用的数据集、粒度、指标、窗口和限制。"""
+        """List the datasets, query options, and limits available for the current case."""
 
         if ctx.deps.catalog_discovered:
-            raise ModelRetry("证据能力已经发现，请直接查询下一项必要证据。")
+            raise ModelRetry("Data has already been inspected. Request the next required evidence.")
         catalog = analysis_tools.discover_evidence_capabilities(
             ctx.deps.store,
             ctx.deps.case.case_type,
@@ -358,20 +572,20 @@ def _create_investigation_agent(
             ctx.deps.case.observation_date,
         )
         ctx.deps.catalog_discovered = True
-        ctx.deps.called_tools.add("discover_evidence_capabilities")
+        ctx.deps.called_tools.add("inspect_data")
         return catalog
 
     @agent.tool(sequential=True)
-    def search_business_records(
+    def find_records(
         ctx: RunContext[InvestigationDependencies], search: BusinessRecordSearchQuery
     ) -> ToolResult:
-        """在当前案件关联记录中按业务标识搜索客户、合同、订单或物料。"""
+        """Find related customer, contract, order, or material identifiers in this case."""
 
         if not ctx.deps.catalog_discovered:
-            raise ModelRetry("必须先调用 discover_evidence_capabilities。")
+            raise ModelRetry("Call inspect_data before searching for record identifiers.")
         signature = search.model_dump_json()
         if signature in ctx.deps.search_signatures:
-            raise ModelRetry("相同业务记录搜索已经执行，请使用已有结果或调整关键词。")
+            raise ModelRetry("This record search is a duplicate. Reuse it or change the query.")
         result = analysis_tools.search_business_records(
             ctx.deps.store,
             ctx.deps.case.case_type,
@@ -379,24 +593,22 @@ def _create_investigation_agent(
             search,
         )
         ctx.deps.search_signatures.add(signature)
-        ctx.deps.called_tools.add("search_business_records")
+        ctx.deps.called_tools.add("find_records")
         return result
 
     @agent.tool(sequential=True)
-    def query_business_evidence(
+    def get_evidence(
         ctx: RunContext[InvestigationDependencies], query: EvidenceQuery
     ) -> ToolResult:
-        """在案件主体范围内按注册的数据集、粒度、指标和窗口查询证据。"""
+        """Get case-scoped evidence using query options returned by inspect_data."""
 
         if not ctx.deps.catalog_discovered:
-            raise ModelRetry("必须先调用 discover_evidence_capabilities 了解可用能力。")
+            raise ModelRetry("Call inspect_data before requesting evidence.")
         signature = query.model_dump_json()
         if signature in ctx.deps.query_signatures or _query_is_redundant(
             ctx.deps.query_history, query
         ):
-            raise ModelRetry(
-                "该查询已被已有证据完整覆盖，请直接使用已有 evidence_id，不要重复取数。"
-            )
+            raise ModelRetry("Existing evidence already covers this query. Reuse its evidence_id.")
         try:
             result = analysis_tools.query_business_evidence(
                 ctx.deps.store,
@@ -405,12 +617,14 @@ def _create_investigation_agent(
                 query,
             )
         except analysis_tools.AnalysisInputError as exc:
-            raise ModelRetry(f"受控查询参数不受支持：{exc} 请根据能力目录调整查询。") from exc
+            raise ModelRetry(
+                f"Unsupported governed query: {exc} Adjust it to the inspect_data catalog."
+            ) from exc
         ctx.deps.query_signatures.add(signature)
         ctx.deps.query_history.append(query)
         return _record_investigation_evidence(
             ctx.deps,
-            "query_business_evidence",
+            "get_evidence",
             result,
             arguments=query.model_dump(mode="json"),
         )
@@ -419,25 +633,34 @@ def _create_investigation_agent(
     def validate_investigation_report(
         ctx: RunContext[InvestigationDependencies], report: InvestigationReport
     ) -> InvestigationReport:
-        """拒绝基础证据不足、假引用、无依据状态和高风险幻觉表述。"""
+        """Reject incomplete evidence, invalid citations, and unsupported conclusions."""
 
         missing = _missing_requirements(ctx.deps)
         if missing:
-            raise ModelRetry(f"调查尚未达到最低证据覆盖：{missing}。请继续取证后再报告。")
+            raise ModelRetry(
+                f"Minimum evidence coverage is incomplete: {missing}. Continue gathering evidence."
+            )
         valid_ids = {item.evidence_id for item in ctx.deps.evidence}
         invalid_risk_ids = set(report.risk_assessment.evidence_ids) - valid_ids
         if invalid_risk_ids:
-            raise ModelRetry(f"风险判断引用了不存在的证据编号：{sorted(invalid_risk_ids)}。")
+            raise ModelRetry(
+                "The risk assessment cites unknown evidence IDs: "
+                f"{sorted(invalid_risk_ids)}. Use only IDs returned in this run."
+            )
         if not report.facts:
-            raise ModelRetry("报告必须至少列出一条由工具直接证明的数据事实。")
+            raise ModelRetry(
+                "The report must include at least one fact established by a tool result."
+            )
         if ctx.deps.case.data_quality.status in ("WARNING", "UNKNOWN") and not report.limitations:
-            raise ModelRetry("案件数据质量不是 PASS，报告必须在 limitations 中保留数据限制。")
+            raise ModelRetry(
+                "Data quality is not PASS. Preserve the data limitation in `limitations`."
+            )
         for fact in report.facts:
             if not fact.evidence_ids:
-                raise ModelRetry(f"事实“{fact.statement}”没有引用 evidence_id。")
+                raise ModelRetry(f"Fact {fact.statement!r} does not cite an evidence_id.")
             invalid_ids = set(fact.evidence_ids) - valid_ids
             if invalid_ids:
-                raise ModelRetry(f"事实引用了不存在的证据编号：{sorted(invalid_ids)}。")
+                raise ModelRetry(f"A fact cites unknown evidence IDs: {sorted(invalid_ids)}.")
         for hypothesis in report.hypotheses:
             refs = set(hypothesis.supporting_evidence_ids) | set(
                 hypothesis.contradicting_evidence_ids
@@ -447,16 +670,21 @@ def _create_investigation_agent(
             )
             if overlap:
                 raise ModelRetry(
-                    f"假设“{hypothesis.statement}”把同一证据同时列为支持和反驳："
-                    f"{sorted(overlap)}。请按证据实际方向保留一侧。"
+                    f"Hypothesis {hypothesis.statement!r} uses the same evidence as both "
+                    "supporting "
+                    f"and contradicting: {sorted(overlap)}. Keep each ID on the correct side only."
                 )
             invalid_ids = refs - valid_ids
             if invalid_ids:
-                raise ModelRetry(f"假设引用了不存在的证据编号：{sorted(invalid_ids)}。")
+                raise ModelRetry(f"A hypothesis cites unknown evidence IDs: {sorted(invalid_ids)}.")
             if hypothesis.status == "SUPPORTED" and not hypothesis.supporting_evidence_ids:
-                raise ModelRetry(f"SUPPORTED 假设“{hypothesis.statement}”缺少支持证据。")
+                raise ModelRetry(
+                    f"SUPPORTED hypothesis {hypothesis.statement!r} has no supporting evidence."
+                )
             if hypothesis.status == "WEAKENED" and not hypothesis.contradicting_evidence_ids:
-                raise ModelRetry(f"WEAKENED 假设“{hypothesis.statement}”缺少反驳证据。")
+                raise ModelRetry(
+                    f"WEAKENED hypothesis {hypothesis.statement!r} has no contradicting evidence."
+                )
             if (
                 hypothesis.status == "UNRESOLVED"
                 and not hypothesis.missing_evidence
@@ -465,7 +693,9 @@ def _create_investigation_agent(
                 )
             ):
                 raise ModelRetry(
-                    f"UNRESOLVED 假设“{hypothesis.statement}”必须说明缺失证据或证据冲突。"
+                    f"UNRESOLVED hypothesis {hypothesis.statement!r} must identify missing "
+                    "evidence "
+                    "or cite a genuine evidence conflict."
                 )
         unsupported_definitive_claims = (
             "已确认坏账",
@@ -504,8 +734,10 @@ def _create_investigation_agent(
                 marker in text for marker in abstention_markers
             ):
                 raise ModelRetry(
-                    f"表述“{text}”把风险信号写成了当前数据不能证明的最终事实；"
-                    "请保留风险判断，但改为可能性表述，并把最终结果标为无法判断。"
+                    f"Statement {text!r} turns a risk signal into a final fact that current data "
+                    "cannot prove. Preserve the signal, use possibility language, and mark the "
+                    "final "
+                    "outcome as unresolved."
                 )
         _trace(ctx.deps, "REPORT_VALIDATED", "报告校验通过", "证据引用和结论状态已核验。")
         return report
@@ -638,7 +870,10 @@ async def stream_investigation_agent(
 ) -> AsyncIterator[InvestigationAgentProgress | InvestigationOutcome]:
     """运行调查并把动态查询和证据事件提炼成可观察进度。"""
 
-    recorder = InvestigationProtocolRecorder(_create_model(settings, model))
+    capture = DeepSeekWireCapture() if model is None else None
+    recorder = InvestigationProtocolRecorder(
+        _create_model(settings, model, capture), capture=capture
+    )
     agent = _create_investigation_agent(settings, recorder)
     dependencies = InvestigationDependencies(store=DuckDBStore(settings.database_path), case=case)
     emitted_evidence_ids: set[str] = set()
@@ -667,19 +902,19 @@ async def stream_investigation_agent(
                     event.part, ToolReturnPart
                 ):
                     raw_tool_name = event.part.tool_name
-                    if raw_tool_name == "discover_evidence_capabilities":
+                    if raw_tool_name == "inspect_data":
                         yield InvestigationAgentProgress(
                             event_type="TOOL_COMPLETED",
                             message=(
                                 "当前数据快照的证据能力已发现，可以选择数据集、粒度、指标和窗口。"
                             ),
-                            tool_name="discover_evidence_capabilities",
+                            tool_name="inspect_data",
                         )
-                    elif raw_tool_name == "search_business_records":
+                    elif raw_tool_name == "find_records":
                         yield InvestigationAgentProgress(
                             event_type="TOOL_COMPLETED",
                             message="案件范围内的业务标识搜索已经完成。",
-                            tool_name="search_business_records",
+                            tool_name="find_records",
                         )
                     elif raw_tool_name in allowed_investigation_tools(case.case_type):
                         tool_name = raw_tool_name

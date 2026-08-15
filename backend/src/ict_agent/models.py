@@ -21,9 +21,9 @@ RiskSignalStage = Literal["EARLY_WARNING", "DETERIORATING", "LIMITED"]
 EvidenceCompleteness = Literal["LOW", "MEDIUM", "HIGH"]
 ReviewDecision = Literal["CONFIRMED_RISK", "NEEDS_MORE_EVIDENCE", "NO_RISK"]
 InvestigationToolName = Literal[
-    "discover_evidence_capabilities",
-    "search_business_records",
-    "query_business_evidence",
+    "inspect_data",
+    "find_records",
+    "get_evidence",
 ]
 DiscoverySource = Literal["RULE", "EXTERNAL_ALERT", "PRE_TRANSACTION", "MANUAL"]
 DataQualityStatus = Literal["PASS", "WARNING", "FAIL", "UNKNOWN"]
@@ -171,7 +171,7 @@ class BusinessDataCatalog(BaseModel):
 
 
 class EvidenceQuery(BaseModel):
-    """受控证据查询；所有选项都由后端语义层校验。"""
+    """A governed evidence query validated against the inspected data catalog."""
 
     dataset: EvidenceDataset
     grain: EvidenceGrain
@@ -183,7 +183,7 @@ class EvidenceQuery(BaseModel):
 
 
 class BusinessRecordSearchQuery(BaseModel):
-    """在当前案件主体范围内搜索业务标识，不开放文件或数据库扫描。"""
+    """Search business identifiers only within the current case scope."""
 
     record_type: BusinessRecordType
     query: Annotated[str, Field(min_length=1, max_length=100)]
@@ -304,7 +304,7 @@ class RiskCaseSummary(BaseModel):
 
 
 class InvestigationHypothesis(BaseModel):
-    """Agent 对一个候选原因的证据判断。"""
+    """The evidence status of one candidate explanation."""
 
     hypothesis_id: Annotated[str, Field(min_length=1, max_length=100)]
     statement: Annotated[str, Field(min_length=1, max_length=500)]
@@ -315,14 +315,14 @@ class InvestigationHypothesis(BaseModel):
 
 
 class InvestigationFact(BaseModel):
-    """调查报告中的一条数据事实。"""
+    """A fact directly established by evidence returned in this run."""
 
     statement: Annotated[str, Field(min_length=1, max_length=500)]
     evidence_ids: list[str] = []
 
 
 class RiskSignalAssessment(BaseModel):
-    """把可判断的风险信号与仍待补证的根因、最终结果分开。"""
+    """An observable risk-signal assessment kept separate from unknown causes or outcomes."""
 
     stage: RiskSignalStage
     statement: Annotated[str, Field(min_length=1, max_length=500)]
@@ -333,7 +333,7 @@ class RiskSignalAssessment(BaseModel):
 
 
 class InvestigationTraceEvent(BaseModel):
-    """保存到报告中的精简调查轨迹，不包含模型私有思维链。"""
+    """A concise audit event that excludes private chain-of-thought."""
 
     event_type: InvestigationTraceType
     title: Annotated[str, Field(min_length=1, max_length=200)]
@@ -344,7 +344,7 @@ class InvestigationTraceEvent(BaseModel):
 
 
 class InvestigationReport(BaseModel):
-    """调查 Agent 的结构化输出。"""
+    """The structured, evidence-grounded output of the investigation agent."""
 
     investigation_summary: Annotated[str, Field(min_length=1, max_length=2_000)]
     risk_assessment: RiskSignalAssessment
@@ -359,14 +359,13 @@ class InvestigationReport(BaseModel):
 
 
 class InvestigationProtocolSnapshot(BaseModel):
-    """一次调查最后一轮的完整模型请求与响应。"""
+    """The final DeepSeek Chat Completions HTTP transaction of one investigation."""
 
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["4.0"] = "4.0"
+    api_format: Literal["openai_chat_completions"] = "openai_chat_completions"
     request_index: Annotated[int, Field(ge=1)]
-    model_name: str
-    model_settings: dict[str, JsonValue]
-    model_request_parameters: dict[str, JsonValue]
-    messages: list[dict[str, JsonValue]]
+    capture_source: Literal["wire", "pydantic_ai_test"]
+    request: dict[str, JsonValue]
     response: dict[str, JsonValue] | None = None
 
 

@@ -144,9 +144,7 @@ def evaluate_investigation_run(
     maximum_evidence_calls = int(expectations.get("maximum_evidence_calls", 9))
     duplicates = _duplicate_evidence_queries(evidence)
     called_tool_set = set(called_tools)
-    discovery_used = bool(
-        called_tool_set & {"discover_evidence_capabilities", "discover_business_data"}
-    )
+    discovery_used = "inspect_data" in called_tool_set
 
     execution_score = 0 if error else (4 if partial else 10)
     coverage_score = _ratio_score(len(required_keys & actual_keys), len(required_keys), 12)

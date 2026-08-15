@@ -1,6 +1,6 @@
 <script setup>
-import { computed, nextTick, ref, watch } from "vue";
-import { AlertCircle, CheckCircle2, Database, PlayCircle, Search, ShieldCheck, Sparkles } from "lucide-vue-next";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { AlertCircle, CheckCircle2, Database, Download, PlayCircle, Search, ShieldCheck, Sparkles } from "lucide-vue-next";
 import Badge from "./ui/Badge.vue";
 import { hypothesisColor, labels, priorityColor, queryArguments, stageColor, streamNdjson } from "../lib";
 
@@ -11,9 +11,27 @@ const events = ref([]);
 const record = ref(props.caseItem?.latest_investigation || null);
 const error = ref("");
 const canInvestigate = computed(() => props.caseItem?.status === "PENDING_AGENT_REVIEW");
+const protocol = computed(() => {
+  const value = record.value?.protocol;
+  return value?.schema_version === "4.0" && value?.api_format === "openai_chat_completions"
+    ? value
+    : null;
+});
 const protocolJson = computed(() =>
-  record.value?.protocol ? JSON.stringify(record.value.protocol, null, 2) : ""
+  protocol.value ? JSON.stringify(protocol.value, null, 2) : ""
 );
+const protocolRequestJson = computed(() =>
+  protocol.value?.request ? JSON.stringify(protocol.value.request, null, 2) : ""
+);
+const protocolResponseJson = computed(() =>
+  protocol.value?.response ? JSON.stringify(protocol.value.response, null, 2) : ""
+);
+const protocolDownloadUrl = ref("");
+const protocolDownloadFilename = computed(() => {
+  const caseId = String(props.caseItem?.case_id || record.value?.case_id || "case").replace(/[^a-zA-Z0-9_-]/g, "-");
+  const requestIndex = protocol.value?.request_index || 1;
+  return `${caseId}-request-${requestIndex}-deepseek-chat-completions.json`;
+});
 
 watch(
   () => props.caseItem,
@@ -24,6 +42,21 @@ watch(
   },
   { deep: false }
 );
+
+watch(
+  protocolJson,
+  (value) => {
+    if (protocolDownloadUrl.value) URL.revokeObjectURL(protocolDownloadUrl.value);
+    protocolDownloadUrl.value = value
+      ? URL.createObjectURL(new Blob([value], { type: "application/json;charset=utf-8" }))
+      : "";
+  },
+  { immediate: true }
+);
+
+onBeforeUnmount(() => {
+  if (protocolDownloadUrl.value) URL.revokeObjectURL(protocolDownloadUrl.value);
+});
 
 async function scrollToBottom() {
   await nextTick();
@@ -305,22 +338,50 @@ function completenessLabel(value) {
 
       <details class="card">
         <summary class="cursor-pointer select-none px-5 py-4 text-sm font-semibold text-ink">
-          查看模型原始 JSON
+          查看 DeepSeek Chat Completions HTTP JSON
         </summary>
         <div class="border-t border-border px-5 py-5">
-          <template v-if="record.protocol">
-            <div class="mb-3 flex flex-wrap items-center gap-2 text-sm text-muted">
-              <span>最后一次完整请求与最终响应</span>
-              <Badge tone="neutral">第 {{ record.protocol.request_index }} 次请求</Badge>
-              <Badge tone="neutral">{{ record.protocol.model_name }}</Badge>
+          <template v-if="protocol">
+            <div class="mb-3 flex flex-wrap items-center gap-2">
+              <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-sm text-muted">
+                <span>最后一次真实 HTTP 请求与响应</span>
+                <Badge tone="neutral">Chat Completions API</Badge>
+                <Badge tone="neutral">第 {{ protocol.request_index }} 次请求</Badge>
+                <Badge tone="neutral">{{ protocol.request.body.model }}</Badge>
+                <Badge v-if="protocol.capture_source === 'wire'" tone="neutral">HTTP 原始抓取</Badge>
+              </div>
+              <a
+                :href="protocolDownloadUrl"
+                :download="protocolDownloadFilename"
+                data-testid="download-investigation-protocol-json"
+                class="inline-flex h-9 flex-none items-center gap-2 rounded-lg border border-border px-3 text-sm font-semibold text-muted transition-colors hover:bg-canvas hover:text-ink"
+              >
+                <Download :size="16" />
+                下载 JSON
+              </a>
             </div>
-            <pre
-              data-testid="investigation-protocol-json"
-              class="max-h-[65vh] overflow-auto rounded-lg bg-[#101828] p-4 font-mono text-xs leading-5 text-[#d0d5dd]"
-            ><code>{{ protocolJson }}</code></pre>
+            <p class="mb-4 break-all font-mono text-xs text-muted">
+              {{ protocol.request.method }} {{ protocol.request.url }}
+            </p>
+            <div class="space-y-5">
+              <section>
+                <h4 class="mb-2 text-sm font-semibold text-ink">HTTP 请求</h4>
+                <pre
+                  data-testid="investigation-protocol-request-json"
+                  class="max-h-[65vh] overflow-auto rounded-lg bg-[#101828] p-4 font-mono text-xs leading-5 text-[#d0d5dd]"
+                ><code>{{ protocolRequestJson }}</code></pre>
+              </section>
+              <section>
+                <h4 class="mb-2 text-sm font-semibold text-ink">HTTP 响应</h4>
+                <pre
+                  data-testid="investigation-protocol-response-json"
+                  class="max-h-[65vh] overflow-auto rounded-lg bg-[#101828] p-4 font-mono text-xs leading-5 text-[#d0d5dd]"
+                ><code>{{ protocolResponseJson || "本轮没有取得 DeepSeek Chat Completions HTTP 响应。" }}</code></pre>
+              </section>
+            </div>
           </template>
           <p v-else class="text-sm leading-6 text-muted">
-            该调查完成时尚未启用原始协议记录；后续新调查将显示最后一次累计请求与最终响应。
+            该调查完成时尚未启用 DeepSeek Chat Completions HTTP 协议记录；后续新调查将显示最后一次真实请求与响应。
           </p>
         </div>
       </details>

@@ -55,6 +55,7 @@ from ict_agent.models import (
     GeneratedSimulationScenario,
     InvestigationCaseInput,
     InvestigationDataQuality,
+    InvestigationProtocolSnapshot,
     InvestigationRecord,
     InvestigationSignalInput,
     InvestigationStreamEvent,
@@ -83,6 +84,9 @@ from ict_agent.tools import (
 )
 
 logger = logging.getLogger(__name__)
+
+_CURRENT_PROTOCOL_SCHEMA_VERSION = "4.0"
+_CURRENT_PROTOCOL_API_FORMAT = "openai_chat_completions"
 
 
 class ServiceError(RuntimeError):
@@ -386,6 +390,41 @@ def get_risk_overview(*, settings: Settings | None = None) -> RiskOverviewRespon
         raise ServiceError(str(exc), request_id, 503) from exc
 
 
+def _load_protocol_snapshot(protocol_json: str | None) -> InvestigationProtocolSnapshot | None:
+    """Load only the current DeepSeek Chat Completions protocol contract."""
+
+    if protocol_json is None:
+        return None
+    payload = json.loads(protocol_json)
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version") != _CURRENT_PROTOCOL_SCHEMA_VERSION
+        or payload.get("api_format") != _CURRENT_PROTOCOL_API_FORMAT
+    ):
+        return None
+    return InvestigationProtocolSnapshot.model_validate(payload)
+
+
+def _load_investigation_record(
+    investigation: tuple[DatabaseScalar, ...],
+) -> InvestigationRecord | None:
+    """Load a persisted investigation only when it uses the current protocol contract."""
+
+    protocol = _load_protocol_snapshot(
+        str(investigation[5]) if investigation[5] is not None else None
+    )
+    if protocol is None:
+        return None
+    return InvestigationRecord(
+        investigation_id=str(investigation[0]),
+        case_id=str(investigation[1]),
+        report=json.loads(str(investigation[2])),
+        evidence=json.loads(str(investigation[3])),
+        protocol=protocol,
+        created_at=str(investigation[4]),
+    )
+
+
 def get_case_detail(
     case_id: str,
     *,
@@ -444,17 +483,7 @@ def get_case_detail(
         investigation_rows = store.fetch_latest_investigation(case_id).rows
         latest_investigation = None
         if investigation_rows:
-            investigation = investigation_rows[0]
-            latest_investigation = InvestigationRecord(
-                investigation_id=str(investigation[0]),
-                case_id=str(investigation[1]),
-                report=json.loads(str(investigation[2])),
-                evidence=json.loads(str(investigation[3])),
-                protocol=(
-                    json.loads(str(investigation[5])) if investigation[5] is not None else None
-                ),
-                created_at=str(investigation[4]),
-            )
+            latest_investigation = _load_investigation_record(tuple(investigation_rows[0]))
         reviews = [
             ReviewRecord(
                 review_id=str(review[0]),

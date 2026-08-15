@@ -9,6 +9,8 @@ from ict_agent.data import CaseStore, DuckDBStore
 from ict_agent.models import PreTransactionSimulationRequest, ReviewRequest, ToolResult
 from ict_agent.rules import RuleThresholds, build_rule_scan
 from ict_agent.service import (
+    _load_investigation_record,
+    _load_protocol_snapshot,
     create_pre_transaction_simulation,
     get_case_detail,
     get_dashboard,
@@ -16,7 +18,7 @@ from ict_agent.service import (
     list_pre_transaction_simulations,
     review_case,
 )
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 
 pytestmark = pytest.mark.anyio
@@ -68,18 +70,37 @@ QUERIES = [
 ]
 
 
+def test_legacy_anthropic_protocol_is_not_exposed_as_current() -> None:
+    legacy_protocol = json.dumps(
+        {
+            "schema_version": "3.0",
+            "api_format": "anthropic_messages",
+            "request": {"url": "https://api.deepseek.com/anthropic/v1/messages"},
+        }
+    )
+
+    assert _load_protocol_snapshot(legacy_protocol) is None
+    legacy_row = (
+        "legacy-investigation",
+        "INV|legacy",
+        json.dumps({"trace": [{"tool_name": "query_business_evidence"}]}),
+        json.dumps([{"tool_name": "query_business_evidence"}]),
+        "2026-08-15T00:00:00Z",
+        legacy_protocol,
+    )
+    assert _load_investigation_record(legacy_row) is None
+
+
 def _service_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     returns = [
         part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)
     ]
     returned_names = [part.tool_name for part in returns]
-    if "discover_evidence_capabilities" not in returned_names:
-        return ModelResponse(parts=[ToolCallPart("discover_evidence_capabilities", {})])
-    query_count = returned_names.count("query_business_evidence")
+    if "inspect_data" not in returned_names:
+        return ModelResponse(parts=[ToolCallPart("inspect_data", {})])
+    query_count = returned_names.count("get_evidence")
     if query_count < len(QUERIES):
-        return ModelResponse(
-            parts=[ToolCallPart("query_business_evidence", {"query": QUERIES[query_count]})]
-        )
+        return ModelResponse(parts=[ToolCallPart("get_evidence", {"query": QUERIES[query_count]})])
     evidence_ids = [
         part.content.evidence_id
         for part in returns
@@ -109,12 +130,14 @@ def _service_model(messages: list[ModelMessage], info: AgentInfo) -> ModelRespon
         "recommended_actions": ["人工复核。"],
         "requires_human_review": True,
     }
-    return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, output)])
+    assert info.allow_text_output is True
+    assert info.output_tools == []
+    return ModelResponse(parts=[TextPart(json.dumps(output, ensure_ascii=False))])
 
 
 async def _service_stream_model(
     messages: list[ModelMessage], info: AgentInfo
-) -> AsyncIterator[dict[int, DeltaToolCall]]:
+) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
     response = _service_model(messages, info)
     for index, part in enumerate(response.parts):
         if isinstance(part, ToolCallPart):
@@ -125,18 +148,20 @@ async def _service_stream_model(
                     tool_call_id=part.tool_call_id,
                 )
             }
+        elif isinstance(part, TextPart):
+            yield part.content
 
 
 async def _service_partial_stream_model(
     messages: list[ModelMessage], info: AgentInfo
-) -> AsyncIterator[dict[int, DeltaToolCall]]:
+) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
     returned_names = [
         part.tool_name
         for message in messages
         for part in message.parts
         if isinstance(part, ToolReturnPart)
     ]
-    if "query_business_evidence" in returned_names:
+    if "get_evidence" in returned_names:
         raise RuntimeError("simulated model interruption")
     response = _service_model(messages, info)
     for index, part in enumerate(response.parts):
@@ -148,6 +173,8 @@ async def _service_partial_stream_model(
                     tool_call_id=part.tool_call_id,
                 )
             }
+        elif isinstance(part, TextPart):
+            yield part.content
 
 
 def _create_receivable_case(settings: Settings) -> str:

@@ -56,9 +56,17 @@ flowchart LR
 
 ### 4.1 模型设置
 
-- 唯一模型：DeepSeek `deepseek-v4-flash`，官方 Provider。
-- Pydantic AI `thinking="high"`，准确率优先；思考模式不设置温度。
-- 禁止并行工具调用，保证页面事件和证据顺序可审计。
+- 唯一模型：DeepSeek `deepseek-v4-flash`，通过官方 OpenAI 格式端点
+  `POST /chat/completions` 调用。
+- 请求携带 `thinking.type=enabled` 与 `reasoning_effort=high`，准确率优先；思考模式不设置温度。工具调用轮次
+  返回的 `reasoning_content` 由 Pydantic AI 按 DeepSeek Provider 规则自动回传。
+- 三个本地工具均由 Pydantic AI 以 `sequential=True` 顺序执行，因此即使模型在同一响应内提出多个工具
+  调用，实际查询、证据写入和页面事件仍按确定顺序完成。
+- 最终输出使用 Pydantic AI `PromptedOutput(InvestigationReport)`。DeepSeek Provider 自动添加
+  `response_format={"type":"json_object"}`，保证响应是 JSON；英文输出指令同时提供完整 JSON Schema 和
+  一个仅表示结构的示例。Pydantic 继续校验字段结构，业务输出校验器继续核验证据与结论。
+- 单次模型请求设置 `max_tokens=5,000`，限制该次思考和回答的总输出，避免单轮无限生成；全程仍受
+  40,000 个累计输出 token 的运行预算约束。
 - 每次最多 12 次模型请求、10 次工具调用和 40,000 个累计输出 token；高思考模式的推理 token 会跨
   多轮工具调用累计，不能使用只够单次回答的预算。
 - 不实现模型 fallback、手写工具循环或私有消息协议。
@@ -74,11 +82,14 @@ flowchart LR
 
 应收、库存和事前交易 Agent 都只注册三个动作：
 
-1. `discover_evidence_capabilities`：针对当前案件和当前数据快照真实探测可用能力，返回数据集、单一
+1. `inspect_data`：针对当前案件和当前数据快照真实探测可用能力，返回数据集、单一
    粒度、指标、窗口、期间、可用状态和限制，不暴露物理表或 SQL。
-2. `search_business_records`：只在当前案件关联记录内按业务标识包含搜索客户、合同、订单或物料；
+2. `find_records`：只在当前案件关联记录内按业务标识包含搜索客户、合同、订单或物料；
    不搜索文件名、物理表、日志或任意数据库文本。
-3. `query_business_evidence`：执行注册的受控查询，每次结果生成独立 `evidence_id`。
+3. `get_evidence`：执行注册的受控查询，每次结果生成独立 `evidence_id`。
+
+三项模型可见工具名称保持简短，工具说明、参数模型说明、系统指令和输出格式指令全部使用英文；业务
+数据值与最终面向用户的报告文本继续使用中文。
 
 `semantic.py` 是唯一能力注册表。除应收的 `receivables/month`、
 `receivables/order`、`sales_payments/month`、`extensions/order`、`credit/customer`、
@@ -129,12 +140,16 @@ Pydantic AI 输出校验器拒绝以下报告并要求模型修正：
 trace 保存工具完成和报告校验轨迹，供刷新后回放。页面以顺序消息流展示可验证的审查进度；完成后
 默认只展示结构化结论与处理建议，完整分析依据、工具证据和执行路径保持折叠可查。
 
-每次调查另以 `InvestigationProtocolSnapshot 1.0` 保存最后一次模型请求及其最终响应，避免重复保存多轮
-请求中高度重叠的累计历史。请求快照包含模型设置、完整系统指令、函数工具与输出工具 JSON Schema、
-此前全部消息、工具调用、工具返回和重试提示；最终响应保留 Pydantic AI 的原始消息结构，包括 DeepSeek
-返回的 `ThinkingPart/reasoning_content` 和 `final_result`。该 JSON 在 AI 审查页单独折叠展示，用于开发
-调试和调查复盘，不参与业务结论或人工复核状态计算。协议快照保存在独立表中；启用前的历史调查不伪造
-或回填消息。
+每次调查另以 `InvestigationProtocolSnapshot 4.0` 保存最后一次模型 HTTP 事务，避免重复保存多轮请求中
+高度重叠的累计历史。生产请求直接从 HTTP 层抓取发往 DeepSeek 的 Chat Completions 请求：方法、URL、
+脱敏请求头和真实 JSON 请求体；其中 `messages` 包含英文系统指令、案件 JSON、助手工具调用、工具返回和
+重试提示，`tools` 只包含 `inspect_data`、`find_records` 和 `get_evidence`。模型请求携带
+`response_format={"type":"json_object"}`，最终轮返回普通 JSON 文本，不注册或调用 `final_result` 输出工具。
+响应保存状态码、脱敏响应头和按顺序解析的全部 SSE 数据事件。页面分别展示 HTTP 请求和响应，并可下载
+完整事务 JSON，用于开发调试和调查复盘，不参与业务结论或人工复核状态计算。协议快照保存在独立表中；
+结构变更后不伪造、迁移或兼容旧版调查记录；读取历史案件时，非 4.0 协议对应的旧调查不作为
+`latest_investigation` 返回，但案件、风险信号和人工复核历史继续保留。需要查看当前协议与工具记录时，
+按现行流程重新调查生成 4.0 记录。
 
 公开案件状态只有 `PENDING_AGENT_REVIEW`、`PENDING_HUMAN_REVIEW`、`ACTION_IN_PROGRESS` 和
 `CLOSED`，页面对应待调查、待复核、处理中和已关闭。Agent 执行时数据库短暂使用
@@ -178,9 +193,10 @@ trace 保存工具完成和报告校验轨迹，供刷新后回放。页面以�
 定向复跑可以在模型、评测集哈希和数据快照完全一致时替换完整产物中的对应运行，并记录全部来源
 Run ID，既支持低成本回归，也不覆盖原始审计记录。
 
-当前最终候选已完成 6 案 × 2 轮真实模型评测：12 次调查全部完整，自动门槛、人工语义复核与最终
-发布门槛均为 12/12，六案跨轮阶段一致。与改造前同重复序号的 6 案相比，自动通过率从 66.67% 提升
-到 100%，耗时下降 34.41%，双方用量完整的 5 案 Token 下降 42.65%。
+上一版模型协议候选曾完成 6 案 × 2 轮真实评测：12 次调查全部完整，自动门槛、人工语义复核与最终
+发布门槛均为 12/12。切换到 DeepSeek Chat Completions、英文指令和 JSON Mode 后，已完成
+`INV-83NN0001CD-MIXED-SIGNALS` 单案真实冒烟：报告完整、自动门槛通过、100 分；该结果只证明新协议
+链路可运行，不替代发布前的 6 案 × 2 轮完整评测和人工语义复核。
 
 操作员 CLI `backend/scripts/evidence_cli.py` 复用同一发现、搜索和查询函数，用于诊断与人工核对；CLI
 不会被模型执行，且没有 SQL、文件读取或写操作参数。

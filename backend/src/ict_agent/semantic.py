@@ -83,7 +83,7 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
         "proposal",
         "order",
         "PRE_TRANSACTION",
-        "查看本案待评估模拟交易的金额、账期与预期毛利。",
+        "Inspect the proposed amount, payment term, and expected margin for this simulated deal.",
         (
             ("proposed_amount", "拟交易金额_元", "拟交易金额_元"),
             ("proposed_term_days", "拟账期天数", "拟账期天数"),
@@ -91,13 +91,16 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
         ),
         ("latest",),
         ("模拟交易编号", "客户编号", "业务类型", "场景"),
-        ("这是演示用拟交易输入，不是已经发生的销售事实。",),
+        ("This is simulated proposal input, not a completed sale.",),
     ),
     _capability(
         "customer_profile",
         "business_type",
         "PRE_TRANSACTION",
-        "查看客户在当前业务类型下的历史订单金额、回款账龄和毛利基线。",
+        (
+            "Inspect the customer's historical order, payment-age, and margin baseline for this "
+            "business type."
+        ),
         (
             ("historical_order_count", "历史订单数", "历史订单数"),
             ("median_order_amount", "订单金额中位数_元", "订单金额中位数_元"),
@@ -107,13 +110,16 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
         ),
         ("all",),
         ("客户编号", "业务类型"),
-        ("历史分布只用于比较拟交易是否偏离，不等同违约概率或审批结论。",),
+        (
+            "Historical distribution shows deviation only; it is not a default probability or "
+            "approval decision.",
+        ),
     ),
     _capability(
         "receivables",
         "month",
         ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"),
-        "按月观察应收余额、超期结构和最大账龄。",
+        "Inspect monthly receivable balances, overdue composition, and maximum overdue age.",
         (
             ("ar_amount", "应收余额_元", "应收金额_元"),
             ("overdue_amount", "超期应收_元", "超期应收_元"),
@@ -124,13 +130,16 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
         ),
         ("latest", "last_3_months", "last_6_months", "last_12_months", "all"),
         ("期间",),
-        ("月末快照是时点余额，不能跨期直接求和。",),
+        ("Month-end snapshots are point-in-time balances and must not be summed across periods.",),
     ),
     _capability(
         "receivables",
         "order",
         ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"),
-        "查看最新快照中合同、订单、物料和承诺日级别的应收明细。",
+        (
+            "Inspect receivables by contract, order, material, and promised payment date in the "
+            "latest snapshot."
+        ),
         (
             ("ar_amount", "应收金额_元", "应收金额_元"),
             ("overdue_amount", "超期应收_元", "超期应收_元"),
@@ -140,13 +149,13 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
         ),
         ("latest",),
         ("合同号", "销售订单号", "物料编码", "最终承诺还款日期", "是否展期"),
-        ("只取全表最新月末快照；结果按风险金额排序并受行数限制。",),
+        ("Uses only the latest month-end snapshot; rows are risk-sorted and limited.",),
     ),
     _capability(
         "sales_payments",
         "month",
         ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"),
-        "按自然月对齐销售、回款、粗算毛利和超期利息。",
+        "Align sales, payments, estimated gross profit, and overdue interest by calendar month.",
         (
             ("sales_amount", "销售额_元", "销售额_元"),
             ("payment_amount", "回款额_元", "回款额_元"),
@@ -160,13 +169,16 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
         ),
         ("last_3_months", "last_6_months", "last_12_months", "all"),
         ("月份",),
-        ("销售减回款不等于应收，只能用于比较经营方向。",),
+        ("Sales minus payments is not receivables and may only indicate operating direction.",),
     ),
     _capability(
         "extensions",
         "order",
         ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"),
-        "将当前应收与历史展期动作按客户、合同、订单和物料精确匹配。",
+        (
+            "Match current receivables to historical extensions by customer, contract, order, "
+            "and material."
+        ),
         (
             ("ar_amount", "当前应收_元", "应收金额_元"),
             ("overdue_amount", "当前超期_元", "超期应收_元"),
@@ -174,13 +186,13 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
         ),
         ("all",),
         ("合同号", "销售订单号", "物料编码", "展期后最终承诺日", "最近展期记录日"),
-        ("展期表没有审批人和审批状态。",),
+        ("Extension data contains neither approver nor approval status.",),
     ),
     _capability(
         "credit",
         "customer",
         ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"),
-        "查看客户当前授信、名单、财务概况和信用保险主数据。",
+        "Inspect current credit, list status, financial profile, and credit-insurance master data.",
         (
             ("credit_limit", "授信额度", "授信额度"),
             ("list_status", "名单状态", "名单状态"),
@@ -191,13 +203,16 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
         ),
         ("latest",),
         ("客户编号",),
-        ("只有当前状态，没有授信与名单历史。",),
+        ("Only current status is available; credit and list-status history is absent.",),
     ),
     _capability(
         "contracts",
         "contract",
         ("ACCOUNTS_RECEIVABLE", "PRE_TRANSACTION"),
-        "查看当前未结应收所关联项目合同的签约、开票、出库和回款闭环。",
+        (
+            "Inspect contract, invoice, shipment, payment, and receivable data for open project "
+            "exposure."
+        ),
         (
             ("contract_amount", "签约金额_元", "签约金额_元"),
             ("invoiced_amount", "开票金额_元", "开票金额_元"),
@@ -209,13 +224,16 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
         ),
         ("latest",),
         ("合同号", "合同状态"),
-        ("没有项目验收记录，合同闭环只能作为间接证据。",),
+        ("Project acceptance records are absent, so the contract loop is indirect evidence only.",),
     ),
     _capability(
         "inventory",
         "quarter",
         "INVENTORY",
-        "按季末观察当前物料在库存组织中的金额、库龄结构和加权库龄。",
+        (
+            "Inspect quarterly inventory value, ageing composition, and weighted age for this "
+            "material and organization."
+        ),
         (
             ("inventory_amount", "库存金额_元", "库存金额_元"),
             ("fresh_inventory_amount", "60天内库存_元", "60天内库存_元"),
@@ -224,13 +242,16 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
         ),
         ("latest", "last_3_months", "last_6_months", "last_12_months", "all"),
         ("期间",),
-        ("库存按单一期末快照聚合，不能跨期直接求和。",),
+        ("Inventory is aggregated within each snapshot and must not be summed across periods.",),
     ),
     _capability(
         "inventory",
         "age_bucket",
         "INVENTORY",
-        "查看最新季末互不重叠的库存库龄分桶和借物超期金额。",
+        (
+            "Inspect non-overlapping inventory age buckets and overdue-loan value at the latest "
+            "quarter end."
+        ),
         (
             ("inventory_amount", "库存金额_元", "库存金额_元"),
             ("inventory_quantity", "数量", "库存数量"),
@@ -238,13 +259,17 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
         ),
         ("latest",),
         ("库龄区间",),
-        ("库龄分桶只聚合全表最新季末。",),
+        ("Age buckets use only the latest quarter-end snapshot.",),
     ),
     _capability(
         "sales",
         "month",
         "INVENTORY",
-        "按月查看当前物料和库存组织的销售、退货、数量和粗算毛利。",
+        (
+            "Inspect monthly sales, returns, quantity, and estimated gross profit for this "
+            "material "
+            "and organization."
+        ),
         (
             ("sales_amount", "销售额_元", "销售额_元"),
             ("net_quantity", "净数量", "净销售数量"),
@@ -254,7 +279,10 @@ SEMANTIC_CAPABILITIES: tuple[SemanticCapability, ...] = (
         ),
         ("last_3_months", "last_6_months", "last_12_months", "all"),
         ("月份",),
-        ("没有促销活动和下游库存，不能把销售变化归因到具体活动。",),
+        (
+            "Promotion and downstream-inventory data are absent, so sales changes cannot be "
+            "attributed to a campaign.",
+        ),
     ),
 )
 

@@ -3,9 +3,12 @@
 import json
 from collections.abc import AsyncIterator
 
+import httpx
 import pytest
 from ict_agent.agent import (
+    DeepSeekWireCapture,
     InvestigationOutcome,
+    _create_model,
     _query_is_redundant,
     _serialize_messages,
     build_investigation_case_input,
@@ -16,19 +19,27 @@ from ict_agent.config import Settings
 from ict_agent.models import (
     EvidenceQuery,
     InvestigationDataQuality,
+    InvestigationReport,
     InvestigationSignalInput,
     RiskCaseDetail,
     ToolResult,
 )
+from ict_agent.prompts import INVESTIGATION_INSTRUCTIONS, INVESTIGATION_OUTPUT_TEMPLATE
+from pydantic import BaseModel
+from pydantic_ai import Agent, PromptedOutput
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
     RetryPromptPart,
+    TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+from pydantic_ai.profiles.openai import OpenAIModelProfile
+from pydantic_ai.providers.deepseek import DeepSeekProvider
 
 pytestmark = pytest.mark.anyio
 
@@ -226,13 +237,11 @@ def _pre_input():
 def _investigation_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     returns = _returns(messages)
     returned_names = [part.tool_name for part in returns]
-    if "discover_evidence_capabilities" not in returned_names:
-        return ModelResponse(parts=[ToolCallPart("discover_evidence_capabilities", {})])
-    query_count = returned_names.count("query_business_evidence")
+    if "inspect_data" not in returned_names:
+        return ModelResponse(parts=[ToolCallPart("inspect_data", {})])
+    query_count = returned_names.count("get_evidence")
     if query_count < len(QUERIES):
-        return ModelResponse(
-            parts=[ToolCallPart("query_business_evidence", {"query": QUERIES[query_count]})]
-        )
+        return ModelResponse(parts=[ToolCallPart("get_evidence", {"query": QUERIES[query_count]})])
     evidence_ids = [
         part.content.evidence_id
         for part in returns
@@ -264,7 +273,9 @@ def _investigation_model(messages: list[ModelMessage], info: AgentInfo) -> Model
         "recommended_actions": ["人工复核项目到期计划和后续回款。"],
         "requires_human_review": True,
     }
-    return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, output)])
+    assert info.allow_text_output is True
+    assert info.output_tools == []
+    return ModelResponse(parts=[TextPart(json.dumps(output, ensure_ascii=False))])
 
 
 def _recovering_query_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -273,29 +284,23 @@ def _recovering_query_model(messages: list[ModelMessage], info: AgentInfo) -> Mo
     has_retry = any(
         isinstance(part, RetryPromptPart) for message in messages for part in message.parts
     )
-    if (
-        "discover_evidence_capabilities" in returned_names
-        and "query_business_evidence" not in returned_names
-        and not has_retry
-    ):
+    if "inspect_data" in returned_names and "get_evidence" not in returned_names and not has_retry:
         invalid_query = {**QUERIES[0], "metrics": ["credit_limit"]}
-        return ModelResponse(
-            parts=[ToolCallPart("query_business_evidence", {"query": invalid_query})]
-        )
+        return ModelResponse(parts=[ToolCallPart("get_evidence", {"query": invalid_query})])
     return _investigation_model(messages, info)
 
 
 def _pre_transaction_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     returns = _returns(messages)
     returned_names = [part.tool_name for part in returns]
-    if "discover_evidence_capabilities" not in returned_names:
-        return ModelResponse(parts=[ToolCallPart("discover_evidence_capabilities", {})])
-    query_count = returned_names.count("query_business_evidence")
+    if "inspect_data" not in returned_names:
+        return ModelResponse(parts=[ToolCallPart("inspect_data", {})])
+    query_count = returned_names.count("get_evidence")
     if query_count < len(PRE_TRANSACTION_QUERIES):
         return ModelResponse(
             parts=[
                 ToolCallPart(
-                    "query_business_evidence",
+                    "get_evidence",
                     {"query": PRE_TRANSACTION_QUERIES[query_count]},
                 )
             ]
@@ -335,12 +340,14 @@ def _pre_transaction_model(messages: list[ModelMessage], info: AgentInfo) -> Mod
         "recommended_actions": ["由业务人员核对账期、额度和本次交易背景。"],
         "requires_human_review": True,
     }
-    return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, output)])
+    assert info.allow_text_output is True
+    assert info.output_tools == []
+    return ModelResponse(parts=[TextPart(json.dumps(output, ensure_ascii=False))])
 
 
 async def _stream_model(
     messages: list[ModelMessage], info: AgentInfo
-) -> AsyncIterator[dict[int, DeltaToolCall]]:
+) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
     response = _investigation_model(messages, info)
     for index, part in enumerate(response.parts):
         if isinstance(part, ToolCallPart):
@@ -351,11 +358,13 @@ async def _stream_model(
                     tool_call_id=part.tool_call_id,
                 )
             }
+        elif isinstance(part, TextPart):
+            yield part.content
 
 
 async def _recovering_query_stream_model(
     messages: list[ModelMessage], info: AgentInfo
-) -> AsyncIterator[dict[int, DeltaToolCall]]:
+) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
     response = _recovering_query_model(messages, info)
     for index, part in enumerate(response.parts):
         if isinstance(part, ToolCallPart):
@@ -366,11 +375,13 @@ async def _recovering_query_stream_model(
                     tool_call_id=part.tool_call_id,
                 )
             }
+        elif isinstance(part, TextPart):
+            yield part.content
 
 
 async def _pre_transaction_stream_model(
     messages: list[ModelMessage], info: AgentInfo
-) -> AsyncIterator[dict[int, DeltaToolCall]]:
+) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
     response = _pre_transaction_model(messages, info)
     for index, part in enumerate(response.parts):
         if isinstance(part, ToolCallPart):
@@ -381,17 +392,19 @@ async def _pre_transaction_stream_model(
                     tool_call_id=part.tool_call_id,
                 )
             }
+        elif isinstance(part, TextPart):
+            yield part.content
 
 
 async def _interrupted_stream_model(
     messages: list[ModelMessage], info: AgentInfo
-) -> AsyncIterator[dict[int, DeltaToolCall]]:
+) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
     returns = _returns(messages)
     returned_names = [part.tool_name for part in returns]
-    if "discover_evidence_capabilities" not in returned_names:
-        part = ToolCallPart("discover_evidence_capabilities", {})
-    elif "query_business_evidence" not in returned_names:
-        part = ToolCallPart("query_business_evidence", {"query": QUERIES[0]})
+    if "inspect_data" not in returned_names:
+        part = ToolCallPart("inspect_data", {})
+    elif "get_evidence" not in returned_names:
+        part = ToolCallPart("get_evidence", {"query": QUERIES[0]})
     else:
         raise RuntimeError("simulated model interruption")
     yield {
@@ -412,6 +425,100 @@ def test_rule_case_maps_to_frozen_investigation_input() -> None:
     assert contract.signals[0].signal_id == "hit-test"
     assert contract.signals[0].signal_code == "AR_TEST"
     assert contract.data_quality.status == "PASS"
+
+
+def test_deepseek_model_profile_uses_official_chat_completions_contract(
+    settings: Settings,
+) -> None:
+    model = _create_model(settings, None, DeepSeekWireCapture())
+
+    assert isinstance(model, OpenAIChatModel)
+    assert model.profile.get("supports_json_object_output") is True
+    assert model.profile.get("openai_chat_supports_max_completion_tokens") is False
+    assert model.profile.get("openai_chat_thinking_field") == "reasoning_content"
+
+
+def test_model_instructions_and_output_template_are_english() -> None:
+    prompt_text = (
+        f"{INVESTIGATION_INSTRUCTIONS}\n{INVESTIGATION_OUTPUT_TEMPLATE}\n"
+        f"{json.dumps(InvestigationReport.model_json_schema(), ensure_ascii=False)}"
+    )
+
+    assert "Call inspect_data exactly once" in prompt_text
+    assert "Return the final answer as exactly one JSON object" in prompt_text
+    assert not any("\u4e00" <= character <= "\u9fff" for character in prompt_text)
+
+
+async def test_deepseek_prompted_output_emits_official_json_mode_parameters() -> None:
+    class Answer(BaseModel):
+        value: int
+
+    captured_request: dict[str, object] = {}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        captured_request.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "id": "chat-test",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "deepseek-v4-flash",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": '{"value":1}',
+                            "reasoning_content": "checked",
+                        },
+                        "logprobs": None,
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "total_tokens": 15,
+                },
+                "system_fingerprint": "test",
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http_client:
+        provider = DeepSeekProvider(api_key="test", http_client=http_client)
+        model = OpenAIChatModel(
+            "deepseek-v4-flash",
+            provider=provider,
+            profile=OpenAIModelProfile(openai_chat_supports_max_completion_tokens=False),
+        )
+        agent = Agent(
+            model,
+            output_type=PromptedOutput(Answer, template=INVESTIGATION_OUTPUT_TEMPLATE),
+            instructions=INVESTIGATION_INSTRUCTIONS,
+            model_settings=OpenAIChatModelSettings(
+                max_tokens=5_000,
+                openai_reasoning_effort="high",
+                extra_body={"thinking": {"type": "enabled"}},
+            ),
+        )
+
+        result = await agent.run("Return one.")
+
+    assert result.output == Answer(value=1)
+    assert captured_request["response_format"] == {"type": "json_object"}
+    assert captured_request["max_tokens"] == 5_000
+    assert "max_completion_tokens" not in captured_request
+    assert captured_request["reasoning_effort"] == "high"
+    assert captured_request["thinking"] == {"type": "enabled"}
+    system_messages = [
+        message for message in captured_request["messages"] if message["role"] == "system"
+    ]
+    system_text = json.dumps(system_messages, ensure_ascii=False)
+    assert "Call inspect_data exactly once" in system_text
+    assert "Return the final answer as exactly one JSON object" in system_text
+    assert not any("\u4e00" <= character <= "\u9fff" for character in system_text)
 
 
 def test_broader_existing_query_blocks_redundant_metric_subset() -> None:
@@ -460,7 +567,7 @@ async def test_investigation_agent_discovers_and_queries_evidence(
     )
 
     assert outcome.partial is False
-    assert [item.tool_name for item in outcome.evidence] == ["query_business_evidence"] * 4
+    assert [item.tool_name for item in outcome.evidence] == ["get_evidence"] * 4
     assert [item.arguments["dataset"] for item in outcome.evidence] == [
         "receivables",
         "sales_payments",
@@ -471,18 +578,79 @@ async def test_investigation_agent_discovers_and_queries_evidence(
     assert outcome.report.risk_assessment.stage == "DETERIORATING"
     assert outcome.report.requires_human_review is True
     assert outcome.protocol is not None
+    assert outcome.protocol.schema_version == "4.0"
+    assert outcome.protocol.api_format == "openai_chat_completions"
+    assert outcome.protocol.capture_source == "pydantic_ai_test"
     assert outcome.protocol.request_index == 6
-    assert outcome.protocol.model_settings["thinking"] == "high"
-    assert [
-        tool["name"] for tool in outcome.protocol.model_request_parameters["function_tools"]
-    ] == [
-        "discover_evidence_capabilities",
-        "search_business_records",
-        "query_business_evidence",
+    request_body = outcome.protocol.request["body"]
+    assert request_body["model_settings"]["openai_reasoning_effort"] == "high"
+    assert request_body["model_settings"]["extra_body"]["thinking"]["type"] == "enabled"
+    assert request_body["model_request_parameters"]["output_mode"] == "prompted"
+    function_tools = request_body["model_request_parameters"]["function_tools"]
+    assert [tool["name"] for tool in function_tools] == [
+        "inspect_data",
+        "find_records",
+        "get_evidence",
     ]
-    assert outcome.protocol.messages[0]["instructions"]
+    assert [tool["description"] for tool in function_tools] == [
+        "List the datasets, query options, and limits available for the current case.",
+        "Find related customer, contract, order, or material identifiers in this case.",
+        "Get case-scoped evidence using query options returned by inspect_data.",
+    ]
+    assert request_body["model_request_parameters"]["output_tools"] == []
+    assert request_body["messages"][0]["instructions"]
     assert outcome.protocol.response is not None
-    assert outcome.protocol.response["parts"][0]["tool_name"] == "final_result"
+    response_part = outcome.protocol.response["pydantic_ai_model_response"]["parts"][0]
+    assert response_part["part_kind"] == "text"
+    assert "final_result" not in json.dumps(outcome.protocol.model_dump(mode="json"))
+
+
+async def test_deepseek_wire_capture_preserves_chat_completions_transaction() -> None:
+    capture = DeepSeekWireCapture()
+    request = httpx.Request(
+        "POST",
+        "https://api.deepseek.com/chat/completions",
+        headers={"authorization": "Bearer secret-key"},
+        json={
+            "model": "deepseek-v4-flash",
+            "messages": [
+                {"role": "system", "content": "Use only tool evidence and return JSON."},
+                {"role": "user", "content": "{}"},
+            ],
+            "max_tokens": 5_000,
+            "reasoning_effort": "high",
+            "thinking": {"type": "enabled"},
+            "response_format": {"type": "json_object"},
+            "stream": True,
+        },
+    )
+    await capture.capture_request(request)
+    response = httpx.Response(
+        200,
+        headers={"content-type": "text/event-stream", "set-cookie": "secret-cookie"},
+        request=request,
+    )
+    await capture.capture_response(response)
+    capture.record_response_body(
+        b'data: {"id":"chat_123","object":"chat.completion.chunk",'
+        b'"choices":[{"index":0,"delta":{"content":"{}"}}]}\n\n'
+        b"data: [DONE]\n\n"
+    )
+
+    assert capture.request is not None
+    assert capture.request["method"] == "POST"
+    assert capture.request["url"] == "https://api.deepseek.com/chat/completions"
+    assert capture.request["headers"]["authorization"] == "[REDACTED]"
+    assert capture.request["body"]["max_tokens"] == 5_000
+    assert capture.request["body"]["response_format"] == {"type": "json_object"}
+    assert capture.request["body"]["messages"][0]["role"] == "system"
+    assert capture.response is not None
+    assert capture.response["status_code"] == 200
+    assert capture.response["headers"]["set-cookie"] == "[REDACTED]"
+    assert capture.response["body"]["format"] == "sse"
+    assert capture.response["body"]["events"][0]["event"] == "message"
+    assert capture.response["body"]["events"][0]["data"]["id"] == "chat_123"
+    assert capture.response["body"]["events"][1]["data"] == "[DONE]"
 
 
 def test_protocol_serialization_preserves_model_thinking_content() -> None:
