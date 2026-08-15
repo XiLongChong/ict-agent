@@ -8,15 +8,15 @@ export const labels = {
   },
   priority: { LOW: "低", MEDIUM: "一般", HIGH: "高" },
   investigationProfile: {
-    RECEIVABLES: "应收调查",
-    INVENTORY: "库存",
-    PRE_TRANSACTION: "事前交易",
+    RECEIVABLES: "应收风险",
+    INVENTORY: "库存风险",
+    PRE_TRANSACTION: "交易审查",
   },
   caseSource: {
-    RULE_SCAN: "规则扫描",
+    RULE_SCAN: "系统规则",
     EXTERNAL_ALERT: "外部预警",
-    PRE_TRANSACTION_SIMULATION: "事前交易模拟",
-    MANUAL: "人工发起",
+    PRE_TRANSACTION_SIMULATION: "模拟交易",
+    MANUAL: "人工创建",
   },
   subjectType: {
     CUSTOMER: "客户",
