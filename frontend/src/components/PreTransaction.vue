@@ -89,12 +89,11 @@ function openCase() {
           <TextInput v-model="form.seed" type="number" placeholder="留空则随机" />
         </div>
       </div>
-      <div class="mt-4 flex flex-wrap items-center gap-3 border-t border-border pt-4">
+      <div class="mt-4 flex justify-end border-t border-border pt-4">
         <Button :loading="loading" @click="simulate">
           <Dices :size="16" />
-          生成模拟订单并立案
+          开始模拟
         </Button>
-        <span class="text-xs text-muted">未指定客户时，只会从存在正向历史订单的"客户 × 业务类型"中选择。</span>
       </div>
     </section>
 
