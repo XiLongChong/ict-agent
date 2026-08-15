@@ -62,11 +62,6 @@ function openCase() {
 
 <template>
   <div class="space-y-6">
-    <!-- 页面头部 -->
-    <header class="space-y-3">
-      <h1 class="text-2xl font-bold text-ink">模拟交易</h1>
-    </header>
-
     <!-- 配置区 -->
     <section class="card p-5">
       <div class="mb-4 flex items-center gap-2">
