@@ -36,6 +36,7 @@ logs/
 .vscode/
 .DS_Store
 Thumbs.db
+.work/
 
 # 前端队友接入后的常见本地产物
 frontend/node_modules/
