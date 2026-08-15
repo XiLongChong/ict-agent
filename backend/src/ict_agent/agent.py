@@ -45,6 +45,7 @@ from pydantic_core import to_jsonable_python
 from ict_agent import tools as analysis_tools
 from ict_agent.config import OFFICIAL_DEEPSEEK_BASE_URL, Settings
 from ict_agent.data import DuckDBStore
+from ict_agent.evidence_policy import EvidenceRequirement, requirements_for
 from ict_agent.models import (
     BusinessDataCatalog,
     BusinessRecordSearchQuery,
@@ -75,23 +76,6 @@ INVESTIGATION_TOOLS: tuple[InvestigationToolName, ...] = (
     "find_records",
     "get_evidence",
 )
-AR_CORE_EVIDENCE = {
-    ("receivables", "month"),
-    ("receivables", "order"),
-    ("sales_payments", "month"),
-}
-INVENTORY_CORE_EVIDENCE = {
-    ("inventory", "quarter"),
-    ("inventory", "age_bucket"),
-    ("sales", "month"),
-}
-PRE_TRANSACTION_CORE_EVIDENCE = {
-    ("proposal", "order"),
-    ("customer_profile", "business_type"),
-    ("receivables", "month"),
-    ("sales_payments", "month"),
-    ("credit", "customer"),
-}
 
 
 def allowed_investigation_tools(
@@ -423,6 +407,9 @@ def _record_investigation_evidence(
         rows=result.rows,
         metric_definitions=result.metric_definitions,
         warnings=result.warnings,
+        total_rows=result.total_rows,
+        returned_rows=result.returned_rows,
+        is_truncated=result.is_truncated,
     )
     dependencies.evidence.append(evidence)
     dependencies.called_tools.add(tool_name)
@@ -437,37 +424,46 @@ def _record_investigation_evidence(
     return result.model_copy(update={"evidence_id": evidence_id})
 
 
-def _evidence_query_keys(dependencies: InvestigationDependencies) -> set[tuple[str, str]]:
-    return {
-        (str(item.arguments.get("dataset")), str(item.arguments.get("grain")))
-        for item in dependencies.evidence
-        if item.tool_name == "get_evidence"
-    }
-
-
-def _required_evidence(dependencies: InvestigationDependencies) -> set[tuple[str, str]]:
-    if dependencies.case.investigation_profile == "INVENTORY":
-        return set(INVENTORY_CORE_EVIDENCE)
-    if dependencies.case.investigation_profile == "PRE_TRANSACTION":
-        return set(PRE_TRANSACTION_CORE_EVIDENCE)
-    required = set(AR_CORE_EVIDENCE)
+def _required_evidence(
+    dependencies: InvestigationDependencies,
+) -> tuple[EvidenceRequirement, ...]:
     signal_codes = {item.signal_code for item in dependencies.case.signals}
-    if "AR_OPERATING_DEEP_OVERDUE" in signal_codes:
-        required.update({("extensions", "order"), ("credit", "customer")})
-    elif "AR_OPERATING_EXPOSURE_BUILDUP" in signal_codes:
-        required.update({("contracts", "contract"), ("credit", "customer")})
-    else:
-        required.add(("credit", "customer"))
-    return required
+    return requirements_for(dependencies.case.investigation_profile, signal_codes)
+
+
+def _requirement_is_satisfied(requirement: EvidenceRequirement, evidence: Evidence) -> bool:
+    if evidence.tool_name != "get_evidence":
+        return False
+    if evidence.arguments.get("dataset") != requirement.dataset:
+        return False
+    if evidence.arguments.get("grain") != requirement.grain:
+        return False
+    metrics = evidence.arguments.get("metrics")
+    if not isinstance(metrics, list) or not requirement.metrics.issubset(set(metrics)):
+        return False
+    if not time_window_covers(
+        evidence.arguments.get("time_window"), requirement.minimum_time_window
+    ):
+        return False
+    return not (requirement.require_complete_result and evidence.is_truncated)
 
 
 def _missing_requirements(dependencies: InvestigationDependencies) -> list[str]:
     missing: list[str] = []
     if not dependencies.catalog_discovered:
         missing.append("尚未发现可用业务数据")
-    query_keys = _evidence_query_keys(dependencies)
-    for dataset, grain in sorted(_required_evidence(dependencies) - query_keys):
-        missing.append(f"缺少必要证据：{dataset}/{grain}")
+    for requirement in _required_evidence(dependencies):
+        if any(
+            _requirement_is_satisfied(requirement, evidence) for evidence in dependencies.evidence
+        ):
+            continue
+        completeness = "且结果不得截断" if requirement.require_complete_result else ""
+        missing.append(
+            "缺少必要证据："
+            f"{requirement.dataset}/{requirement.grain}，"
+            f"指标={','.join(sorted(requirement.metrics))}，"
+            f"最小窗口={requirement.minimum_time_window}{completeness}"
+        )
     return missing
 
 
@@ -573,6 +569,13 @@ def _create_investigation_agent(
             ctx.deps.case.subject_context,
             ctx.deps.case.observation_date,
             business_type=ctx.deps.case.business_type,
+        )
+        catalog = catalog.model_copy(
+            update={
+                "required_evidence": [
+                    requirement.to_view() for requirement in _required_evidence(ctx.deps)
+                ]
+            }
         )
         ctx.deps.catalog_discovered = True
         ctx.deps.called_tools.add("inspect_data")
@@ -752,9 +755,12 @@ def _create_investigation_agent(
 def _evidence_completeness(
     dependencies: InvestigationDependencies,
 ) -> Literal["LOW", "MEDIUM", "HIGH"]:
-    keys = _evidence_query_keys(dependencies)
     required = _required_evidence(dependencies)
-    coverage = len(keys & required) / len(required)
+    satisfied = sum(
+        any(_requirement_is_satisfied(requirement, evidence) for evidence in dependencies.evidence)
+        for requirement in required
+    )
+    coverage = satisfied / len(required)
     if coverage == 1:
         return "HIGH"
     if coverage >= 2 / 3:

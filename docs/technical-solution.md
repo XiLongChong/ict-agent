@@ -38,7 +38,7 @@ flowchart LR
 | HTTP | FastAPI + Pydantic | `/api/v1` 校验、错误映射、NDJSON 流和 OpenAPI |
 | 应用服务 | `service.py` | 经营、信号入口、案件状态流转、调查保存、飞书通知和人工复核用例 |
 | Agent | Pydantic AI | DeepSeek 高强度思考、工具事件、结构化输出和输出校验 |
-| 业务分析 | `business_type.py` / `pretransaction.py` / `semantic.py` / `tools.py` / `rules.py` / `rule_engine.py` / `admission.py` / `case_assembler.py` | 交易级业务分类、纯计算模拟器、语义注册表、参数化指标查询，以及规则命中、准入和案件组装 |
+| 业务分析 | `business_type.py` / `pretransaction.py` / `semantic.py` / `evidence_policy.py` / `tools.py` / `rules.py` / `rule_engine.py` / `admission.py` / `case_assembler.py` | 交易级业务分类、纯计算模拟器、语义注册表、信号证据策略、参数化指标查询，以及规则命中、准入和案件组装 |
 | 数据 | `data.py` | 业务 DuckDB 加固只读查询、带快照身份的原子导入、独立案件库写入 |
 | 飞书适配 | `feishu.py` | 官方长连接接收绑定指令，消息 API 主动发送结果卡片；不参与 Agent 调查推理 |
 
@@ -61,7 +61,7 @@ flowchart LR
 业务库由 7 张正式 CSV 原子全量重建；案件、调查和审核保存在独立 DuckDB，导入业务数据不会覆盖
 案件记录。合同号、客户号、订单号和物料号始终按字符串处理。金额单位不由模型判断，完全遵循赛事
 官方数据字典，当前字段按“元”解释。快照、退货、零分母和关联规则见 `metric-contract.md`。
-规则扫描保存新结果时会在同一事务中清理遗留的 `RULE_SCAN` 来源 `CON|合同号` 案件及其孤立信号、调查、复核和通知记录；其他来源案件不受影响。
+统一案件主体只允许客户或“物料 × 库存组织”。合同域命中关联到唯一客户后进入客户案件；合同号作为案件上下文和调查证据保留，不存在合同案件类型或兼容清理路径。
 
 每次成功导入同时写入 `import_manifest`：稳定快照 ID、导入时间、七个来源文件的 SHA-256/行数/日期
 范围，以及模式指纹。`GET /api/v1/data-snapshot` 与操作员 CLI 只返回文件名和哈希，不暴露本机路径。
@@ -93,7 +93,7 @@ flowchart LR
 
 - `source` 只记录创建入口：规则扫描为 `RULE_SCAN`，事前交易模拟为
   `PRE_TRANSACTION_SIMULATION`，另保留 `EXTERNAL_ALERT` 和 `MANUAL`。
-- `subject_type` 只描述主体粒度：客户、合同或“物料 × 库存组织”；主体编号、名称和受控查询上下文
+- `subject_type` 只描述主体粒度：客户或“物料 × 库存组织”；主体编号、名称和受控查询上下文
   分别保存在 `subject_id`、`subject_label` 和 `subject_context`。
 - 规则扫描的合同域信号按唯一客户编号归并到客户主体 `AR|客户编号`；合同号仍作为信号指标和案件上下文保留。
 - `investigation_profile` 只选择证据策略：`RECEIVABLES`、`INVENTORY` 或 `PRE_TRANSACTION`。
@@ -121,13 +121,11 @@ flowchart LR
 增加 `proposal/order` 和 `customer_profile/business_type`，并复用应收、同业务销售回款和授信能力。
 所有执行器均为后端固定参数化查询，自动锁定案件主体，不接收任意字段、关联、SQL、路径、正则或代码。
 
-深度超期应收固定要求前三项核心证据加展期与授信；敞口积累固定要求前三项加合同与授信；库存固定要求
-季度历史、最新库龄分桶和销售月度证据；事前交易固定要求拟交易、同业务历史画像、应收、销售回款和
-授信。相同查询及已被更宽指标集合覆盖的子集查询都会被拒绝。
+`evidence_policy.py` 为调查策略和全部23条确定性信号定义数据集、粒度、必需指标、最小时间窗口和完整性要求；多信号案件取要求并集。退货、负回款、超长账龄和长期未回款先查询完整客户汇总，再按需下钻订单；合同信号查询金额加权毛利与账期；库存超期查询最新季末超期记录。相同查询及已被更宽指标集合覆盖的子集查询都会被拒绝。
 
 ### 4.4 证据与输出校验
 
-每个工具返回结构化表格、来源、期间、口径、warning 和唯一 `evidence_id`，完整保存在调查记录中。
+每个工具返回结构化表格、来源、期间、口径、warning、`total_rows`、`returned_rows`、`is_truncated` 和唯一 `evidence_id`，完整保存在调查记录中。查询前校验固定业务快照身份；规则案件校验应收月末或库存季末观察日，模拟交易校验代码生成日期。
 Pydantic AI 输出校验器拒绝以下报告并要求模型修正：
 
 - 未发现当前快照的证据能力或未达到调查策略/信号要求的最低证据覆盖；
@@ -159,6 +157,9 @@ Pydantic AI 输出校验器拒绝以下报告并要求模型修正：
 - `VALIDATION_STARTED`
 - `REPORT_COMPLETED`
 - `ERROR`
+
+`ERROR` 只返回可行动的分类消息：DeepSeek HTTP/连接错误提示检查密钥、余额和网络；证据查询或模型
+输出校验错误明确提示为本地调查执行失败。两类错误都不向 HTTP 泄露异常原文、SQL、路径或堆栈。
 
 最终 `REPORT_COMPLETED` 携带不含模型协议正文的轻量 `InvestigationRecord`。页面使用 Fetch Streams
 增量解析；报告中的

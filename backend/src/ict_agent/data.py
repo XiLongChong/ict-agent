@@ -878,7 +878,6 @@ class CaseStore:
             with duckdb.connect(str(self.database_path)) as connection:
                 self._create_schema(connection)
                 connection.begin()
-                self._delete_obsolete_contract_cases(connection)
                 created_case_ids: list[str] = []
                 for case in cases:
                     row = connection.execute(
@@ -981,29 +980,6 @@ class CaseStore:
                 return created_case_ids
         except duckdb.Error as exc:
             raise DataAccessError("规则扫描结果无法写入案件数据库。") from exc
-
-    @staticmethod
-    def _delete_obsolete_contract_cases(connection: duckdb.DuckDBPyConnection) -> None:
-        """移除规则扫描遗留的合同级案件及其孤立从属记录。"""
-
-        case_ids = """
-            SELECT case_id
-            FROM investigation_cases
-            WHERE source = 'RULE_SCAN' AND case_id LIKE 'CON|%'
-        """
-        investigation_ids = f"""
-            SELECT investigation_id
-            FROM case_investigations
-            WHERE case_id IN ({case_ids})
-        """
-        connection.execute(
-            f"DELETE FROM investigation_protocols WHERE investigation_id IN ({investigation_ids})"
-        )
-        connection.execute(f"DELETE FROM case_investigations WHERE case_id IN ({case_ids})")
-        connection.execute(f"DELETE FROM case_reviews WHERE case_id IN ({case_ids})")
-        connection.execute(f"DELETE FROM risk_signals WHERE case_id IN ({case_ids})")
-        connection.execute(f"DELETE FROM feishu_notifications WHERE case_id IN ({case_ids})")
-        connection.execute(f"DELETE FROM investigation_cases WHERE case_id IN ({case_ids})")
 
     def fetch_latest_run(self) -> QueryResult:
         """返回最近一次规则扫描。"""

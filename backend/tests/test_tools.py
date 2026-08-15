@@ -128,6 +128,12 @@ def test_receivable_catalog_exposes_live_semantics_not_sql(store: DuckDBStore) -
         ("extensions", "order"),
         ("credit", "customer"),
         ("contracts", "contract"),
+        ("sales_returns", "order"),
+        ("sales_returns", "customer"),
+        ("payments", "order"),
+        ("payments", "customer"),
+        ("collections", "order"),
+        ("collections", "customer"),
     }
     assert {item.dataset for item in catalog.datasets} == {
         "receivables",
@@ -135,6 +141,9 @@ def test_receivable_catalog_exposes_live_semantics_not_sql(store: DuckDBStore) -
         "extensions",
         "credit",
         "contracts",
+        "sales_returns",
+        "payments",
+        "collections",
     }
     assert all("SQL" not in item.description for item in catalog.datasets)
     assert all(item.available for item in catalog.datasets)

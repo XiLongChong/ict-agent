@@ -4,11 +4,8 @@ from pathlib import Path
 
 from ict_agent.data import (
     CaseStore,
-    CaseWrite,
     DuckDBStore,
     ReviewWrite,
-    RuleHitWrite,
-    RuleRunWrite,
 )
 from ict_agent.rule_engine import RuleThresholds, build_rule_scan
 from ict_agent.rules import collect_rule_hits
@@ -728,61 +725,6 @@ def test_contract_signal_merges_into_customer_case_and_keeps_contract_number(
     assert customer_case.subject_context["contract_numbers"] == "X2、X3"
     assert contract_hit.metrics["contract_number"] == "X2、X3"
     assert all(not case.case_id.startswith("CON|") for case in draft.cases)
-
-
-def test_rule_scan_removes_legacy_contract_cases(store: DuckDBStore, tmp_path: Path) -> None:
-    """新规则扫描清理旧合同案件，不留下孤立的风险信号。"""
-
-    case_store = CaseStore(tmp_path / "cases.duckdb")
-    old_case = CaseWrite(
-        case_id="CON|legacy-contract",
-        investigation_profile="RECEIVABLES",
-        subject_type="CONTRACT",
-        subject_id="legacy-contract",
-        subject_label="legacy-contract",
-        subject_context={"contract_number": "legacy-contract"},
-        observation_date="2026-07-31",
-        priority="MEDIUM",
-        exposure_amount=100.0,
-        summary="旧合同案件",
-        rule_hit_count=1,
-        rule_set_version="2026.08-v2",
-        created_at="2026-08-15T00:00:00+00:00",
-    )
-    old_hit = RuleHitWrite(
-        rule_hit_id="legacy-hit",
-        case_id=old_case.case_id,
-        rule_id="CON_MARGIN_OPTIMISTIC",
-        rule_name="实估毛利严重高估",
-        rule_version="2.0.0",
-        severity="MEDIUM",
-        exposure_amount=100.0,
-        reason="旧合同信号",
-        metrics={"contract_number": "legacy-contract"},
-        threshold_source="test",
-        sources=("contracts",),
-        period="2026-07-31",
-    )
-    case_store.save_rule_scan(
-        RuleRunWrite(
-            run_id="old-run",
-            rule_set_version="2026.08-v2",
-            observation_date="2026-07-31",
-            cases_detected=1,
-            rule_hits=1,
-            receivable_cases=1,
-            inventory_cases=0,
-            created_at="2026-08-15T00:00:00+00:00",
-        ),
-        [old_case],
-        [old_hit],
-    )
-
-    current = build_rule_scan(store, _test_thresholds())
-    case_store.save_rule_scan(current.run, current.cases, current.hits)
-
-    assert case_store.fetch_case(old_case.case_id).rows == ()
-    assert case_store.fetch_signals(old_case.case_id).rows == ()
 
 
 def test_case_store_preserves_idempotency_and_review(

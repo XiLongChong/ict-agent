@@ -11,7 +11,9 @@ from ict_agent.models import (
     BusinessRecordSearchQuery,
     BusinessType,
     DatasetCapability,
+    EvidenceMetric,
     EvidenceQuery,
+    InvestigationCaseInput,
     InvestigationProfile,
     JsonScalar,
     ToolResult,
@@ -22,6 +24,35 @@ from ict_agent.semantic import SemanticCapability, capabilities_for, get_capabil
 
 class AnalysisInputError(ValueError):
     """分析参数不符合业务数据契约。"""
+
+
+def validate_investigation_context(store: DuckDBStore, case: InvestigationCaseInput) -> None:
+    """在模型启动前校验案件引用的固定快照与观察日期。"""
+
+    snapshot_id = store.get_snapshot().snapshot_id
+    if case.source_snapshot_id != snapshot_id:
+        raise AnalysisInputError(
+            "案件引用的数据快照与当前固定业务库不一致，请检查案件库和业务库配置。"
+        )
+    if case.source == "RULE_SCAN":
+        date_column = "快照时间" if case.investigation_profile == "RECEIVABLES" else "快照日期"
+        table = (
+            "ar_snapshots" if case.investigation_profile == "RECEIVABLES" else "inventory_snapshots"
+        )
+        expected = _period(_first_row(store.fetch(f'SELECT MAX("{date_column}") FROM {table}'))[0])
+        if case.observation_date != expected:
+            raise AnalysisInputError(f"规则案件观察日期与固定业务快照不一致；当前应为 {expected}。")
+    elif case.source == "PRE_TRANSACTION_SIMULATION":
+        generated_at = str(case.subject_context.get("generated_at", ""))
+        generated_date = generated_at.split("T", maxsplit=1)[0]
+        if not case.subject_context.get("simulated") or not case.subject_context.get(
+            "simulation_id"
+        ):
+            raise AnalysisInputError("事前交易案件缺少模拟订单身份。")
+        if not generated_date or case.observation_date != generated_date:
+            raise AnalysisInputError("事前交易案件观察日期与模拟订单生成日期不一致。")
+    if any(signal.period != case.observation_date for signal in case.signals):
+        raise AnalysisInputError("案件观察日期与来源信号期间不一致。")
 
 
 def _first_row(result: QueryResult) -> tuple[DatabaseScalar, ...]:
@@ -46,6 +77,44 @@ def _ratio(numerator: float, denominator: float) -> float | None:
 
 def _period(value: DatabaseScalar) -> str:
     return str(value).split("T", maxsplit=1)[0] if value is not None else ""
+
+
+def _fetch_bounded_detail(
+    store: DuckDBStore,
+    base_sql: str,
+    parameters: list[object],
+    *,
+    limit: int,
+    order_by_sql: str,
+) -> tuple[QueryResult, int]:
+    """先统计完整行数，再只读取可进入 ToolResult 的明细。"""
+
+    total_result = store.fetch(
+        f"SELECT COUNT(*) FROM ({base_sql}) AS governed_detail",
+        parameters,
+    )
+    total_rows = int(_number(_first_row(total_result)[0]))
+    if total_rows == 0:
+        return QueryResult(columns=(), rows=()), 0
+    result = store.fetch(
+        f"SELECT * FROM ({base_sql}) AS governed_detail ORDER BY {order_by_sql} LIMIT ?",
+        [*parameters, limit],
+    )
+    return result, total_rows
+
+
+def _bounded_order_clause(
+    sort_by: EvidenceMetric | None,
+    sort_direction: str,
+    columns: dict[EvidenceMetric, str],
+    default: str,
+) -> str:
+    """把已校验语义指标映射为固定 SQL 排序表达式。"""
+
+    if sort_by is None:
+        return default
+    direction = "ASC" if sort_direction == "asc" else "DESC"
+    return f"{columns[sort_by]} {direction}"
 
 
 def _format_money(value: float) -> str:
@@ -1317,7 +1386,6 @@ def get_current_receivable_details(store: DuckDBStore, customer_id: str) -> Tool
         GROUP BY "快照时间", "合同号", "销售订单号", "物料编码",
                  "最终承诺还款日期", "是否展期"
         ORDER BY overdue_60_amount DESC, overdue_amount DESC, ar_amount DESC
-        LIMIT 50
         """,
         [normalized_id],
     )
@@ -1355,7 +1423,7 @@ def get_current_receivable_details(store: DuckDBStore, customer_id: str) -> Tool
         sources=["ar_snapshots"],
         period=period,
         metric_definitions=["仅取全表最新月末快照，按合同、订单和物料聚合。"],
-        warnings=["只返回风险金额排序前 50 行，不能代表全部明细行数。"],
+        warnings=[],
     )
 
 
@@ -1407,7 +1475,6 @@ def get_customer_extension_evidence(store: DuckDBStore, customer_id: str) -> Too
         )
         WHERE e.action_count IS NOT NULL OR l.overdue_amount > 0
         ORDER BY matched_extension_actions DESC, l.overdue_amount DESC
-        LIMIT 50
         """,
         [normalized_id, normalized_id],
     )
@@ -1497,36 +1564,69 @@ def get_customer_credit_context(store: DuckDBStore, customer_id: str) -> ToolRes
 
 
 def get_customer_contract_context(store: DuckDBStore, customer_id: str) -> ToolResult:
-    """返回客户当前应收所关联正式增值合同的闭环证据。"""
+    """返回客户全部可唯一关联正式合同的经济性与闭环证据。"""
 
     normalized_id = customer_id.strip().upper()
     if not re.fullmatch(r"C\d{3}", normalized_id):
         raise AnalysisInputError("客户编号必须采用 C015 这样的 C 加三位数字格式。")
     result = store.fetch(
         """
-        WITH customer_contracts AS (
-            SELECT DISTINCT "合同号" AS contract_number
-            FROM ar_snapshots
-            WHERE "客户编号" = ?
-              AND "快照时间" = (SELECT MAX("快照时间") FROM ar_snapshots)
-              AND NULLIF("合同号", '') IS NOT NULL
-        ), contract_base AS (
+        WITH contract_base AS (
             SELECT
                 c."合同编号" AS contract_number,
+                MAX(c."客户名称") AS customer_name,
                 MAX(c."合同状态") AS contract_status,
                 SUM(c."销售金额") AS contract_amount,
                 SUM(c."开票金额1") AS invoiced_amount,
-                AVG(c."实际净毛利率_不含税") AS actual_margin_rate
+                SUM(c."销售金额" * c."实估毛利率_不含税")
+                    / NULLIF(SUM(c."销售金额"), 0) AS estimated_margin_rate,
+                SUM(c."销售金额" * c."实际净毛利率_不含税")
+                    / NULLIF(SUM(c."销售金额"), 0) AS actual_margin_rate,
+                SUM(c."销售金额" * c."实际净毛利率_不含税") AS actual_gross_profit,
+                MAX(c."合同文本账期") AS contract_term_days,
+                MAX(c."实际账期") AS actual_term_days,
+                MAX(c."实际账期" - c."合同文本账期") AS term_overage_days
             FROM contracts c
-            JOIN customer_contracts cc ON cc.contract_number = c."合同编号"
             GROUP BY c."合同编号"
+        ), contract_links AS (
+            SELECT "合同号" AS contract_number, "客户编号" AS customer_id FROM sales
+            WHERE NULLIF("合同号", '') IS NOT NULL AND NULLIF("客户编号", '') IS NOT NULL
+            UNION ALL
+            SELECT "合同号", "客户编号" FROM payments
+            WHERE NULLIF("合同号", '') IS NOT NULL AND NULLIF("客户编号", '') IS NOT NULL
+            UNION ALL
+            SELECT "合同号", "客户编号" FROM ar_snapshots
+            WHERE NULLIF("合同号", '') IS NOT NULL AND NULLIF("客户编号", '') IS NOT NULL
+        ), link_summary AS (
+            SELECT contract_number,
+                   CASE WHEN COUNT(DISTINCT customer_id) = 1 THEN MAX(customer_id) END customer_id,
+                   COUNT(DISTINCT customer_id) AS customer_count
+            FROM contract_links GROUP BY contract_number
+        ), customer_names AS (
+            SELECT "客户名称" customer_name,
+                   CASE WHEN COUNT(DISTINCT "客户编号_中台") = 1
+                        THEN MAX("客户编号_中台") END customer_id
+            FROM customer_credit GROUP BY "客户名称"
+        ), resolved AS (
+            SELECT b.*,
+                   CASE WHEN COALESCE(l.customer_count, 0) > 1 THEN NULL
+                        ELSE COALESCE(l.customer_id, n.customer_id) END customer_id
+            FROM contract_base b
+            LEFT JOIN link_summary l USING (contract_number)
+            LEFT JOIN customer_names n USING (customer_name)
         )
         SELECT
             c.contract_number,
             c.contract_status,
             c.contract_amount,
             c.invoiced_amount,
+            c.estimated_margin_rate,
             c.actual_margin_rate,
+            c.estimated_margin_rate - c.actual_margin_rate AS margin_gap,
+            c.actual_gross_profit,
+            c.contract_term_days,
+            c.actual_term_days,
+            c.term_overage_days,
             COALESCE((SELECT SUM("销售金额_折扣后_含税") FROM sales s
                       WHERE s."合同号" = c.contract_number), 0) AS shipped_amount,
             COALESCE((SELECT SUM("回款金额") FROM payments p
@@ -1539,21 +1639,27 @@ def get_customer_contract_context(store: DuckDBStore, customer_id: str) -> ToolR
                       WHERE a."合同号" = c.contract_number
                         AND a."快照时间" = (SELECT MAX("快照时间") FROM ar_snapshots)), 0)
                 AS latest_overdue_amount
-        FROM contract_base c
+        FROM resolved c
+        WHERE c.customer_id = ?
         ORDER BY latest_overdue_amount DESC, contract_amount DESC
-        LIMIT 30
         """,
         [normalized_id],
     )
     rows = [list(row) for row in result.rows]
     return ToolResult(
-        summary=f"{normalized_id} 当前应收中可关联 {len(rows)} 个正式增值合同。",
+        summary=f"{normalized_id} 可唯一关联 {len(rows)} 个正式增值合同。",
         columns=[
             "合同号",
             "合同状态",
             "签约金额_元",
             "开票金额_元",
+            "实估毛利率",
             "实际净毛利率",
+            "实估实际毛利率差",
+            "实际净毛利_元",
+            "合同文本账期_天",
+            "实际账期_天",
+            "账期超限_天",
             "出库金额_元",
             "回款金额_元",
             "最新应收_元",
@@ -1561,9 +1667,422 @@ def get_customer_contract_context(store: DuckDBStore, customer_id: str) -> ToolR
         ],
         rows=rows,
         sources=["contracts", "sales", "payments", "ar_snapshots"],
-        period="截至最新应收快照",
-        metric_definitions=["只有正式合同号命中签约表的项目类业务才进入本结果。"],
+        period="历史全量至固定数据快照",
+        metric_definitions=[
+            "合同优先按合同号唯一关联客户，无法交易关联时仅使用唯一客户名称映射。",
+            "实估与实际毛利率均按合同销售金额加权，账期超限为实际账期减合同文本账期。",
+        ],
         warnings=["数据没有项目验收记录，合同闭环只能作为间接证据。"],
+    )
+
+
+def get_customer_return_evidence(
+    store: DuckDBStore,
+    customer_id: str,
+    *,
+    limit: int = 200,
+    sort_by: EvidenceMetric | None = None,
+    sort_direction: str = "desc",
+) -> ToolResult:
+    """返回客户订单级销售与退货证据，保留退货负值口径。"""
+
+    normalized_id = customer_id.strip().upper()
+    if not re.fullmatch(r"C\d{3}", normalized_id):
+        raise AnalysisInputError("客户编号必须采用 C015 这样的 C 加三位数字格式。")
+    base_sql = """
+        SELECT COALESCE("合同号", ''), "销售订单号",
+               MIN("出库日期"), MAX("出库日期"),
+               SUM("销售金额_折扣后_含税") AS net_sales_amount,
+               -SUM(CASE WHEN "销售金额_折扣后_含税" < 0
+                         THEN "销售金额_折扣后_含税" ELSE 0 END) AS return_amount,
+               CASE WHEN SUM("销售金额_折扣后_含税") <= 0 THEN NULL
+                    ELSE -SUM(CASE WHEN "销售金额_折扣后_含税" < 0
+                                   THEN "销售金额_折扣后_含税" ELSE 0 END)
+                         / SUM("销售金额_折扣后_含税") END AS return_ratio
+        FROM sales WHERE "客户编号" = ?
+        GROUP BY 1, 2
+        """
+    order_by = _bounded_order_clause(
+        sort_by,
+        sort_direction,
+        {
+            "gross_sales_amount": "net_sales_amount",
+            "return_amount": "return_amount",
+            "return_ratio": "return_ratio",
+        },
+        "return_amount DESC, net_sales_amount DESC",
+    )
+    result, total_rows = _fetch_bounded_detail(
+        store,
+        base_sql,
+        [normalized_id],
+        limit=limit,
+        order_by_sql=order_by,
+    )
+    rows = [
+        [row[0], row[1], _period(row[2]), _period(row[3]), row[4], row[5], row[6]]
+        for row in result.rows
+    ]
+    period_row = _first_row(
+        store.fetch(
+            'SELECT MIN("出库日期"), MAX("出库日期") FROM sales WHERE "客户编号" = ?',
+            [normalized_id],
+        )
+    )
+    period = (
+        f"{_period(period_row[0])} 至 {_period(period_row[1])}"
+        if period_row[0] is not None
+        else "无销售记录"
+    )
+    return ToolResult(
+        summary=f"{normalized_id} 共找到 {total_rows} 个销售订单的退货证据。",
+        columns=[
+            "合同号",
+            "销售订单号",
+            "最早出库日",
+            "最近出库日",
+            "销售净额_元",
+            "退货金额_元",
+            "退货占比",
+        ],
+        rows=rows,
+        sources=["sales"],
+        period=period,
+        metric_definitions=[
+            "销售额沿用规则的退货后净额；退货金额把原始负销售额取反后展示，占比仅在净销售额大于0时计算。"
+        ],
+        total_rows=total_rows,
+        is_truncated=total_rows > len(rows),
+    )
+
+
+def get_customer_return_summary(store: DuckDBStore, customer_id: str) -> ToolResult:
+    """返回与异常退货规则完全一致的客户级汇总。"""
+
+    normalized_id = customer_id.strip().upper()
+    if not re.fullmatch(r"C\d{3}", normalized_id):
+        raise AnalysisInputError("客户编号必须采用 C015 这样的 C 加三位数字格式。")
+    result = store.fetch(
+        """
+        SELECT SUM("销售金额_折扣后_含税") AS net_sales,
+               -SUM(CASE WHEN "销售金额_折扣后_含税" < 0
+                         THEN "销售金额_折扣后_含税" ELSE 0 END) AS return_amount,
+               CASE WHEN SUM("销售金额_折扣后_含税") <= 0 THEN NULL
+                    ELSE -SUM(CASE WHEN "销售金额_折扣后_含税" < 0
+                                   THEN "销售金额_折扣后_含税" ELSE 0 END)
+                         / SUM("销售金额_折扣后_含税") END AS return_ratio,
+               MIN("出库日期"), MAX("出库日期")
+        FROM sales WHERE "客户编号" = ?
+        """,
+        [normalized_id],
+    )
+    row = _first_row(result)
+    rows = [[normalized_id, row[0], row[1], row[2]]] if row[0] is not None else []
+    period = f"{_period(row[3])} 至 {_period(row[4])}" if row[3] is not None else "无销售记录"
+    return ToolResult(
+        summary=f"{normalized_id} 的客户级销售与退货汇总已完整返回。",
+        columns=["客户编号", "销售净额_元", "退货金额_元", "退货占比"],
+        rows=rows,
+        sources=["sales"],
+        period=period,
+        metric_definitions=["与规则一致：销售分母为包含退货负值的客户历史销售净额。"],
+    )
+
+
+def get_customer_payment_risk_evidence(
+    store: DuckDBStore,
+    customer_id: str,
+    *,
+    limit: int = 200,
+    sort_by: EvidenceMetric | None = None,
+    sort_direction: str = "desc",
+) -> ToolResult:
+    """返回客户订单级负回款、超长账龄与罚息证据。"""
+
+    normalized_id = customer_id.strip().upper()
+    if not re.fullmatch(r"C\d{3}", normalized_id):
+        raise AnalysisInputError("客户编号必须采用 C015 这样的 C 加三位数字格式。")
+    base_sql = """
+        SELECT COALESCE("合同号", ''), "销售订单号",
+               MIN("回款日期"), MAX("回款日期"),
+               SUM("回款金额") AS net_payment_amount,
+               SUM(CASE WHEN "回款金额" > 0 THEN "回款金额" ELSE 0 END)
+                   AS positive_payment_amount,
+               -SUM(CASE WHEN "回款金额" < 0 THEN "回款金额" ELSE 0 END)
+                   AS negative_payment_amount,
+               CASE WHEN SUM("回款金额") <= 0 THEN NULL
+                    ELSE -SUM(CASE WHEN "回款金额" < 0 THEN "回款金额" ELSE 0 END)
+                         / SUM("回款金额") END AS negative_payment_ratio,
+               SUM(CASE WHEN "回款账龄" > 365 THEN "回款金额" ELSE 0 END)
+                   AS over_365_payment_amount,
+               SUM("超期利息金额") AS overdue_interest,
+               MAX("超期天数") AS max_overdue_days,
+               MAX("回款账龄") AS max_payment_age_days
+        FROM payments WHERE "客户编号" = ?
+        GROUP BY 1, 2
+        """
+    order_by = _bounded_order_clause(
+        sort_by,
+        sort_direction,
+        {
+            "payment_amount": "net_payment_amount",
+            "positive_payment_amount": "positive_payment_amount",
+            "negative_payment_amount": "negative_payment_amount",
+            "negative_payment_ratio": "negative_payment_ratio",
+            "over_365_payment_amount": "over_365_payment_amount",
+            "overdue_interest": "overdue_interest",
+            "max_payment_overdue_days": "max_overdue_days",
+            "max_payment_age_days": "max_payment_age_days",
+        },
+        "negative_payment_amount DESC, over_365_payment_amount DESC, overdue_interest DESC",
+    )
+    result, total_rows = _fetch_bounded_detail(
+        store,
+        base_sql,
+        [normalized_id],
+        limit=limit,
+        order_by_sql=order_by,
+    )
+    rows = [[row[0], row[1], _period(row[2]), _period(row[3]), *row[4:]] for row in result.rows]
+    period_row = _first_row(
+        store.fetch(
+            'SELECT MIN("回款日期"), MAX("回款日期") FROM payments WHERE "客户编号" = ?',
+            [normalized_id],
+        )
+    )
+    period = (
+        f"{_period(period_row[0])} 至 {_period(period_row[1])}"
+        if period_row[0] is not None
+        else "无回款记录"
+    )
+    return ToolResult(
+        summary=f"{normalized_id} 共找到 {total_rows} 个订单的回款风险证据。",
+        columns=[
+            "合同号",
+            "销售订单号",
+            "最早回款日",
+            "最近回款日",
+            "净回款额_元",
+            "正向回款额_元",
+            "负回款金额_元",
+            "负回款占比",
+            "365天以上回款额_元",
+            "超期利息_元",
+            "最大超期天数",
+            "最大回款账龄_天",
+        ],
+        rows=rows,
+        sources=["payments"],
+        period=period,
+        metric_definitions=[
+            "负回款按原始负金额取反后展示；365天以上回款严格使用回款账龄大于365天。"
+        ],
+        warnings=["负回款只能证明业务表存在冲销，不能推断银行到账或财务核销状态。"],
+        total_rows=total_rows,
+        is_truncated=total_rows > len(rows),
+    )
+
+
+def get_customer_payment_risk_summary(store: DuckDBStore, customer_id: str) -> ToolResult:
+    """返回与回款风险规则一致的完整客户级汇总。"""
+
+    normalized_id = customer_id.strip().upper()
+    if not re.fullmatch(r"C\d{3}", normalized_id):
+        raise AnalysisInputError("客户编号必须采用 C015 这样的 C 加三位数字格式。")
+    result = store.fetch(
+        """
+        SELECT SUM("回款金额"),
+               SUM(CASE WHEN "回款金额" > 0 THEN "回款金额" ELSE 0 END),
+               -SUM(CASE WHEN "回款金额" < 0 THEN "回款金额" ELSE 0 END),
+               CASE WHEN SUM("回款金额") <= 0 THEN NULL
+                    ELSE -SUM(CASE WHEN "回款金额" < 0 THEN "回款金额" ELSE 0 END)
+                         / SUM("回款金额") END,
+               SUM(CASE WHEN "回款账龄" > 365 THEN "回款金额" ELSE 0 END),
+               SUM("超期利息金额"), MAX("超期天数"), MAX("回款账龄"),
+               MIN("回款日期"), MAX("回款日期")
+        FROM payments WHERE "客户编号" = ?
+        """,
+        [normalized_id],
+    )
+    row = _first_row(result)
+    rows = [[normalized_id, *row[:8]]] if row[0] is not None else []
+    period = f"{_period(row[8])} 至 {_period(row[9])}" if row[8] is not None else "无回款记录"
+    return ToolResult(
+        summary=f"{normalized_id} 的客户级回款风险汇总已完整返回。",
+        columns=[
+            "客户编号",
+            "净回款额_元",
+            "正向回款额_元",
+            "负回款金额_元",
+            "负回款占比",
+            "365天以上回款额_元",
+            "超期利息_元",
+            "最大超期天数",
+            "最大回款账龄_天",
+        ],
+        rows=rows,
+        sources=["payments"],
+        period=period,
+        metric_definitions=["负回款、365天以上账龄和比例均沿用现行规则口径。"],
+    )
+
+
+def get_customer_collection_evidence(
+    store: DuckDBStore,
+    customer_id: str,
+    *,
+    limit: int = 200,
+    sort_by: EvidenceMetric | None = None,
+    sort_direction: str = "desc",
+) -> ToolResult:
+    """按冻结规则核对有正销售但不存在正向回款的订单。"""
+
+    normalized_id = customer_id.strip().upper()
+    if not re.fullmatch(r"C\d{3}", normalized_id):
+        raise AnalysisInputError("客户编号必须采用 C015 这样的 C 加三位数字格式。")
+    base_sql = """
+        WITH observation AS (SELECT MAX("快照时间") latest_date FROM ar_snapshots),
+        positive_sales AS (
+            SELECT COALESCE("合同号", '') contract_number, "销售订单号" order_id,
+                   MAX("出库日期") ship_date,
+                   SUM(CASE WHEN "销售金额_折扣后_含税" > 0
+                            THEN "销售金额_折扣后_含税" ELSE 0 END) sales_amount
+            FROM sales WHERE "客户编号" = ? GROUP BY 1, 2
+        ), positive_payments AS (
+            SELECT "销售订单号" order_id,
+                   SUM(CASE WHEN "回款金额" > 0 THEN "回款金额" ELSE 0 END) payment_amount
+            FROM payments WHERE "客户编号" = ? GROUP BY 1
+        )
+        SELECT s.contract_number, s.order_id, s.ship_date,
+               CASE WHEN COALESCE(p.payment_amount, 0) > 0 THEN 'Y' ELSE 'N' END
+                   AS has_positive_payment,
+               s.sales_amount, COALESCE(p.payment_amount, 0) AS positive_payment_amount,
+               CASE WHEN COALESCE(p.payment_amount, 0) > 0 THEN 0 ELSE s.sales_amount END
+                   AS unpaid_amount,
+               date_diff('day', s.ship_date, o.latest_date) AS unpaid_days
+        FROM positive_sales s
+        CROSS JOIN observation o
+        LEFT JOIN positive_payments p USING (order_id)
+        WHERE s.sales_amount > 0
+        """
+    order_by = _bounded_order_clause(
+        sort_by,
+        sort_direction,
+        {
+            "sales_amount": "sales_amount",
+            "payment_amount": "positive_payment_amount",
+            "unpaid_amount": "unpaid_amount",
+            "max_unpaid_days": "unpaid_days",
+        },
+        "unpaid_amount DESC, unpaid_days DESC",
+    )
+    result, total_rows = _fetch_bounded_detail(
+        store,
+        base_sql,
+        [normalized_id, normalized_id],
+        limit=limit,
+        order_by_sql=order_by,
+    )
+    rows = [[row[0], row[1], _period(row[2]), *row[3:]] for row in result.rows]
+    return ToolResult(
+        summary=f"{normalized_id} 共核对 {total_rows} 个正向销售订单的正向回款状态。",
+        columns=[
+            "合同号",
+            "销售订单号",
+            "最近出库日",
+            "是否存在正向回款",
+            "正向销售额_元",
+            "正向回款额_元",
+            "未回款销售额_元",
+            "未回款天数",
+        ],
+        rows=rows,
+        sources=["sales", "payments", "ar_snapshots"],
+        period="历史全量至最新应收快照",
+        metric_definitions=["沿用规则口径：订单存在任意正向回款即视为已回款；未做发票级回款分摊。"],
+        total_rows=total_rows,
+        is_truncated=total_rows > len(rows),
+    )
+
+
+def get_customer_collection_summary(store: DuckDBStore, customer_id: str) -> ToolResult:
+    """返回长期未回款规则使用的完整客户级汇总。"""
+
+    normalized_id = customer_id.strip().upper()
+    if not re.fullmatch(r"C\d{3}", normalized_id):
+        raise AnalysisInputError("客户编号必须采用 C015 这样的 C 加三位数字格式。")
+    result = store.fetch(
+        """
+        WITH observation AS (SELECT MAX("快照时间") latest_date FROM ar_snapshots),
+        positive_sales AS (
+            SELECT "销售订单号" order_id, MAX("出库日期") ship_date,
+                   SUM(CASE WHEN "销售金额_折扣后_含税" > 0
+                            THEN "销售金额_折扣后_含税" ELSE 0 END) sales_amount
+            FROM sales WHERE "客户编号" = ? GROUP BY 1
+        ), positive_payments AS (
+            SELECT "销售订单号" order_id,
+                   SUM(CASE WHEN "回款金额" > 0 THEN "回款金额" ELSE 0 END) payment_amount
+            FROM payments WHERE "客户编号" = ? GROUP BY 1
+        )
+        SELECT SUM(s.sales_amount), COALESCE(SUM(p.payment_amount), 0),
+               SUM(CASE WHEN COALESCE(p.payment_amount, 0) > 0 THEN 0 ELSE s.sales_amount END),
+               MAX(CASE WHEN COALESCE(p.payment_amount, 0) > 0 THEN 0
+                        ELSE date_diff('day', s.ship_date, o.latest_date) END)
+        FROM positive_sales s CROSS JOIN observation o
+        LEFT JOIN positive_payments p USING (order_id)
+        WHERE s.sales_amount > 0
+        """,
+        [normalized_id, normalized_id],
+    )
+    row = _first_row(result)
+    rows = [[normalized_id, *row]] if row[0] is not None else []
+    return ToolResult(
+        summary=f"{normalized_id} 的长期未回款客户级汇总已完整返回。",
+        columns=[
+            "客户编号",
+            "正向销售额_元",
+            "正向回款额_元",
+            "未回款销售额_元",
+            "最大未回款天数",
+        ],
+        rows=rows,
+        sources=["sales", "payments", "ar_snapshots"],
+        period="历史全量至最新应收快照",
+        metric_definitions=["订单存在任意正向回款即视为已回款，与现行规则保持一致。"],
+    )
+
+
+def get_material_overdue_inventory_evidence(
+    store: DuckDBStore, material_code: str, inventory_org: str
+) -> ToolResult:
+    """返回物料与库存组织最新季末的超期库存记录。"""
+
+    material = material_code.strip()
+    org = inventory_org.strip()
+    if not material or len(material) > 200 or not org or len(org) > 200:
+        raise AnalysisInputError("物料编码和库存组织不能为空且不能超过 200 个字符。")
+    result = store.fetch(
+        """
+        SELECT "是否超期", "库龄",
+               SUM("含税总价"), SUM("数量"), MAX("超期天数"), COUNT(*)
+        FROM inventory_snapshots
+        WHERE "快照日期" = (SELECT MAX("快照日期") FROM inventory_snapshots)
+          AND "物料编码" = ? AND "库存组织名称" = ?
+          AND COALESCE("是否超期", '') IN ('Y', '是', '1')
+        GROUP BY "是否超期", "库龄"
+        ORDER BY MAX("超期天数") DESC, SUM("含税总价") DESC
+        """,
+        [material, org],
+    )
+    period = _period(_first_row(store.fetch('SELECT MAX("快照日期") FROM inventory_snapshots'))[0])
+    rows = [list(row) for row in result.rows]
+    return ToolResult(
+        summary=f"物料 {material} 截至 {period} 返回 {len(rows)} 组超期库存记录。",
+        columns=["是否超期", "库龄天数", "库存金额_元", "数量", "超期天数", "超期记录数"],
+        rows=rows,
+        sources=["inventory_snapshots"],
+        period=period,
+        metric_definitions=["只取全表最新季末且是否超期为Y、是或1的记录。"],
     )
 
 
@@ -1628,8 +2147,17 @@ def _project_tool_result(
             key=lambda row: (row[sort_index] is None, row[sort_index]),
             reverse=query.sort_direction == "desc",
         )
+    total_rows = max(result.total_rows, len(rows))
     rows = rows[: query.limit]
-    return result.model_copy(update={"columns": selected_columns, "rows": rows})
+    return result.model_copy(
+        update={
+            "columns": selected_columns,
+            "rows": rows,
+            "total_rows": total_rows,
+            "returned_rows": len(rows),
+            "is_truncated": total_rows > len(rows),
+        }
+    )
 
 
 def _credit_query_result(
@@ -1641,7 +2169,15 @@ def _credit_query_result(
     values = {str(row[0]): row[1] for row in result.rows}
     columns = ["客户编号", *(capability.output_metric_columns[item] for item in query.metrics)]
     row = [customer_id, *(values[column] for column in columns[1:])]
-    return result.model_copy(update={"columns": columns, "rows": [row]})
+    return result.model_copy(
+        update={
+            "columns": columns,
+            "rows": [row],
+            "total_rows": 1,
+            "returned_rows": 1,
+            "is_truncated": False,
+        }
+    )
 
 
 def query_business_evidence(
@@ -1698,6 +2234,36 @@ def query_business_evidence(
         )
     elif key == ("contracts", "contract"):
         result = get_customer_contract_context(store, normalized_id)
+    elif key == ("sales_returns", "customer"):
+        result = get_customer_return_summary(store, normalized_id)
+    elif key == ("sales_returns", "order"):
+        result = get_customer_return_evidence(
+            store,
+            normalized_id,
+            limit=query.limit,
+            sort_by=query.sort_by,
+            sort_direction=query.sort_direction,
+        )
+    elif key == ("payments", "customer"):
+        result = get_customer_payment_risk_summary(store, normalized_id)
+    elif key == ("payments", "order"):
+        result = get_customer_payment_risk_evidence(
+            store,
+            normalized_id,
+            limit=query.limit,
+            sort_by=query.sort_by,
+            sort_direction=query.sort_direction,
+        )
+    elif key == ("collections", "customer"):
+        result = get_customer_collection_summary(store, normalized_id)
+    elif key == ("collections", "order"):
+        result = get_customer_collection_evidence(
+            store,
+            normalized_id,
+            limit=query.limit,
+            sort_by=query.sort_by,
+            sort_direction=query.sort_direction,
+        )
     elif key == ("inventory", "quarter"):
         result = get_material_inventory_history(store, material, org)
         result = result.model_copy(
@@ -1705,6 +2271,8 @@ def query_business_evidence(
         )
     elif key == ("inventory", "age_bucket"):
         result = get_material_inventory_age_profile(store, material, org)
+    elif key == ("inventory", "inventory_record"):
+        result = get_material_overdue_inventory_evidence(store, material, org)
     elif key == ("sales", "month"):
         result = get_material_sales_context(
             store, material, org, months=_WINDOW_MONTHS[query.time_window]
@@ -1745,11 +2313,15 @@ def discover_evidence_capabilities(
                 business_type=business_type,
             )
             available = True
-            returned_rows = len(result.rows)
+            total_rows = result.total_rows
+            returned_rows = result.returned_rows
+            is_truncated = result.is_truncated
             period = result.period
         except AnalysisInputError:
             available = False
+            total_rows = 0
             returned_rows = 0
+            is_truncated = False
             period = None
         datasets.append(
             DatasetCapability(
@@ -1759,7 +2331,9 @@ def discover_evidence_capabilities(
                 metrics=list(capability.metrics),
                 time_windows=list(capability.time_windows),
                 available=available,
+                total_rows=total_rows,
                 returned_rows=returned_rows,
+                is_truncated=is_truncated,
                 period=period,
                 limitations=list(capability.limitations),
             )
@@ -1779,9 +2353,8 @@ def discover_evidence_capabilities(
         observation_date=observation_date,
         datasets=datasets,
         global_rules=[
-            "Each available value comes from a live probe of the current data snapshot; "
-            "returned_rows "
-            "does not represent the total record count.",
+            "Each live probe reports total_rows, returned_rows, and whether the result is "
+            "truncated.",
             "Every search and query is automatically restricted to the current case entity.",
             "Amounts, dates, ratios, and states must cite an evidence_id returned by get_evidence.",
             "Never submit SQL, file paths, regular expressions, or code.",

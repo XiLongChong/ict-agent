@@ -11,7 +11,9 @@ from datetime import UTC, datetime
 from typing import Literal, cast
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+import httpx
 from pydantic import JsonValue
+from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.models import Model
 
 from ict_agent.admission import AdmissionFunnel
@@ -88,9 +90,27 @@ from ict_agent.tools import (
     get_inventory_health,
     get_latest_ar_summary,
     list_customer_business_segments,
+    validate_investigation_context,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _investigation_failure_message(error: Exception) -> str:
+    """区分模型服务不可用与本地调查执行失败，不向页面泄露异常细节。"""
+
+    chain: list[BaseException] = []
+    current: BaseException | None = error
+    while current is not None and current not in chain:
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    if any(
+        isinstance(item, ModelAPIError | httpx.HTTPError | TimeoutError | ConnectionError)
+        for item in chain
+    ):
+        return "DeepSeek 连接失败，请检查 API Key、账户余额和网络后重试。"
+    return "调查因本地证据查询或模型输出校验失败而中断，请查看服务日志后重试。"
+
 
 _CURRENT_PROTOCOL_SCHEMA_VERSION = "4.0"
 _CURRENT_PROTOCOL_API_FORMAT = "openai_chat_completions"
@@ -661,7 +681,15 @@ def prepare_investigation(
                 request_id,
                 409,
             )
-        DuckDBStore(runtime_settings.database_path).ensure_ready()
+        business_store = DuckDBStore(runtime_settings.database_path)
+        business_store.ensure_ready()
+        try:
+            validate_investigation_context(
+                business_store,
+                build_investigation_case_input(case),
+            )
+        except AnalysisInputError as exc:
+            raise ServiceError(str(exc), request_id, 409) from exc
         store = CaseStore(runtime_settings.case_database_path)
         if not store.transition_case(case_id, "PENDING_AGENT_REVIEW", "AGENT_REVIEWING"):
             raise ServiceError("该案件正在调查，请等待本轮结束后重试。", request_id, 409)
@@ -763,13 +791,13 @@ async def stream_prepared_investigation(
                 ),
                 record=record,
             )
-    except Exception:
+    except Exception as exc:
         logger.exception("调查事件流执行失败：case_id=%s", prepared.case.case_id)
         sequence += 1
         yield InvestigationStreamEvent(
             sequence=sequence,
             event_type="ERROR",
-            message="DeepSeek 调查未能开始，请检查 API Key、账户余额和网络后重试。",
+            message=_investigation_failure_message(exc),
         )
     finally:
         if not report_saved:

@@ -346,6 +346,10 @@ function completenessLabel(value) {
                 </div>
                 <p class="mt-1 text-sm leading-6 text-muted">{{ item.summary }}</p>
                 <p class="mt-1 font-mono text-sm text-muted">{{ queryArguments(item) }}</p>
+                <p class="mt-1 text-sm text-muted">
+                  共 {{ item.total_rows ?? item.rows?.length ?? 0 }} 行，实际返回
+                  {{ item.returned_rows ?? item.rows?.length ?? 0 }} 行<span v-if="item.is_truncated">，结果已截断</span><span v-else>，结果完整</span>
+                </p>
                 <code class="mt-1 block font-mono text-sm text-muted">证据编号：{{ item.evidence_id }}</code>
               </article>
             </div>

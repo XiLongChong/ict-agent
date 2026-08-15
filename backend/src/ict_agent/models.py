@@ -14,7 +14,7 @@ CaseSource = Literal[
     "PRE_TRANSACTION_SIMULATION",
     "MANUAL",
 ]
-SubjectType = Literal["CUSTOMER", "CONTRACT", "MATERIAL_INVENTORY_ORG"]
+SubjectType = Literal["CUSTOMER", "MATERIAL_INVENTORY_ORG"]
 InvestigationProfile = Literal["RECEIVABLES", "INVENTORY", "PRE_TRANSACTION"]
 CaseStatus = Literal[
     "PENDING_AGENT_REVIEW",
@@ -43,6 +43,9 @@ EvidenceDataset = Literal[
     "extensions",
     "credit",
     "contracts",
+    "sales_returns",
+    "payments",
+    "collections",
     "inventory",
     "sales",
 ]
@@ -54,6 +57,7 @@ EvidenceGrain = Literal[
     "order",
     "quarter",
     "age_bucket",
+    "inventory_record",
 ]
 EvidenceTimeWindow = Literal["latest", "last_3_months", "last_6_months", "last_12_months", "all"]
 EvidenceSortDirection = Literal["asc", "desc"]
@@ -78,6 +82,7 @@ EvidenceMetric = Literal[
     "gross_profit",
     "overdue_interest",
     "max_payment_overdue_days",
+    "max_payment_age_days",
     "matched_extension_actions",
     "credit_limit",
     "list_status",
@@ -98,6 +103,21 @@ EvidenceMetric = Literal[
     "net_quantity",
     "return_amount",
     "gross_margin",
+    "gross_sales_amount",
+    "return_ratio",
+    "positive_payment_amount",
+    "negative_payment_amount",
+    "negative_payment_ratio",
+    "over_365_payment_amount",
+    "unpaid_amount",
+    "max_unpaid_days",
+    "estimated_margin_rate",
+    "margin_gap",
+    "contract_term_days",
+    "actual_term_days",
+    "term_overage_days",
+    "max_inventory_overdue_days",
+    "overdue_inventory_rows",
 ]
 BusinessRecordType = Literal["customer", "contract", "order", "material"]
 InvestigationTraceType = Literal[
@@ -126,6 +146,9 @@ class ToolResult(BaseModel):
     metric_definitions: list[str] = []
     warnings: list[str] = []
     evidence_id: str | None = None
+    total_rows: Annotated[int, Field(ge=0)] = 0
+    returned_rows: Annotated[int, Field(ge=0)] = 0
+    is_truncated: bool = False
 
     @model_validator(mode="after")
     def validate_row_width(self) -> ToolResult:
@@ -134,6 +157,13 @@ class ToolResult(BaseModel):
         expected = len(self.columns)
         if any(len(row) != expected for row in self.rows):
             raise ValueError("工具结果的每行列数必须与 columns 一致")
+        returned_rows = len(self.rows)
+        total_rows = self.total_rows or returned_rows
+        if total_rows < returned_rows:
+            raise ValueError("total_rows 不能小于实际返回行数")
+        object.__setattr__(self, "returned_rows", returned_rows)
+        object.__setattr__(self, "total_rows", total_rows)
+        object.__setattr__(self, "is_truncated", total_rows > returned_rows)
         return self
 
 
@@ -150,6 +180,9 @@ class Evidence(BaseModel):
     rows: list[list[JsonScalar]] = []
     metric_definitions: list[str] = []
     warnings: list[str] = []
+    total_rows: int = 0
+    returned_rows: int = 0
+    is_truncated: bool = False
 
 
 class DatasetCapability(BaseModel):
@@ -161,9 +194,22 @@ class DatasetCapability(BaseModel):
     metrics: list[EvidenceMetric]
     time_windows: list[EvidenceTimeWindow]
     available: bool
+    total_rows: int = 0
     returned_rows: int = 0
+    is_truncated: bool = False
     period: str | None = None
     limitations: list[str] = []
+
+
+class EvidenceRequirementView(BaseModel):
+    """当前案件必须满足的一项可执行证据要求。"""
+
+    dataset: EvidenceDataset
+    grain: EvidenceGrain
+    metrics: list[EvidenceMetric]
+    minimum_time_window: EvidenceTimeWindow
+    require_complete_result: bool
+    reason: str
 
 
 class BusinessDataCatalog(BaseModel):
@@ -173,6 +219,7 @@ class BusinessDataCatalog(BaseModel):
     subject_scope: str
     observation_date: str
     datasets: list[DatasetCapability]
+    required_evidence: list[EvidenceRequirementView] = []
     global_rules: list[str]
 
 
@@ -181,7 +228,7 @@ class EvidenceQuery(BaseModel):
 
     dataset: EvidenceDataset
     grain: EvidenceGrain
-    metrics: Annotated[list[EvidenceMetric], Field(min_length=1, max_length=12)]
+    metrics: Annotated[list[EvidenceMetric], Field(min_length=1, max_length=20)]
     time_window: EvidenceTimeWindow = "latest"
     sort_by: EvidenceMetric | None = None
     sort_direction: EvidenceSortDirection = "desc"

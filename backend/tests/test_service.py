@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import AsyncIterator
+from dataclasses import replace
 
 import pytest
 from ict_agent import service as service_module
@@ -24,30 +25,49 @@ from ict_agent.service import (
     review_case,
     run_rule_scan,
 )
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 
 pytestmark = pytest.mark.anyio
 
+
+def test_investigation_failure_message_distinguishes_local_and_provider_errors() -> None:
+    local_message = service_module._investigation_failure_message(RuntimeError("local failure"))
+    provider_message = service_module._investigation_failure_message(
+        ModelHTTPError(402, "deepseek-v4-flash", {"error": "insufficient balance"})
+    )
+
+    assert "本地证据查询或模型输出校验失败" in local_message
+    assert "API Key、账户余额和网络" in provider_message
+
+
 QUERIES = [
     {
         "dataset": "receivables",
         "grain": "month",
-        "metrics": ["ar_amount", "overdue_amount"],
+        "metrics": [
+            "ar_amount",
+            "overdue_amount",
+            "overdue_30_amount",
+            "overdue_60_amount",
+            "overdue_rate",
+            "max_overdue_days",
+        ],
         "time_window": "last_12_months",
         "limit": 12,
     },
     {
         "dataset": "sales_payments",
         "grain": "month",
-        "metrics": ["sales_amount", "payment_amount"],
-        "time_window": "last_6_months",
+        "metrics": ["sales_amount", "payment_amount", "gross_profit", "overdue_interest"],
+        "time_window": "last_12_months",
         "limit": 6,
     },
     {
         "dataset": "receivables",
         "grain": "order",
-        "metrics": ["ar_amount", "overdue_amount", "max_overdue_days"],
+        "metrics": ["ar_amount", "overdue_amount", "overdue_60_amount", "max_overdue_days"],
         "time_window": "latest",
         "sort_by": "overdue_amount",
         "limit": 20,
@@ -69,8 +89,8 @@ QUERIES = [
     {
         "dataset": "contracts",
         "grain": "contract",
-        "metrics": ["contract_amount", "ar_amount", "overdue_amount"],
-        "time_window": "latest",
+        "metrics": ["contract_amount", "shipped_amount", "payment_amount", "ar_amount"],
+        "time_window": "all",
         "limit": 20,
     },
 ]
@@ -226,8 +246,9 @@ async def _service_partial_stream_model(
 
 
 def _create_receivable_case(settings: Settings) -> str:
+    business_store = DuckDBStore(settings.database_path)
     draft = build_rule_scan(
-        DuckDBStore(settings.database_path),
+        business_store,
         RuleThresholds(
             deep_overdue_amount=100,
             deep_overdue_days=90,
@@ -237,7 +258,10 @@ def _create_receivable_case(settings: Settings) -> str:
             inventory_slowdown_amount=500,
         ),
     )
-    CaseStore(settings.case_database_path).save_rule_scan(draft.run, draft.cases, draft.hits)
+    snapshot_id = business_store.get_snapshot().snapshot_id
+    run = replace(draft.run, source_snapshot_id=snapshot_id)
+    cases = tuple(replace(case, source_snapshot_id=snapshot_id) for case in draft.cases)
+    CaseStore(settings.case_database_path).save_rule_scan(run, cases, draft.hits)
     return next(case.case_id for case in draft.cases if case.investigation_profile == "RECEIVABLES")
 
 
@@ -269,7 +293,7 @@ async def test_rule_cases_keep_case_dimensions_independent(
     rule_case = next(item for item in cases if item.source == "RULE_SCAN")
 
     assert rule_case.investigation_profile in ("RECEIVABLES", "INVENTORY")
-    assert rule_case.subject_type in ("CUSTOMER", "CONTRACT", "MATERIAL_INVENTORY_ORG")
+    assert rule_case.subject_type in ("CUSTOMER", "MATERIAL_INVENTORY_ORG")
     assert rule_case.business_type is None
 
 

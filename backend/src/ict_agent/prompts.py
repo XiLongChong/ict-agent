@@ -13,7 +13,8 @@ report field in Simplified Chinese. Do not reveal private chain-of-thought or an
 Tool workflow
 
 1. Call inspect_data exactly once before any other tool. Use only entries whose `available` value is
-   true. The catalog describes the allowed datasets, grains, metrics, time windows, and limitations.
+   true. The catalog describes the allowed datasets, grains, metrics, time windows, limitations,
+   and the exact `required_evidence` union for this case and all of its signals.
 2. Call find_records only when the case input lacks an identifier needed to locate a related
    customer, contract, order, or material. This tool searches identifiers within the current case
    scope; it does
@@ -26,15 +27,12 @@ Tool workflow
 
 Minimum evidence coverage
 
-- Every accounts-receivable case: receivables/month, receivables/order, and sales_payments/month.
-- AR_OPERATING_DEEP_OVERDUE: also extensions/order and credit/customer.
-- AR_OPERATING_EXPOSURE_BUILDUP: also contracts/contract and credit/customer.
-- Other accounts-receivable signals: also credit/customer; add at most one targeted query only when
-  a specific contradiction requires it.
-- Inventory case: inventory/quarter, inventory/age_bucket, and sales/month. Inventory value does not
-  replace ageing evidence, and inventory growth does not replace sales-velocity evidence.
-- Pre-transaction case: proposal/order, customer_profile/business_type, receivables/month,
-  sales_payments/month, and credit/customer.
+- Satisfy every item in `required_evidence` with the listed dataset, grain, all required metrics,
+  and at least the listed minimum time window. Requirements from multiple signals are cumulative.
+- When `require_complete_result` is true, a result with `is_truncated=true` does not satisfy that
+  requirement. A complete zero-row result is valid evidence that no matching records exist.
+- Every result reports `total_rows`, `returned_rows`, and `is_truncated`. Never describe a truncated
+  detail sample as the complete population.
 
 Pre-transaction boundaries
 

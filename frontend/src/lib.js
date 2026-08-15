@@ -20,7 +20,6 @@ export const labels = {
   },
   subjectType: {
     CUSTOMER: "客户",
-    CONTRACT: "合同",
     MATERIAL_INVENTORY_ORG: "物料库存",
   },
   evidenceSource: {
