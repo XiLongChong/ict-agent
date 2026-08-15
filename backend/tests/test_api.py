@@ -94,7 +94,7 @@ def test_investigation_contract_streams_ndjson(monkeypatch: MonkeyPatch) -> None
             message="开始发现数据并调查证据。",
         )
 
-    monkeypatch.setattr(api, "prepare_investigation", lambda _case_id: object())
+    monkeypatch.setattr(api, "prepare_investigation", lambda _case_id, **_kwargs: object())
     monkeypatch.setattr(api, "stream_prepared_investigation", fake_stream)
     response = client.post("/api/v1/cases/case-test/investigations")
 
@@ -144,7 +144,7 @@ def test_investigation_protocol_is_loaded_and_downloaded_on_demand(
 
 
 def test_pre_transaction_contract(monkeypatch: MonkeyPatch) -> None:
-    async def fake_create(_request: object) -> PreTransactionSimulationResponse:
+    async def fake_create(_request: object, **_kwargs: object) -> PreTransactionSimulationResponse:
         return PreTransactionSimulationResponse(
             simulation_id="sim-1",
             case_id="pre-case-1",

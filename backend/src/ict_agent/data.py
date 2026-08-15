@@ -177,6 +177,22 @@ class ReviewWrite:
     reviewer: str
     reason: str
     created_at: str
+    actor_type: str = "WEB_VISITOR"
+    actor_open_id: str | None = None
+
+
+@dataclass(frozen=True)
+class CaseActorEventWrite:
+    """案件操作与飞书身份或匿名网页访问者的审计关联。"""
+
+    event_id: str
+    case_id: str
+    action_type: str
+    action_id: str
+    actor_type: str
+    actor_open_id: str | None
+    actor_name: str
+    created_at: str
 
 
 TABLE_SPECS: dict[str, TableSpec] = {
@@ -854,6 +870,32 @@ class CaseStore:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS feishu_users (
+                open_id VARCHAR PRIMARY KEY,
+                tenant_key VARCHAR NOT NULL,
+                display_name VARCHAR NOT NULL,
+                first_seen_at TIMESTAMP NOT NULL,
+                last_seen_at TIMESTAMP NOT NULL,
+                source VARCHAR NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS case_actor_events (
+                event_id VARCHAR PRIMARY KEY,
+                case_id VARCHAR NOT NULL,
+                action_type VARCHAR NOT NULL,
+                action_id VARCHAR NOT NULL,
+                actor_type VARCHAR NOT NULL,
+                actor_open_id VARCHAR,
+                actor_name VARCHAR NOT NULL,
+                created_at TIMESTAMP NOT NULL
+            )
+            """
+        )
 
     def ensure_ready(self) -> None:
         """创建案件库及固定表。"""
@@ -999,6 +1041,7 @@ class CaseStore:
         case: CaseWrite,
         signal: RuleHitWrite,
         simulation: PreTransactionWrite,
+        actor_event: CaseActorEventWrite | None = None,
     ) -> bool:
         """原子保存模拟交易、统一风险信号和待调查案件。"""
 
@@ -1109,6 +1152,20 @@ class CaseStore:
                         simulation.generated_at,
                     ],
                 )
+                if created and actor_event is not None:
+                    connection.execute(
+                        "INSERT INTO case_actor_events VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        [
+                            actor_event.event_id,
+                            actor_event.case_id,
+                            actor_event.action_type,
+                            actor_event.action_id,
+                            actor_event.actor_type,
+                            actor_event.actor_open_id,
+                            actor_event.actor_name,
+                            actor_event.created_at,
+                        ],
+                    )
                 connection.commit()
                 return created
         except duckdb.Error as exc:
@@ -1275,10 +1332,15 @@ class CaseStore:
             SELECT i.investigation_id, i.case_id, i.report_json, i.evidence_json,
                    i.created_at,
                    json_extract_string(p.protocol_json, '$.schema_version') AS schema_version,
-                   json_extract_string(p.protocol_json, '$.api_format') AS api_format
+                   json_extract_string(p.protocol_json, '$.api_format') AS api_format,
+                   COALESCE(a.actor_name, '网页访客') AS actor_name,
+                   COALESCE(a.actor_type, 'WEB_VISITOR') AS actor_type
             FROM case_investigations AS i
             LEFT JOIN investigation_protocols AS p
               ON p.investigation_id = i.investigation_id
+            LEFT JOIN case_actor_events AS a
+              ON a.action_id = i.investigation_id
+             AND a.action_type = 'INVESTIGATION_STARTED'
             WHERE i.case_id = ? ORDER BY i.created_at DESC LIMIT 1
             """,
             [case_id],
@@ -1301,8 +1363,12 @@ class CaseStore:
 
         return self._fetch(
             """
-            SELECT review_id, case_id, decision, reviewer, reason, created_at
-            FROM case_reviews WHERE case_id = ? ORDER BY created_at DESC
+            SELECT r.review_id, r.case_id, r.decision, r.reviewer, r.reason, r.created_at,
+                   COALESCE(a.actor_type, 'WEB_VISITOR') AS actor_type
+            FROM case_reviews AS r
+            LEFT JOIN case_actor_events AS a
+              ON a.action_id = r.review_id AND a.action_type = 'REVIEW_SUBMITTED'
+            WHERE r.case_id = ? ORDER BY r.created_at DESC
             """,
             [case_id],
         )
@@ -1369,6 +1435,80 @@ class CaseStore:
         except duckdb.Error as exc:
             raise DataAccessError("外部集成配置无法写入案件数据库。") from exc
 
+    def upsert_feishu_user(
+        self,
+        *,
+        open_id: str,
+        tenant_key: str,
+        display_name: str,
+        seen_at: str,
+        source: str,
+    ) -> None:
+        """按应用内 open_id 自动建立或更新飞书用户。"""
+
+        self.ensure_ready()
+        try:
+            with duckdb.connect(str(self.database_path)) as connection:
+                connection.execute(
+                    """
+                    INSERT INTO feishu_users VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (open_id) DO UPDATE SET
+                        tenant_key = CASE WHEN excluded.tenant_key <> ''
+                                          THEN excluded.tenant_key ELSE feishu_users.tenant_key END,
+                        display_name = CASE WHEN excluded.display_name <> '飞书用户'
+                                            THEN excluded.display_name
+                                            ELSE feishu_users.display_name END,
+                        last_seen_at = excluded.last_seen_at,
+                        source = excluded.source
+                    """,
+                    [open_id, tenant_key, display_name, seen_at, seen_at, source],
+                )
+        except duckdb.Error as exc:
+            raise DataAccessError("飞书用户身份无法写入案件数据库。") from exc
+
+    def count_feishu_users(self) -> int:
+        """返回已经与应用发生过可信交互的飞书用户数。"""
+
+        result = self._fetch("SELECT COUNT(*) FROM feishu_users")
+        return int(str(result.rows[0][0])) if result.rows else 0
+
+    def start_investigation(self, record: CaseActorEventWrite) -> bool:
+        """原子锁定待调查案件并记录本轮发起人。"""
+
+        self.ensure_ready()
+        try:
+            with duckdb.connect(str(self.database_path)) as connection:
+                connection.begin()
+                updated = connection.execute(
+                    """
+                    UPDATE investigation_cases
+                    SET status = 'AGENT_REVIEWING', updated_at = ?
+                    WHERE case_id = ? AND status = 'PENDING_AGENT_REVIEW'
+                    RETURNING case_id
+                    """,
+                    [record.created_at, record.case_id],
+                ).fetchone()
+                if updated is None:
+                    connection.rollback()
+                    return False
+                connection.execute(
+                    "INSERT INTO case_actor_events VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        record.event_id,
+                        record.case_id,
+                        record.action_type,
+                        record.action_id,
+                        record.actor_type,
+                        record.actor_open_id,
+                        record.actor_name,
+                        record.created_at,
+                    ],
+                )
+                connection.commit()
+                return True
+        except duckdb.Error as exc:
+            raise DataAccessError("案件调查无法启动或记录操作者。") from exc
+
     def save_investigation(self, record: InvestigationWrite) -> None:
         """保存调查并将案件推进到待审核。"""
 
@@ -1421,6 +1561,20 @@ class CaseStore:
                         record.decision,
                         record.reviewer,
                         record.reason,
+                        record.created_at,
+                    ],
+                )
+                connection.execute(
+                    """
+                    INSERT INTO case_actor_events VALUES (?, ?, 'REVIEW_SUBMITTED', ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        record.review_id,
+                        record.case_id,
+                        record.review_id,
+                        record.actor_type,
+                        record.actor_open_id,
+                        record.reviewer,
                         record.created_at,
                     ],
                 )

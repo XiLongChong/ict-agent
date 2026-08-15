@@ -15,6 +15,7 @@ import {
   Radar,
   Sparkles,
   UserCheck,
+  UserRound,
   Wallet,
   X,
 } from "lucide-vue-next";
@@ -53,6 +54,7 @@ const decisionOptions = [
   { title: "确认无风险，关闭案件", value: "NO_RISK" },
 ];
 const canReview = computed(() => caseItem.value?.status === "PENDING_HUMAN_REVIEW");
+const feishuReviewer = computed(() => workspace.session.authenticated);
 const canSubmit = computed(
   () =>
     canReview.value &&
@@ -130,8 +132,19 @@ watch(
   () => route.params.caseId,
   (id) => {
     section.value = "overview";
-    Object.assign(form, { decision: "", reviewer: "", reason: "" });
+    Object.assign(form, {
+      decision: "",
+      reviewer: workspace.session.authenticated ? workspace.session.display_name : "",
+      reason: "",
+    });
     if (id) loadCase(id);
+  },
+  { immediate: true }
+);
+watch(
+  () => workspace.session,
+  (session) => {
+    if (session.authenticated) form.reviewer = session.display_name;
   },
   { immediate: true }
 );
@@ -288,6 +301,13 @@ function toggleNavigation() {
       </button>
       <strong class="block text-[0.9375rem] text-ink">{{ currentSectionLabel }}</strong>
       <div class="flex-1"></div>
+      <div class="flex items-center gap-2 rounded-full border border-border bg-canvas px-3 py-1.5 text-xs text-muted">
+        <UserRound :size="14" />
+        <span class="hidden sm:inline">{{ workspace.session.display_name }}</span>
+        <span :class="workspace.session.authenticated ? 'text-brand-deep' : ''">
+          {{ workspace.session.authenticated ? "飞书" : "网页" }}
+        </span>
+      </div>
       <button
         type="button"
         class="inline-flex h-10 items-center gap-2 rounded-lg border border-border px-4 text-sm font-semibold text-muted transition-colors hover:bg-canvas hover:text-ink"
@@ -406,7 +426,12 @@ function toggleNavigation() {
               </p>
               <div v-else class="grid gap-4 lg:grid-cols-2">
                 <SelectInput v-model="form.decision" :options="decisionOptions" />
-                <TextInput v-model="form.reviewer" maxlength="100" placeholder="审核人" />
+                <TextInput
+                  v-model="form.reviewer"
+                  maxlength="100"
+                  :disabled="feishuReviewer"
+                  :placeholder="feishuReviewer ? '已使用飞书身份' : '审核人'"
+                />
                 <div class="lg:col-span-2">
                   <TextArea
                     v-model="form.reason"

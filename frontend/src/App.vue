@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { AlertCircle, Menu, PanelLeftClose, PanelLeftOpen } from "lucide-vue-next";
+import { AlertCircle, Menu, PanelLeftClose, PanelLeftOpen, UserRound } from "lucide-vue-next";
 import BrandMark from "./components/BrandMark.vue";
 import { navItems } from "./router";
 import { loadAll, loadRiskData, workspace } from "./store";
@@ -138,6 +138,12 @@ onUnmounted(() => window.removeEventListener("focus", refreshRiskDataOnFocus));
         </button>
         <strong class="block text-[0.9375rem] text-ink">{{ pageTitle }}</strong>
         <div class="flex-1"></div>
+        <div class="flex items-center gap-2 rounded-full border border-border bg-canvas px-3 py-1.5 text-xs text-muted">
+          <UserRound :size="14" />
+          <span>{{ workspace.session.display_name }}</span>
+          <span v-if="workspace.session.authenticated" class="text-brand-deep">飞书</span>
+          <span v-else>网页</span>
+        </div>
       </header>
 
       <main

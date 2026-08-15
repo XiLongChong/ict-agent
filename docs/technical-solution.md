@@ -25,6 +25,8 @@ flowchart LR
     CASE --> FEISHU["飞书案件通知"]
     REPORT --> FEISHU
     REVIEW --> FEISHU
+    FEISHU --> IDENTITY["飞书 OAuth / open_id 身份"]
+    IDENTITY --> CASE
     CATALOG --> STREAM["NDJSON 调查事件流"]
     GATEWAY --> STREAM
     VALIDATE --> STREAM
@@ -40,7 +42,8 @@ flowchart LR
 | Agent | Pydantic AI | DeepSeek 高强度思考、工具事件、结构化输出和输出校验 |
 | 业务分析 | `business_type.py` / `pretransaction.py` / `semantic.py` / `evidence_policy.py` / `tools.py` / `rules.py` / `rule_engine.py` / `admission.py` / `case_assembler.py` | 交易级业务分类、纯计算模拟器、语义注册表、信号证据策略、参数化指标查询，以及规则命中、准入和案件组装 |
 | 数据 | `data.py` | 业务 DuckDB 加固只读查询、带快照身份的原子导入、独立案件库写入 |
-| 飞书适配 | `feishu.py` | 官方长连接接收绑定指令，消息 API 主动发送结果卡片；不参与 Agent 调查推理 |
+| 身份适配 | `identity.py` | 飞书 OAuth、签名 state、7 天 HttpOnly 会话和匿名网页访问者识别；不读取通讯录、手机号或邮箱 |
+| 飞书适配 | `feishu.py` | 官方长连接自动登记私聊用户、接收可选群绑定指令，消息 API 向发起人和可选通知群发送结果卡片；不参与 Agent 调查推理 |
 
 通用数据问答 Agent 已删除。经营看板继续直接调用确定性工具，避免无关工具进入案件调查上下文。
 
@@ -198,6 +201,10 @@ trace 保存工具完成和报告校验轨迹，供刷新后回放。页面以�
 | 接口 | 说明 |
 |---|---|
 | `GET /api/v1/health` | 健康检查 |
+| `GET /api/v1/session` | 当前飞书身份或网页访客身份，不返回 `open_id` |
+| `GET /api/v1/auth/feishu/start` | 启动飞书 OAuth 免登录并绑定浏览器 state |
+| `GET /api/v1/auth/feishu/callback` | 交换授权码、自动建档并签发同源会话 |
+| `POST /api/v1/auth/logout` | 清除本站飞书会话，不退出飞书账号 |
 | `GET /api/v1/data-snapshot` | 当前七表来源哈希与模式身份 |
 | `GET /api/v1/overview` | 确定性经营看板 |
 | `POST /api/v1/rule-runs` | 幂等规则扫描 |
@@ -210,11 +217,14 @@ trace 保存工具完成和报告校验轨迹，供刷新后回放。页面以�
 | `POST /api/v1/cases/{case_id}/reviews` | 人工审核和状态推进 |
 | `GET /api/v1/pre-transaction/simulations` | 最近模拟新交易与对应案件 |
 | `POST /api/v1/pre-transaction/simulations` | 按历史分布生成新交易，经统一准入与组装后创建案件 |
-| `GET /api/v1/integrations/feishu/status` | 飞书配置、长连接和通知群绑定状态 |
+| `GET /api/v1/integrations/feishu/status` | 飞书配置、长连接、已登记用户数和可选通知群状态 |
 | `POST /api/v1/integrations/feishu/test` | 向已绑定群发送连通性测试卡片 |
 
 健康度、名单建议、独立预警列表、静态模拟项目和通用 `/api/v1/chat` 已删除；它们不再构成第二套案件流程。
-飞书卡片可跳转同一案件页。当前没有登录与飞书身份映射，因而不开放卡片内审批。
+飞书卡片可跳转同一案件页。飞书网页应用使用 OAuth 2.0 获取当前应用下的 `open_id`、姓名与
+`tenant_key`，不申请通讯录、手机号或邮箱权限。`open_id` 只保存在案件库，页面会话接口不返回内部 ID；
+AI 审查和复核通过独立操作者事件表关联身份。公开网页保持匿名可操作，操作人显示为“网页访客”。
+网页应用不开放卡片内直接审批，所有复核仍在同一案件页面完成。
 
 ## 7. 评测与边界
 
@@ -234,6 +244,7 @@ Run ID，既支持低成本回归，也不覆盖原始审计记录。
 操作员 CLI `backend/scripts/evidence_cli.py` 复用同一发现、搜索和查询函数，用于诊断与人工核对；CLI
 不会被模型执行，且没有 SQL、文件读取或写操作参数。
 
-当前不做登录、多租户、自由 SQL、RAG、联网、代码执行、多 Agent、自动数据刷新、模型 fallback、
+当前不做账号密码登录、角色/部门权限、多租户、自由 SQL、RAG、联网、代码执行、多 Agent、自动数据刷新、模型 fallback、
 预测评分或自动业务处置。新增能力不得破坏 CSV → DuckDB → 工具 → Agent → API → 页面主链路。
-飞书只作为确定性的输入输出通道：群聊绑定和消息发送不改变核心调查 Agent 的工具、提示词和证据校验。
+飞书只作为确定性的身份与输入输出通道：OAuth、个人通知、可选群聊绑定和消息发送不改变核心调查
+Agent 的工具、提示词和证据校验。企业自建应用可用范围外的评委继续使用公开网页，不假设跨租户授权。

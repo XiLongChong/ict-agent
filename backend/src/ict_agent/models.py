@@ -597,6 +597,8 @@ class InvestigationRecord(BaseModel):
     report: InvestigationReport
     evidence: list[Evidence]
     protocol_available: bool = False
+    initiated_by: str = "网页访客"
+    initiator_type: Literal["FEISHU", "WEB_VISITOR"] = "WEB_VISITOR"
     created_at: str
 
 
@@ -626,6 +628,7 @@ class ReviewRecord(BaseModel):
     case_id: str
     decision: ReviewDecision
     reviewer: str
+    reviewer_type: Literal["FEISHU", "WEB_VISITOR"] = "WEB_VISITOR"
     reason: str
     created_at: str
 
@@ -699,11 +702,20 @@ class PreTransactionSimulationResponse(BaseModel):
 
 
 class FeishuStatusResponse(BaseModel):
-    """飞书机器人配置、连接和群绑定状态。"""
+    """飞书应用配置、连接、用户和可选群绑定状态。"""
 
     configured: bool
     connected: bool
     bound: bool
+    registered_users: int = 0
+
+
+class SessionResponse(BaseModel):
+    """当前浏览器的操作者身份，不暴露飞书内部 ID。"""
+
+    authenticated: bool
+    actor_type: Literal["FEISHU", "WEB_VISITOR"]
+    display_name: str
 
 
 class FeishuTestResponse(BaseModel):

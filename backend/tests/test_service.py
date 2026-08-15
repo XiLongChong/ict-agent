@@ -8,6 +8,7 @@ import pytest
 from ict_agent import service as service_module
 from ict_agent.config import Settings
 from ict_agent.data import CaseStore, DuckDBStore
+from ict_agent.identity import ActorContext
 from ict_agent.models import PreTransactionSimulationRequest, ReviewRequest, ToolResult
 from ict_agent.rule_engine import RuleThresholds, build_rule_scan
 from ict_agent.service import (
@@ -337,14 +338,22 @@ async def test_pre_transaction_simulation_enters_unified_case_queue(
 async def test_investigation_service_persists_report(settings: Settings) -> None:
     case_id = _create_receivable_case(settings)
     model = FunctionModel(stream_function=_service_stream_model)
+    actor = ActorContext(
+        actor_type="FEISHU",
+        display_name="张喜龙",
+        open_id="ou_test_user",
+        tenant_key="tenant-test",
+    )
 
-    record = await investigate_case(case_id, settings=settings, model=model)
+    record = await investigate_case(case_id, settings=settings, model=model, actor=actor)
     detail = get_case_detail(case_id, settings=settings)
 
     assert record.report.risk_assessment is not None
     assert len(record.evidence) == 6
     assert detail.status == "PENDING_HUMAN_REVIEW"
     assert detail.latest_investigation is not None
+    assert detail.latest_investigation.initiated_by == "张喜龙"
+    assert detail.latest_investigation.initiator_type == "FEISHU"
     assert record.protocol_available is True
     assert detail.latest_investigation.protocol_available is True
     assert "protocol_json" not in detail.model_dump_json()
@@ -354,7 +363,7 @@ async def test_investigation_service_persists_report(settings: Settings) -> None
     assert protocol_detail.request == protocol.request
     assert protocol_detail.response_summary is not None
     stored = CaseStore(settings.case_database_path).fetch_latest_investigation(case_id).rows[0]
-    assert stored[5:] == ("4.0", "openai_chat_completions")
+    assert stored[5:7] == ("4.0", "openai_chat_completions")
 
     await review_case(
         case_id,
@@ -364,8 +373,12 @@ async def test_investigation_service_persists_report(settings: Settings) -> None
             reason="证据支持风险成立。",
         ),
         settings=settings,
+        actor=actor,
     )
-    assert get_case_detail(case_id, settings=settings).status == "ACTION_IN_PROGRESS"
+    reviewed = get_case_detail(case_id, settings=settings)
+    assert reviewed.status == "ACTION_IN_PROGRESS"
+    assert reviewed.reviews[0].reviewer == "张喜龙"
+    assert reviewed.reviews[0].reviewer_type == "FEISHU"
 
 
 async def test_investigation_service_persists_partial_report(settings: Settings) -> None:

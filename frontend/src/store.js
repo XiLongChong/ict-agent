@@ -5,6 +5,7 @@ export const workspace = reactive({
   cases: [],
   overview: null,
   business: null,
+  session: { authenticated: false, actor_type: "WEB_VISITOR", display_name: "网页访客" },
   loading: true,
   scanning: false,
   status: { text: "", error: false },
@@ -19,8 +20,13 @@ export async function loadRiskData() {
 export async function loadAll() {
   workspace.loading = true;
   try {
-    const [, businessData] = await Promise.all([loadRiskData(), api("/api/v1/overview")]);
+    const [, businessData, session] = await Promise.all([
+      loadRiskData(),
+      api("/api/v1/overview"),
+      api("/api/v1/session"),
+    ]);
     workspace.business = businessData;
+    workspace.session = session;
   } catch (error) {
     workspace.status = { text: error.message, error: true };
   } finally {

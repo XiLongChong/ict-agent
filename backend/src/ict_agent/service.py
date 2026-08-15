@@ -26,6 +26,7 @@ from ict_agent.agent import (
 from ict_agent.case_assembler import CaseAssembler
 from ict_agent.config import ConfigurationError, Settings, load_settings
 from ict_agent.data import (
+    CaseActorEventWrite,
     CaseStore,
     CaseWrite,
     DataAccessError,
@@ -37,6 +38,7 @@ from ict_agent.data import (
     RuleHitWrite,
 )
 from ict_agent.feishu import (
+    NOTIFICATION_CHAT_KEY,
     CaseNotification,
     CaseNotificationEvent,
     FeishuIntegrationError,
@@ -46,6 +48,7 @@ from ict_agent.feishu import (
     send_feishu_rule_scan_notification,
     send_feishu_test_card,
 )
+from ict_agent.identity import WEB_VISITOR, ActorContext
 from ict_agent.models import (
     BusinessType,
     CaseSource,
@@ -76,6 +79,7 @@ from ict_agent.models import (
     RiskOverviewResponse,
     RiskPriority,
     RuleRunResponse,
+    SessionResponse,
     SubjectType,
 )
 from ict_agent.pretransaction import Scenario, SimulatedOrder, generate_simulated_order
@@ -131,49 +135,66 @@ async def _notify_case_event(
     settings: Settings,
     *,
     detail: str = "",
+    actor: ActorContext = WEB_VISITOR,
 ) -> None:
     """发送并审计飞书案件通知；外部通道失败不回滚核心业务事务。"""
 
     if settings.feishu_app_id is None or settings.feishu_app_secret is None:
         return
-    created_at = datetime.now(UTC).isoformat()
-    notification_id = uuid5(
-        NAMESPACE_URL,
-        f"feishu:{event_type}:{case.case_id}:{case.status}:{case.updated_at}",
-    ).hex
-    status = "SENT"
-    message_id = ""
-    error_message = ""
-    try:
-        message_id = await send_feishu_case_notification(
-            CaseNotification(
-                event_type=event_type,
-                case_id=case.case_id,
-                investigation_profile=case.investigation_profile,
-                subject_label=case.subject_label,
-                priority=case.priority,
-                status=case.status,
-                summary=case.summary,
-                business_type=case.business_type,
-                observation_date=case.observation_date,
-                exposure_amount=case.exposure_amount,
-                detail=detail,
-                public_base_url=settings.public_base_url,
-            )
-        )
-    except FeishuIntegrationError as exc:
-        status = "FAILED"
-        error_message = str(exc)
-        logger.warning("飞书案件通知失败：case_id=%s event=%s", case.case_id, event_type)
-    CaseStore(settings.case_database_path).save_feishu_notification(
-        notification_id=notification_id,
+    store = CaseStore(settings.case_database_path)
+    recipients: list[tuple[str, str | None]] = []
+    if actor.authenticated and actor.open_id:
+        recipients.append((f"user:{actor.open_id}", actor.open_id))
+    if store.get_integration_setting(NOTIFICATION_CHAT_KEY):
+        recipients.append(("group", None))
+    if not recipients:
+        return
+    notification = CaseNotification(
         event_type=event_type,
         case_id=case.case_id,
-        status=status,
-        message_id=message_id,
-        error_message=error_message,
-        created_at=created_at,
+        investigation_profile=case.investigation_profile,
+        subject_label=case.subject_label,
+        priority=case.priority,
+        status=case.status,
+        summary=case.summary,
+        business_type=case.business_type,
+        observation_date=case.observation_date,
+        exposure_amount=case.exposure_amount,
+        detail=detail,
+        public_base_url=settings.public_base_url,
     )
+    for recipient_key, recipient_open_id in recipients:
+        created_at = datetime.now(UTC).isoformat()
+        notification_id = uuid5(
+            NAMESPACE_URL,
+            (f"feishu:{event_type}:{case.case_id}:{case.status}:{case.updated_at}:{recipient_key}"),
+        ).hex
+        status = "SENT"
+        message_id = ""
+        error_message = ""
+        try:
+            message_id = await send_feishu_case_notification(
+                notification,
+                recipient_open_id=recipient_open_id,
+            )
+        except FeishuIntegrationError as exc:
+            status = "FAILED"
+            error_message = str(exc)
+            logger.warning(
+                "飞书案件通知失败：case_id=%s event=%s recipient=%s",
+                case.case_id,
+                event_type,
+                recipient_key.split(":", 1)[0],
+            )
+        store.save_feishu_notification(
+            notification_id=notification_id,
+            event_type=event_type,
+            case_id=case.case_id,
+            status=status,
+            message_id=message_id,
+            error_message=error_message,
+            created_at=created_at,
+        )
 
 
 async def _notify_rule_scan(response: RuleRunResponse, settings: Settings) -> None:
@@ -438,6 +459,8 @@ def _load_investigation_record(
         report=json.loads(str(investigation[2])),
         evidence=json.loads(str(investigation[3])),
         protocol_available=True,
+        initiated_by=str(investigation[7]),
+        initiator_type=cast(Literal["FEISHU", "WEB_VISITOR"], str(investigation[8])),
         created_at=str(investigation[4]),
     )
 
@@ -631,6 +654,7 @@ def get_case_detail(
                 case_id=str(review[1]),
                 decision=cast(ReviewDecision, str(review[2])),
                 reviewer=str(review[3]),
+                reviewer_type=cast(Literal["FEISHU", "WEB_VISITOR"], str(review[6])),
                 reason=str(review[4]),
                 created_at=str(review[5]),
             )
@@ -657,6 +681,8 @@ class PreparedInvestigation:
     case: RiskCaseDetail
     investigation_input: InvestigationCaseInput
     model: Model | None
+    investigation_id: str
+    actor: ActorContext
 
 
 def prepare_investigation(
@@ -664,6 +690,7 @@ def prepare_investigation(
     *,
     settings: Settings | None = None,
     model: Model | None = None,
+    actor: ActorContext = WEB_VISITOR,
 ) -> PreparedInvestigation:
     """在 HTTP 流开始前检查配置、案件和业务数据库。"""
 
@@ -691,13 +718,28 @@ def prepare_investigation(
         except AnalysisInputError as exc:
             raise ServiceError(str(exc), request_id, 409) from exc
         store = CaseStore(runtime_settings.case_database_path)
-        if not store.transition_case(case_id, "PENDING_AGENT_REVIEW", "AGENT_REVIEWING"):
+        investigation_id = uuid4().hex
+        started_at = datetime.now(UTC).isoformat()
+        if not store.start_investigation(
+            CaseActorEventWrite(
+                event_id=investigation_id,
+                case_id=case_id,
+                action_type="INVESTIGATION_STARTED",
+                action_id=investigation_id,
+                actor_type=actor.actor_type,
+                actor_open_id=actor.open_id,
+                actor_name=actor.display_name,
+                created_at=started_at,
+            )
+        ):
             raise ServiceError("该案件正在调查，请等待本轮结束后重试。", request_id, 409)
         return PreparedInvestigation(
             settings=runtime_settings,
             case=case,
             investigation_input=build_investigation_case_input(case),
             model=model,
+            investigation_id=investigation_id,
+            actor=actor,
         )
     except ServiceError:
         raise
@@ -723,11 +765,13 @@ def _save_investigation(
         raise RuntimeError("调查已完成但缺少最后一轮模型协议。")
     created_at = datetime.now(UTC).isoformat()
     record = InvestigationRecord(
-        investigation_id=uuid4().hex,
+        investigation_id=prepared.investigation_id,
         case_id=prepared.case.case_id,
         report=outcome.report,
         evidence=outcome.evidence,
         protocol_available=True,
+        initiated_by=prepared.actor.display_name,
+        initiator_type=prepared.actor.actor_type,
         created_at=created_at,
     )
     CaseStore(prepared.settings.case_database_path).save_investigation(
@@ -782,6 +826,7 @@ async def stream_prepared_investigation(
                 updated_case,
                 prepared.settings,
                 detail=record.report.executive_summary,
+                actor=prepared.actor,
             )
             yield InvestigationStreamEvent(
                 sequence=sequence,
@@ -821,12 +866,13 @@ async def investigate_case(
     *,
     settings: Settings | None = None,
     model: Model | None = None,
+    actor: ActorContext = WEB_VISITOR,
 ) -> InvestigationRecord:
     """非流式调用入口，供自动化测试和离线评测复用。"""
 
     request_id = uuid4().hex
     error_message: str | None = None
-    prepared = prepare_investigation(case_id, settings=settings, model=model)
+    prepared = prepare_investigation(case_id, settings=settings, model=model, actor=actor)
     async for event in stream_prepared_investigation(prepared):
         if event.event_type == "REPORT_COMPLETED" and event.record is not None:
             return event.record
@@ -842,6 +888,7 @@ async def review_case(
     request: ReviewRequest,
     *,
     settings: Settings | None = None,
+    actor: ActorContext = WEB_VISITOR,
 ) -> ReviewRecord:
     """保存人工审核并推进案件状态。"""
 
@@ -860,13 +907,16 @@ async def review_case(
         if str(case_rows[0][9]) != "PENDING_HUMAN_REVIEW":
             raise ServiceError("当前案件状态不允许提交人工复核。", request_id, 409)
         created_at = datetime.now(UTC).isoformat()
+        reviewer = actor.display_name if actor.authenticated else request.reviewer
         record = ReviewWrite(
             review_id=uuid4().hex,
             case_id=case_id,
             decision=request.decision,
-            reviewer=request.reviewer,
+            reviewer=reviewer,
             reason=request.reason,
             created_at=created_at,
+            actor_type=actor.actor_type,
+            actor_open_id=actor.open_id,
         )
         new_status = status_by_decision[request.decision]
         store.save_review(record, new_status)
@@ -875,6 +925,7 @@ async def review_case(
             case_id=record.case_id,
             decision=request.decision,
             reviewer=record.reviewer,
+            reviewer_type=actor.actor_type,
             reason=record.reason,
             created_at=record.created_at,
         )
@@ -883,7 +934,8 @@ async def review_case(
             "REVIEW_COMPLETED",
             updated_case,
             runtime_settings,
-            detail=f"{request.reviewer}：{request.reason}",
+            detail=f"{reviewer}：{request.reason}",
+            actor=actor,
         )
         return response
     except ServiceError:
@@ -902,6 +954,45 @@ def get_feishu_status_service(*, settings: Settings | None = None) -> FeishuStat
         return FeishuStatusResponse(**status.__dict__)
     except (ConfigurationError, DataAccessError) as exc:
         raise ServiceError(str(exc), request_id, 503) from exc
+
+
+def register_feishu_actor(
+    actor: ActorContext,
+    *,
+    settings: Settings | None = None,
+    source: str = "OAUTH",
+) -> SessionResponse:
+    """保存飞书验证结果并返回页面可显示的最小身份。"""
+
+    request_id = uuid4().hex
+    if not actor.authenticated or actor.open_id is None:
+        raise ServiceError("飞书用户身份无效。", request_id, 400)
+    try:
+        runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
+        CaseStore(runtime_settings.case_database_path).upsert_feishu_user(
+            open_id=actor.open_id,
+            tenant_key=actor.tenant_key or "",
+            display_name=actor.display_name,
+            seen_at=datetime.now(UTC).isoformat(),
+            source=source,
+        )
+        return SessionResponse(
+            authenticated=True,
+            actor_type="FEISHU",
+            display_name=actor.display_name,
+        )
+    except (ConfigurationError, DataAccessError) as exc:
+        raise ServiceError(str(exc), request_id, 503) from exc
+
+
+def get_session_response(actor: ActorContext) -> SessionResponse:
+    """把内部操作者上下文转换为不暴露 open_id 的页面响应。"""
+
+    return SessionResponse(
+        authenticated=actor.authenticated,
+        actor_type=actor.actor_type,
+        display_name=actor.display_name,
+    )
 
 
 async def send_feishu_test_service() -> FeishuTestResponse:
@@ -996,6 +1087,7 @@ async def create_pre_transaction_simulation(
     request: PreTransactionSimulationRequest,
     *,
     settings: Settings | None = None,
+    actor: ActorContext = WEB_VISITOR,
 ) -> PreTransactionSimulationResponse:
     """基于真实历史分布生成模拟交易，并进入统一案件与Agent调查流程。"""
 
@@ -1059,13 +1151,24 @@ async def create_pre_transaction_simulation(
             generated_at=simulated.generated_at,
         )
         case_store = CaseStore(runtime_settings.case_database_path)
-        created = case_store.save_pre_transaction_case(case, signal, write)
+        actor_event = CaseActorEventWrite(
+            event_id=simulated.simulation_id,
+            case_id=case_id,
+            action_type="CASE_CREATED",
+            action_id=simulated.simulation_id,
+            actor_type=actor.actor_type,
+            actor_open_id=actor.open_id,
+            actor_name=actor.display_name,
+            created_at=simulated.generated_at,
+        )
+        created = case_store.save_pre_transaction_case(case, signal, write, actor_event)
         if created:
             await _notify_case_event(
                 "CASE_CREATED",
                 get_case_detail(case_id, settings=runtime_settings),
                 runtime_settings,
                 detail="模拟交易已进入成交前Agent调查流程。",
+                actor=actor,
             )
         result = case_store.fetch_pre_transaction_simulations(limit=200)
         row = next(

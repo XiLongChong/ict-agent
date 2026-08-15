@@ -7,13 +7,33 @@ import mimetypes
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 
 from ict_agent.config import load_frontend_dist_dir, load_settings
 from ict_agent.feishu import start_feishu_bot, stop_feishu_bot
+from ict_agent.identity import (
+    OAUTH_NONCE_COOKIE,
+    SESSION_COOKIE,
+    SESSION_MAX_AGE_SECONDS,
+    FeishuAuthenticationError,
+    actor_from_request,
+    build_feishu_authorize_url,
+    create_oauth_state,
+    create_session_token,
+    exchange_feishu_code,
+    new_oauth_nonce,
+    verify_oauth_state,
+)
 from ict_agent.models import (
     CaseStatus,
     DashboardResponse,
@@ -32,6 +52,7 @@ from ict_agent.models import (
     RiskCaseSummary,
     RiskOverviewResponse,
     RuleRunResponse,
+    SessionResponse,
 )
 from ict_agent.service import (
     ServiceError,
@@ -43,10 +64,12 @@ from ict_agent.service import (
     get_investigation_protocol,
     get_investigation_protocol_detail,
     get_risk_overview,
+    get_session_response,
     list_cases,
     list_pre_transaction_simulations,
     prepare_investigation,
     recover_interrupted_investigations,
+    register_feishu_actor,
     review_case,
     run_rule_scan,
     send_feishu_test_service,
@@ -80,6 +103,12 @@ app = FastAPI(
 )
 
 
+def _auth_error(message: str, status_code: int = 400) -> ServiceError:
+    """把飞书协议错误映射为不泄露令牌或响应正文的 HTTP 错误。"""
+
+    return ServiceError(message, uuid4().hex, status_code)
+
+
 @app.exception_handler(ServiceError)
 async def handle_service_error(_request: Request, exc: ServiceError) -> JSONResponse:
     """把应用错误映射为不泄漏内部细节的稳定响应。"""
@@ -99,6 +128,83 @@ async def health() -> HealthResponse:
     """确认 HTTP 服务已经启动。"""
 
     return HealthResponse(status="ok", service="ict-agent")
+
+
+@app.get("/api/v1/session", response_model=SessionResponse, tags=["identity"])
+async def current_session(request: Request) -> SessionResponse:
+    """返回当前飞书身份；公开网页没有登录态时明确标为网页访客。"""
+
+    settings = load_settings(require_api_key=False, require_data_dir=False)
+    return get_session_response(actor_from_request(request, settings))
+
+
+@app.get("/api/v1/auth/feishu/start", include_in_schema=False)
+async def start_feishu_login(
+    next: Annotated[str | None, Query(max_length=512)] = None,
+) -> RedirectResponse:
+    """从飞书网页应用或机器人卡片启动 OAuth 免登录。"""
+
+    settings = load_settings(require_api_key=False, require_data_dir=False)
+    nonce = new_oauth_nonce()
+    try:
+        state = create_oauth_state(settings, nonce, next)
+        response = RedirectResponse(build_feishu_authorize_url(settings, state), status_code=302)
+    except FeishuAuthenticationError as exc:
+        raise _auth_error(str(exc), 503) from exc
+    response.set_cookie(
+        OAUTH_NONCE_COOKIE,
+        nonce,
+        max_age=600,
+        httponly=True,
+        secure=bool(settings.public_base_url and settings.public_base_url.startswith("https://")),
+        samesite="lax",
+    )
+    return response
+
+
+@app.get("/api/v1/auth/feishu/callback", include_in_schema=False)
+async def finish_feishu_login(
+    request: Request,
+    code: Annotated[str | None, Query(max_length=2048)] = None,
+    state: Annotated[str | None, Query(max_length=4096)] = None,
+    error: Annotated[str | None, Query(max_length=200)] = None,
+) -> RedirectResponse:
+    """验证飞书回调、自动建档并建立本站签名会话。"""
+
+    if error or not code or not state:
+        raise _auth_error("飞书登录未完成，请从应用入口重新打开。")
+    settings = load_settings(require_api_key=False, require_data_dir=False)
+    try:
+        next_path = verify_oauth_state(
+            state,
+            request.cookies.get(OAUTH_NONCE_COOKIE),
+            settings,
+        )
+        actor = await exchange_feishu_code(settings, code)
+        register_feishu_actor(actor, settings=settings)
+        session_token = create_session_token(actor, settings)
+    except FeishuAuthenticationError as exc:
+        raise _auth_error(str(exc)) from exc
+    response = RedirectResponse(next_path, status_code=303)
+    response.delete_cookie(OAUTH_NONCE_COOKIE)
+    response.set_cookie(
+        SESSION_COOKIE,
+        session_token,
+        max_age=SESSION_MAX_AGE_SECONDS,
+        httponly=True,
+        secure=bool(settings.public_base_url and settings.public_base_url.startswith("https://")),
+        samesite="lax",
+    )
+    return response
+
+
+@app.post("/api/v1/auth/logout", status_code=204, tags=["identity"])
+async def logout() -> Response:
+    """仅清除本站飞书登录态，不影响用户的飞书账号。"""
+
+    response = Response(status_code=204)
+    response.delete_cookie(SESSION_COOKIE)
+    return response
 
 
 @app.get(
@@ -214,10 +320,11 @@ async def case_detail(case_id: str) -> RiskCaseDetail:
     },
     tags=["agent"],
 )
-async def create_case_investigation(case_id: str) -> StreamingResponse:
+async def create_case_investigation(case_id: str, request: Request) -> StreamingResponse:
     """流式返回 DeepSeek 的工具取证、校验和最终报告事件。"""
 
-    prepared = prepare_investigation(case_id)
+    settings = load_settings(require_api_key=False, require_data_dir=False)
+    prepared = prepare_investigation(case_id, actor=actor_from_request(request, settings))
 
     async def ndjson_events() -> AsyncIterator[str]:
         async for event in stream_prepared_investigation(prepared):
@@ -273,10 +380,15 @@ async def download_investigation_protocol(investigation_id: str) -> Response:
     },
     tags=["risk-cases"],
 )
-async def submit_case_review(case_id: str, request: ReviewRequest) -> ReviewRecord:
+async def submit_case_review(case_id: str, review: ReviewRequest, request: Request) -> ReviewRecord:
     """提交风险成立、需补充调查或确认无风险的人工复核结论。"""
 
-    return await review_case(case_id, request)
+    settings = load_settings(require_api_key=False, require_data_dir=False)
+    return await review_case(
+        case_id,
+        review,
+        actor=actor_from_request(request, settings),
+    )
 
 
 @app.get(
@@ -304,11 +416,16 @@ async def pre_transaction_simulations(
     tags=["pre-transaction"],
 )
 async def simulate_pre_transaction(
-    request: PreTransactionSimulationRequest,
+    simulation: PreTransactionSimulationRequest,
+    request: Request,
 ) -> PreTransactionSimulationResponse:
     """生成模拟交易并创建统一的成交前调查案件。"""
 
-    return await create_pre_transaction_simulation(request)
+    settings = load_settings(require_api_key=False, require_data_dir=False)
+    return await create_pre_transaction_simulation(
+        simulation,
+        actor=actor_from_request(request, settings),
+    )
 
 
 @app.get("/", include_in_schema=False)

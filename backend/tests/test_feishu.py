@@ -10,6 +10,7 @@ from ict_agent.feishu import (
     RuleScanNotification,
     build_case_notification_card,
     build_connection_card,
+    build_personal_entry_card,
     build_rule_scan_notification_card,
     build_test_card,
 )
@@ -108,6 +109,17 @@ def test_feishu_cards_do_not_contain_credentials() -> None:
     assert "secret" not in repr((connection_card, test_card)).lower()
 
 
+def test_personal_entry_no_longer_requires_group_binding() -> None:
+    card = build_personal_entry_card("https://example.test")
+
+    rendered = repr(card)
+    assert "建立个人连接" in rendered
+    assert "加入群聊" not in rendered
+    assert card["elements"][-1]["actions"][0]["url"] == (
+        "https://example.test/api/v1/auth/feishu/start"
+    )
+
+
 def test_notification_chat_binding_is_replaced_atomically(tmp_path: Path) -> None:
     store = CaseStore(tmp_path / "cases.duckdb")
 
@@ -123,3 +135,25 @@ def test_notification_chat_binding_is_replaced_atomically(tmp_path: Path) -> Non
     )
 
     assert store.get_integration_setting(NOTIFICATION_CHAT_KEY) == "oc_second"
+
+
+def test_feishu_user_is_created_and_enriched_by_open_id(tmp_path: Path) -> None:
+    store = CaseStore(tmp_path / "cases.duckdb")
+    now = datetime.now(UTC).isoformat()
+
+    store.upsert_feishu_user(
+        open_id="ou_test",
+        tenant_key="",
+        display_name="飞书用户",
+        seen_at=now,
+        source="BOT_MESSAGE",
+    )
+    store.upsert_feishu_user(
+        open_id="ou_test",
+        tenant_key="tenant_test",
+        display_name="张喜龙",
+        seen_at=now,
+        source="OAUTH",
+    )
+
+    assert store.count_feishu_users() == 1

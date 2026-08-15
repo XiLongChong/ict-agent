@@ -44,6 +44,7 @@ class FeishuStatus:
     configured: bool
     connected: bool
     bound: bool
+    registered_users: int
 
 
 @dataclass(frozen=True)
@@ -198,6 +199,42 @@ def build_connection_card() -> dict[str, object]:
     }
 
 
+def build_personal_entry_card(public_base_url: str | None) -> dict[str, object]:
+    """构造私聊欢迎卡片；个人使用不再依赖通知群绑定。"""
+
+    elements: list[dict[str, object]] = [
+        {
+            "tag": "markdown",
+            "content": (
+                "**你已与佳华智审建立个人连接**\n"
+                "从飞书应用入口进入后，AI 审查、人工复核和完成通知会记录到你的飞书身份。"
+            ),
+        }
+    ]
+    if public_base_url:
+        url = f"{public_base_url.rstrip('/')}/api/v1/auth/feishu/start"
+        elements.append(
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "打开佳华智审"},
+                        "type": "primary",
+                        "url": url,
+                    }
+                ],
+            }
+        )
+    return {
+        "header": {
+            "template": "blue",
+            "title": {"tag": "plain_text", "content": "佳华智审个人连接"},
+        },
+        "elements": elements,
+    }
+
+
 def build_test_card() -> dict[str, object]:
     """构造不含业务数据的连通性测试卡片。"""
 
@@ -222,6 +259,7 @@ class FeishuBot:
         if settings.feishu_app_id is None or settings.feishu_app_secret is None:
             raise FeishuIntegrationError("飞书机器人尚未配置。")
         self._store = CaseStore(settings.case_database_path)
+        self._public_base_url = settings.public_base_url
         self._channel = FeishuChannel(
             app_id=settings.feishu_app_id,
             app_secret=settings.feishu_app_secret.get_secret_value(),
@@ -251,10 +289,18 @@ class FeishuBot:
         self._connected = False
 
     async def _handle_message(self, message: InboundMessage) -> None:
+        now = datetime.now(UTC).isoformat()
+        if message.sender_id:
+            self._store.upsert_feishu_user(
+                open_id=message.sender_id,
+                tenant_key="",
+                display_name=message.sender_name or "飞书用户",
+                seen_at=now,
+                source="BOT_MESSAGE",
+            )
         if message.chat_type != "group":
             await self._channel.send(
-                message.chat_id,
-                {"text": f"请把机器人加入群聊，再发送“@机器人 {BIND_COMMAND}”。"},
+                message.chat_id, {"card": build_personal_entry_card(self._public_base_url)}
             )
             return
         if BIND_COMMAND not in message.content_text:
@@ -266,7 +312,7 @@ class FeishuBot:
         self._store.save_integration_setting(
             NOTIFICATION_CHAT_KEY,
             message.chat_id,
-            datetime.now(UTC).isoformat(),
+            now,
         )
         await self._channel.send(message.chat_id, {"card": build_connection_card()})
 
@@ -315,6 +361,7 @@ def get_feishu_status(settings: Settings) -> FeishuStatus:
         configured=configured,
         connected=_bot is not None and _bot.connected,
         bound=bound,
+        registered_users=CaseStore(settings.case_database_path).count_feishu_users(),
     )
 
 
@@ -324,12 +371,15 @@ async def send_feishu_test_card() -> str:
     return await _send_card(build_test_card(), "飞书测试消息发送失败")
 
 
-async def send_feishu_case_notification(notification: CaseNotification) -> str:
+async def send_feishu_case_notification(
+    notification: CaseNotification, *, recipient_open_id: str | None = None
+) -> str:
     """通过开放平台消息 API 发送案件通知卡片。"""
 
     return await _send_card(
         build_case_notification_card(notification),
         "飞书案件通知发送失败",
+        recipient_open_id=recipient_open_id,
     )
 
 
@@ -342,7 +392,12 @@ async def send_feishu_rule_scan_notification(notification: RuleScanNotification)
     )
 
 
-async def _send_card(card: dict[str, object], error_message: str) -> str:
+async def _send_card(
+    card: dict[str, object],
+    error_message: str,
+    *,
+    recipient_open_id: str | None = None,
+) -> str:
     """发送交互卡片；出站通知不依赖接收群消息的长连接状态。"""
 
     if _bot_settings is None:
@@ -350,9 +405,12 @@ async def _send_card(card: dict[str, object], error_message: str) -> str:
     settings = _bot_settings
     if settings.feishu_app_id is None or settings.feishu_app_secret is None:
         raise FeishuIntegrationError("飞书机器人尚未配置。")
-    chat_id = CaseStore(settings.case_database_path).get_integration_setting(NOTIFICATION_CHAT_KEY)
-    if not chat_id:
+    receive_id = recipient_open_id or CaseStore(
+        settings.case_database_path
+    ).get_integration_setting(NOTIFICATION_CHAT_KEY)
+    if not receive_id:
         raise FeishuIntegrationError(f"尚未绑定通知群，请先在群里 @{BIND_COMMAND}。")
+    receive_id_type = "open_id" if recipient_open_id else "chat_id"
 
     client = (
         Client.builder()
@@ -363,10 +421,10 @@ async def _send_card(card: dict[str, object], error_message: str) -> str:
     )
     request = (
         CreateMessageRequest.builder()
-        .receive_id_type("chat_id")
+        .receive_id_type(receive_id_type)
         .request_body(
             CreateMessageRequestBody.builder()
-            .receive_id(chat_id)
+            .receive_id(receive_id)
             .msg_type("interactive")
             .content(json.dumps(card, ensure_ascii=False, separators=(",", ":")))
             .build()
