@@ -64,12 +64,6 @@ function openCase() {
   <div class="space-y-6">
     <!-- 页面头部 -->
     <header class="space-y-3">
-      <div class="flex items-center gap-2">
-        <span class="inline-flex items-center gap-1.5 rounded-full bg-brand-wash px-2.5 py-0.5 text-xs font-semibold text-brand">
-          <Dices :size="11" />
-          演示模式
-        </span>
-      </div>
       <h1 class="text-2xl font-bold text-ink">模拟交易</h1>
     </header>
 
