@@ -8,9 +8,10 @@ import random
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import cast
+from typing import Literal, cast
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from pydantic import JsonValue
 from pydantic_ai.models import Model
 
 from ict_agent.agent import (
@@ -55,6 +56,8 @@ from ict_agent.models import (
     GeneratedSimulationScenario,
     InvestigationCaseInput,
     InvestigationDataQuality,
+    InvestigationProtocolDetail,
+    InvestigationProtocolResponseSummary,
     InvestigationProtocolSnapshot,
     InvestigationRecord,
     InvestigationSignalInput,
@@ -410,18 +413,144 @@ def _load_investigation_record(
 ) -> InvestigationRecord | None:
     """Load a persisted investigation only when it uses the current protocol contract."""
 
-    protocol = _load_protocol_snapshot(
-        str(investigation[5]) if investigation[5] is not None else None
-    )
-    if protocol is None:
+    schema_version = str(investigation[5]) if investigation[5] is not None else None
+    api_format = str(investigation[6]) if investigation[6] is not None else None
+    if (
+        schema_version != _CURRENT_PROTOCOL_SCHEMA_VERSION
+        or api_format != _CURRENT_PROTOCOL_API_FORMAT
+    ):
         return None
     return InvestigationRecord(
         investigation_id=str(investigation[0]),
         case_id=str(investigation[1]),
         report=json.loads(str(investigation[2])),
         evidence=json.loads(str(investigation[3])),
-        protocol=protocol,
+        protocol_available=True,
         created_at=str(investigation[4]),
+    )
+
+
+def _protocol_response_summary(
+    response: dict[str, JsonValue] | None,
+) -> InvestigationProtocolResponseSummary | None:
+    """Reduce a full streamed response to the metadata needed by the debug panel."""
+
+    if response is None:
+        return None
+    status_value = response.get("status_code")
+    status_code = status_value if isinstance(status_value, int) else None
+    headers_value = response.get("headers")
+    headers = (
+        {str(name): str(value) for name, value in headers_value.items()}
+        if isinstance(headers_value, dict)
+        else {}
+    )
+    body = response.get("body")
+    if body is None:
+        return InvestigationProtocolResponseSummary(
+            status_code=status_code,
+            headers=headers,
+            body_format="empty",
+        )
+
+    event_count = 0
+    finish_reason: str | None = None
+    usage: dict[str, JsonValue] | None = None
+    reasoning_characters = 0
+    content_characters = 0
+    body_format: Literal["sse", "json", "text", "empty"] = (
+        "json" if isinstance(body, dict | list) else "text"
+    )
+    payloads: list[dict[str, JsonValue]] = []
+    if isinstance(body, dict) and body.get("format") == "sse":
+        body_format = "sse"
+        events = body.get("events")
+        if isinstance(events, list):
+            event_count = len(events)
+            for item in events:
+                if not isinstance(item, dict):
+                    continue
+                data = item.get("data")
+                if isinstance(data, dict):
+                    payloads.append(data)
+    elif isinstance(body, dict):
+        payloads.append(body)
+
+    for payload in payloads:
+        usage_value = payload.get("usage")
+        if isinstance(usage_value, dict):
+            usage = usage_value
+        choices = payload.get("choices")
+        if not isinstance(choices, list):
+            continue
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            reason = choice.get("finish_reason")
+            if isinstance(reason, str) and reason:
+                finish_reason = reason
+            delta = choice.get("delta")
+            message = choice.get("message")
+            content_source = delta if isinstance(delta, dict) else message
+            if not isinstance(content_source, dict):
+                continue
+            reasoning = content_source.get("reasoning_content")
+            content = content_source.get("content")
+            if isinstance(reasoning, str):
+                reasoning_characters += len(reasoning)
+            if isinstance(content, str):
+                content_characters += len(content)
+
+    return InvestigationProtocolResponseSummary(
+        status_code=status_code,
+        headers=headers,
+        body_format=body_format,
+        event_count=event_count,
+        finish_reason=finish_reason,
+        usage=usage,
+        reasoning_characters=reasoning_characters,
+        content_characters=content_characters,
+    )
+
+
+def get_investigation_protocol(
+    investigation_id: str,
+    *,
+    settings: Settings | None = None,
+) -> InvestigationProtocolSnapshot:
+    """Load the full current protocol only for an explicit detail or download request."""
+
+    request_id = uuid4().hex
+    try:
+        runtime_settings = settings or load_settings(require_api_key=False, require_data_dir=False)
+        rows = (
+            CaseStore(runtime_settings.case_database_path)
+            .fetch_investigation_protocol(investigation_id)
+            .rows
+        )
+        protocol = _load_protocol_snapshot(str(rows[0][0])) if rows else None
+        if protocol is None:
+            raise ServiceError("未找到指定调查的当前协议记录。", request_id, 404)
+        return protocol
+    except ServiceError:
+        raise
+    except (ConfigurationError, DataAccessError) as exc:
+        raise ServiceError(str(exc), request_id, 503) from exc
+
+
+def get_investigation_protocol_detail(
+    investigation_id: str,
+    *,
+    settings: Settings | None = None,
+) -> InvestigationProtocolDetail:
+    """Return the full request and a compact response summary for browser rendering."""
+
+    protocol = get_investigation_protocol(investigation_id, settings=settings)
+    return InvestigationProtocolDetail(
+        request_index=protocol.request_index,
+        capture_source=protocol.capture_source,
+        request=protocol.request,
+        response_summary=_protocol_response_summary(protocol.response),
     )
 
 
@@ -578,7 +707,7 @@ def _save_investigation(
         case_id=prepared.case.case_id,
         report=outcome.report,
         evidence=outcome.evidence,
-        protocol=outcome.protocol,
+        protocol_available=True,
         created_at=created_at,
     )
     CaseStore(prepared.settings.case_database_path).save_investigation(

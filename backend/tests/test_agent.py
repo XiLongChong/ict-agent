@@ -498,7 +498,7 @@ async def test_deepseek_prompted_output_emits_official_json_mode_parameters() ->
             output_type=PromptedOutput(Answer, template=INVESTIGATION_OUTPUT_TEMPLATE),
             instructions=INVESTIGATION_INSTRUCTIONS,
             model_settings=OpenAIChatModelSettings(
-                max_tokens=5_000,
+                max_tokens=16_000,
                 openai_reasoning_effort="high",
                 extra_body={"thinking": {"type": "enabled"}},
             ),
@@ -508,7 +508,7 @@ async def test_deepseek_prompted_output_emits_official_json_mode_parameters() ->
 
     assert result.output == Answer(value=1)
     assert captured_request["response_format"] == {"type": "json_object"}
-    assert captured_request["max_tokens"] == 5_000
+    assert captured_request["max_tokens"] == 16_000
     assert "max_completion_tokens" not in captured_request
     assert captured_request["reasoning_effort"] == "high"
     assert captured_request["thinking"] == {"type": "enabled"}
@@ -617,7 +617,7 @@ async def test_deepseek_wire_capture_preserves_chat_completions_transaction() ->
                 {"role": "system", "content": "Use only tool evidence and return JSON."},
                 {"role": "user", "content": "{}"},
             ],
-            "max_tokens": 5_000,
+            "max_tokens": 16_000,
             "reasoning_effort": "high",
             "thinking": {"type": "enabled"},
             "response_format": {"type": "json_object"},
@@ -641,7 +641,7 @@ async def test_deepseek_wire_capture_preserves_chat_completions_transaction() ->
     assert capture.request["method"] == "POST"
     assert capture.request["url"] == "https://api.deepseek.com/chat/completions"
     assert capture.request["headers"]["authorization"] == "[REDACTED]"
-    assert capture.request["body"]["max_tokens"] == 5_000
+    assert capture.request["body"]["max_tokens"] == 16_000
     assert capture.request["body"]["response_format"] == {"type": "json_object"}
     assert capture.request["body"]["messages"][0]["role"] == "system"
     assert capture.response is not None

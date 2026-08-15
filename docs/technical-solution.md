@@ -65,7 +65,7 @@ flowchart LR
 - 最终输出使用 Pydantic AI `PromptedOutput(InvestigationReport)`。DeepSeek Provider 自动添加
   `response_format={"type":"json_object"}`，保证响应是 JSON；英文输出指令同时提供完整 JSON Schema 和
   一个仅表示结构的示例。Pydantic 继续校验字段结构，业务输出校验器继续核验证据与结论。
-- 单次模型请求设置 `max_tokens=5,000`，限制该次思考和回答的总输出，避免单轮无限生成；全程仍受
+- 单次模型请求设置 `max_tokens=16,000`，为高强度思考后的结构化报告预留稳定空间；全程仍受
   40,000 个累计输出 token 的运行预算约束。
 - 每次最多 12 次模型请求、10 次工具调用和 40,000 个累计输出 token；高思考模式的推理 token 会跨
   多轮工具调用累计，不能使用只够单次回答的预算。
@@ -136,7 +136,8 @@ Pydantic AI 输出校验器拒绝以下报告并要求模型修正：
 - `REPORT_COMPLETED`
 - `ERROR`
 
-最终 `REPORT_COMPLETED` 携带完整 `InvestigationRecord`。页面使用 Fetch Streams 增量解析；报告中的
+最终 `REPORT_COMPLETED` 携带不含模型协议正文的轻量 `InvestigationRecord`。页面使用 Fetch Streams
+增量解析；报告中的
 trace 保存工具完成和报告校验轨迹，供刷新后回放。页面以顺序消息流展示可验证的审查进度；完成后
 默认只展示结构化结论与处理建议，完整分析依据、工具证据和执行路径保持折叠可查。
 
@@ -145,8 +146,9 @@ trace 保存工具完成和报告校验轨迹，供刷新后回放。页面以�
 脱敏请求头和真实 JSON 请求体；其中 `messages` 包含英文系统指令、案件 JSON、助手工具调用、工具返回和
 重试提示，`tools` 只包含 `inspect_data`、`find_records` 和 `get_evidence`。模型请求携带
 `response_format={"type":"json_object"}`，最终轮返回普通 JSON 文本，不注册或调用 `final_result` 输出工具。
-响应保存状态码、脱敏响应头和按顺序解析的全部 SSE 数据事件。页面分别展示 HTTP 请求和响应，并可下载
-完整事务 JSON，用于开发调试和调查复盘，不参与业务结论或人工复核状态计算。协议快照保存在独立表中；
+响应保存状态码、脱敏响应头和按顺序解析的全部 SSE 数据事件。案件详情和 `REPORT_COMPLETED` 事件不携带
+完整协议；用户展开调试区时，页面才读取完整请求和响应摘要，完整事务由独立下载接口直接返回。这样既保留
+开发调试与调查复盘证据，也避免数千个 SSE 增量进入默认页面渲染。协议快照保存在独立表中；
 结构变更后不伪造、迁移或兼容旧版调查记录；读取历史案件时，非 4.0 协议对应的旧调查不作为
 `latest_investigation` 返回，但案件、风险信号和人工复核历史继续保留。需要查看当前协议与工具记录时，
 按现行流程重新调查生成 4.0 记录。
@@ -174,6 +176,8 @@ trace 保存工具完成和报告校验轨迹，供刷新后回放。页面以�
 | `GET /api/v1/cases` | 案件队列 |
 | `GET /api/v1/cases/{case_id}` | 规则、最新调查和审核历史 |
 | `POST /api/v1/cases/{case_id}/investigations` | NDJSON 调查事件流 |
+| `GET /api/v1/investigations/{investigation_id}/protocol` | 按需返回完整请求和响应摘要 |
+| `GET /api/v1/investigations/{investigation_id}/protocol/download` | 下载完整 HTTP 事务 JSON |
 | `POST /api/v1/cases/{case_id}/reviews` | 人工审核和状态推进 |
 | `GET /api/v1/pre-transaction/simulations` | 最近模拟新交易与对应案件 |
 | `POST /api/v1/pre-transaction/simulations` | 按历史分布生成新交易并创建统一案件 |

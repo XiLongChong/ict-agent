@@ -550,7 +550,7 @@ def _create_investigation_agent(
         deps_type=InvestigationDependencies,
         instructions=INVESTIGATION_INSTRUCTIONS,
         model_settings=OpenAIChatModelSettings(
-            max_tokens=5_000,
+            max_tokens=16_000,
             openai_reasoning_effort="high",
             extra_body={"thinking": {"type": "enabled"}},
         ),

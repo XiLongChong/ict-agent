@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from ict_agent.config import load_frontend_dist_dir, load_settings
@@ -23,6 +23,7 @@ from ict_agent.models import (
     FeishuStatusResponse,
     FeishuTestResponse,
     HealthResponse,
+    InvestigationProtocolDetail,
     PreTransactionSimulationRequest,
     PreTransactionSimulationResponse,
     ReviewRecord,
@@ -39,6 +40,8 @@ from ict_agent.service import (
     get_dashboard,
     get_data_snapshot,
     get_feishu_status_service,
+    get_investigation_protocol,
+    get_investigation_protocol_detail,
     get_risk_overview,
     list_cases,
     list_pre_transaction_simulations,
@@ -221,6 +224,43 @@ async def create_case_investigation(case_id: str) -> StreamingResponse:
             yield event.model_dump_json() + "\n"
 
     return StreamingResponse(ndjson_events(), media_type="application/x-ndjson")
+
+
+@app.get(
+    "/api/v1/investigations/{investigation_id}/protocol",
+    response_model=InvestigationProtocolDetail,
+    responses={404: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+    tags=["agent"],
+)
+async def investigation_protocol(investigation_id: str) -> InvestigationProtocolDetail:
+    """按需返回完整请求和可安全渲染的响应摘要。"""
+
+    return get_investigation_protocol_detail(investigation_id)
+
+
+@app.get(
+    "/api/v1/investigations/{investigation_id}/protocol/download",
+    responses={
+        200: {"content": {"application/json": {}}},
+        404: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+    tags=["agent"],
+)
+async def download_investigation_protocol(investigation_id: str) -> Response:
+    """只在用户下载时序列化完整 DeepSeek HTTP 请求与响应。"""
+
+    protocol = get_investigation_protocol(investigation_id)
+    safe_id = "".join(
+        character if character.isalnum() or character in "-_" else "-"
+        for character in investigation_id
+    )[:64]
+    filename = f"{safe_id or 'investigation'}-deepseek-chat-completions.json"
+    return Response(
+        content=protocol.model_dump_json(indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.post(

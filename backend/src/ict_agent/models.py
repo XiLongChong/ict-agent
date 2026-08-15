@@ -369,6 +369,30 @@ class InvestigationProtocolSnapshot(BaseModel):
     response: dict[str, JsonValue] | None = None
 
 
+class InvestigationProtocolResponseSummary(BaseModel):
+    """A compact response summary safe to render on the case page."""
+
+    status_code: int | None = None
+    headers: dict[str, str] = Field(default_factory=dict)
+    body_format: Literal["sse", "json", "text", "empty"]
+    event_count: Annotated[int, Field(ge=0)] = 0
+    finish_reason: str | None = None
+    usage: dict[str, JsonValue] | None = None
+    reasoning_characters: Annotated[int, Field(ge=0)] = 0
+    content_characters: Annotated[int, Field(ge=0)] = 0
+
+
+class InvestigationProtocolDetail(BaseModel):
+    """The render-safe protocol detail loaded only when the debug panel is opened."""
+
+    schema_version: Literal["4.0"] = "4.0"
+    api_format: Literal["openai_chat_completions"] = "openai_chat_completions"
+    request_index: Annotated[int, Field(ge=1)]
+    capture_source: Literal["wire", "pydantic_ai_test"]
+    request: dict[str, JsonValue]
+    response_summary: InvestigationProtocolResponseSummary | None = None
+
+
 class InvestigationRecord(BaseModel):
     """已经保存的一次调查。"""
 
@@ -376,7 +400,7 @@ class InvestigationRecord(BaseModel):
     case_id: str
     report: InvestigationReport
     evidence: list[Evidence]
-    protocol: InvestigationProtocolSnapshot | None = None
+    protocol_available: bool = False
     created_at: str
 
 

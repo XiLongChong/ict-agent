@@ -11,9 +11,12 @@ from ict_agent.rules import RuleThresholds, build_rule_scan
 from ict_agent.service import (
     _load_investigation_record,
     _load_protocol_snapshot,
+    _protocol_response_summary,
     create_pre_transaction_simulation,
     get_case_detail,
     get_dashboard,
+    get_investigation_protocol,
+    get_investigation_protocol_detail,
     investigate_case,
     list_pre_transaction_simulations,
     review_case,
@@ -86,9 +89,51 @@ def test_legacy_anthropic_protocol_is_not_exposed_as_current() -> None:
         json.dumps({"trace": [{"tool_name": "query_business_evidence"}]}),
         json.dumps([{"tool_name": "query_business_evidence"}]),
         "2026-08-15T00:00:00Z",
-        legacy_protocol,
+        "3.0",
+        "anthropic_messages",
     )
     assert _load_investigation_record(legacy_row) is None
+
+
+def test_protocol_response_summary_collapses_streamed_reasoning() -> None:
+    summary = _protocol_response_summary(
+        {
+            "status_code": 200,
+            "headers": {"content-type": "text/event-stream"},
+            "body": {
+                "format": "sse",
+                "events": [
+                    {
+                        "event": "message",
+                        "data": {
+                            "choices": [
+                                {
+                                    "delta": {"reasoning_content": "分析"},
+                                    "finish_reason": None,
+                                }
+                            ]
+                        },
+                    },
+                    {
+                        "event": "message",
+                        "data": {
+                            "choices": [{"delta": {"content": "{}"}, "finish_reason": "stop"}],
+                            "usage": {"completion_tokens": 2},
+                        },
+                    },
+                    {"event": "message", "data": "[DONE]"},
+                ],
+            },
+        }
+    )
+
+    assert summary is not None
+    assert summary.body_format == "sse"
+    assert summary.event_count == 3
+    assert summary.reasoning_characters == 2
+    assert summary.content_characters == 2
+    assert summary.finish_reason == "stop"
+    assert summary.usage == {"completion_tokens": 2}
 
 
 def _service_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -236,13 +281,16 @@ async def test_investigation_service_persists_report(settings: Settings) -> None
     assert len(record.evidence) == 6
     assert detail.status == "PENDING_HUMAN_REVIEW"
     assert detail.latest_investigation is not None
-    assert record.protocol is not None
-    assert record.protocol.response is not None
-    assert detail.latest_investigation.protocol == record.protocol
-    assert (
-        CaseStore(settings.case_database_path).fetch_latest_investigation(case_id).rows[0][5]
-        is not None
-    )
+    assert record.protocol_available is True
+    assert detail.latest_investigation.protocol_available is True
+    assert "protocol_json" not in detail.model_dump_json()
+    protocol = get_investigation_protocol(record.investigation_id, settings=settings)
+    protocol_detail = get_investigation_protocol_detail(record.investigation_id, settings=settings)
+    assert protocol.response is not None
+    assert protocol_detail.request == protocol.request
+    assert protocol_detail.response_summary is not None
+    stored = CaseStore(settings.case_database_path).fetch_latest_investigation(case_id).rows[0]
+    assert stored[5:] == ("4.0", "openai_chat_completions")
 
     await review_case(
         case_id,

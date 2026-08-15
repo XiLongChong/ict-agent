@@ -5,7 +5,13 @@ from collections.abc import AsyncIterator
 
 from fastapi.testclient import TestClient
 from ict_agent import api
-from ict_agent.models import InvestigationStreamEvent, PreTransactionSimulationResponse
+from ict_agent.models import (
+    InvestigationProtocolDetail,
+    InvestigationProtocolResponseSummary,
+    InvestigationProtocolSnapshot,
+    InvestigationStreamEvent,
+    PreTransactionSimulationResponse,
+)
 from pytest import MonkeyPatch
 
 client = TestClient(api.app)
@@ -95,6 +101,46 @@ def test_investigation_contract_streams_ndjson(monkeypatch: MonkeyPatch) -> None
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/x-ndjson")
     assert response.json()["event_type"] == "RUN_STARTED"
+
+
+def test_investigation_protocol_is_loaded_and_downloaded_on_demand(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    request = {
+        "method": "POST",
+        "url": "https://api.deepseek.com/chat/completions",
+        "headers": {"authorization": "[REDACTED]"},
+        "body": {"model": "deepseek-v4-flash", "max_tokens": 16_000},
+    }
+    snapshot = InvestigationProtocolSnapshot(
+        request_index=3,
+        capture_source="wire",
+        request=request,
+        response={"status_code": 200, "headers": {}, "body": {"format": "sse"}},
+    )
+    detail = InvestigationProtocolDetail(
+        request_index=3,
+        capture_source="wire",
+        request=request,
+        response_summary=InvestigationProtocolResponseSummary(
+            status_code=200,
+            body_format="sse",
+            event_count=5_003,
+            finish_reason="length",
+        ),
+    )
+    monkeypatch.setattr(api, "get_investigation_protocol_detail", lambda _id: detail)
+    monkeypatch.setattr(api, "get_investigation_protocol", lambda _id: snapshot)
+
+    response = client.get("/api/v1/investigations/inv-1/protocol")
+    download = client.get("/api/v1/investigations/inv-1/protocol/download")
+
+    assert response.status_code == 200
+    assert response.json()["response_summary"]["event_count"] == 5_003
+    assert "events" not in response.text
+    assert download.status_code == 200
+    assert download.headers["content-disposition"].startswith("attachment;")
+    assert download.json()["response"]["body"]["format"] == "sse"
 
 
 def test_pre_transaction_contract(monkeypatch: MonkeyPatch) -> None:

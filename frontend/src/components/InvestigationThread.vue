@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { AlertCircle, CheckCircle2, Database, Download, PlayCircle, Search, ShieldCheck, Sparkles } from "lucide-vue-next";
 import Badge from "./ui/Badge.vue";
-import { hypothesisColor, labels, priorityColor, queryArguments, stageColor, streamNdjson } from "../lib";
+import { api, hypothesisColor, labels, priorityColor, queryArguments, stageColor, streamNdjson } from "../lib";
 
 const props = defineProps({ caseItem: Object });
 const emit = defineEmits(["completed"]);
@@ -11,22 +11,20 @@ const events = ref([]);
 const record = ref(props.caseItem?.latest_investigation || null);
 const error = ref("");
 const canInvestigate = computed(() => props.caseItem?.status === "PENDING_AGENT_REVIEW");
-const protocol = computed(() => {
-  const value = record.value?.protocol;
-  return value?.schema_version === "4.0" && value?.api_format === "openai_chat_completions"
-    ? value
-    : null;
-});
-const protocolJson = computed(() =>
-  protocol.value ? JSON.stringify(protocol.value, null, 2) : ""
-);
+const protocol = ref(null);
+const protocolLoading = ref(false);
+const protocolError = ref("");
 const protocolRequestJson = computed(() =>
   protocol.value?.request ? JSON.stringify(protocol.value.request, null, 2) : ""
 );
 const protocolResponseJson = computed(() =>
-  protocol.value?.response ? JSON.stringify(protocol.value.response, null, 2) : ""
+  protocol.value?.response_summary ? JSON.stringify(protocol.value.response_summary, null, 2) : ""
 );
-const protocolDownloadUrl = ref("");
+const protocolDownloadUrl = computed(() =>
+  record.value?.investigation_id
+    ? `/api/v1/investigations/${encodeURIComponent(record.value.investigation_id)}/protocol/download`
+    : ""
+);
 const protocolDownloadFilename = computed(() => {
   const caseId = String(props.caseItem?.case_id || record.value?.case_id || "case").replace(/[^a-zA-Z0-9_-]/g, "-");
   const requestIndex = protocol.value?.request_index || 1;
@@ -39,28 +37,47 @@ watch(
     record.value = value?.latest_investigation || null;
     events.value = [];
     error.value = "";
+    protocol.value = null;
+    protocolLoading.value = false;
+    protocolError.value = "";
   },
   { deep: false }
 );
 
-watch(
-  protocolJson,
-  (value) => {
-    if (protocolDownloadUrl.value) URL.revokeObjectURL(protocolDownloadUrl.value);
-    protocolDownloadUrl.value = value
-      ? URL.createObjectURL(new Blob([value], { type: "application/json;charset=utf-8" }))
-      : "";
-  },
-  { immediate: true }
-);
-
+let scrollFrame = 0;
+let scrollScheduled = false;
 onBeforeUnmount(() => {
-  if (protocolDownloadUrl.value) URL.revokeObjectURL(protocolDownloadUrl.value);
+  if (scrollFrame) cancelAnimationFrame(scrollFrame);
+  scrollScheduled = false;
 });
 
 async function scrollToBottom() {
+  if (scrollScheduled) return;
+  scrollScheduled = true;
   await nextTick();
-  window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+  scrollFrame = requestAnimationFrame(() => {
+    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "auto" });
+    scrollFrame = 0;
+    scrollScheduled = false;
+  });
+}
+
+async function loadProtocol(event) {
+  if (!event.currentTarget.open || protocol.value || protocolLoading.value || !record.value?.investigation_id) return;
+  const investigationId = record.value.investigation_id;
+  protocolLoading.value = true;
+  protocolError.value = "";
+  try {
+    const value = await api(`/api/v1/investigations/${encodeURIComponent(investigationId)}/protocol`);
+    if (value.schema_version !== "4.0" || value.api_format !== "openai_chat_completions") {
+      throw new Error("该调查协议不是当前 Chat Completions 格式。");
+    }
+    if (record.value?.investigation_id === investigationId) protocol.value = value;
+  } catch (exception) {
+    if (record.value?.investigation_id === investigationId) protocolError.value = exception.message;
+  } finally {
+    if (record.value?.investigation_id === investigationId) protocolLoading.value = false;
+  }
 }
 
 async function investigate() {
@@ -336,12 +353,14 @@ function completenessLabel(value) {
         </div>
       </details>
 
-      <details class="card">
+      <details v-if="record.protocol_available" class="card" @toggle="loadProtocol">
         <summary class="cursor-pointer select-none px-5 py-4 text-sm font-semibold text-ink">
           查看 DeepSeek Chat Completions HTTP JSON
         </summary>
         <div class="border-t border-border px-5 py-5">
-          <template v-if="protocol">
+          <p v-if="protocolLoading" class="text-sm leading-6 text-muted">正在加载本轮 HTTP 请求摘要…</p>
+          <p v-else-if="protocolError" class="text-sm leading-6 text-danger">{{ protocolError }}</p>
+          <template v-else-if="protocol">
             <div class="mb-3 flex flex-wrap items-center gap-2">
               <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-sm text-muted">
                 <span>最后一次真实 HTTP 请求与响应</span>
@@ -372,17 +391,15 @@ function completenessLabel(value) {
                 ><code>{{ protocolRequestJson }}</code></pre>
               </section>
               <section>
-                <h4 class="mb-2 text-sm font-semibold text-ink">HTTP 响应</h4>
+                <h4 class="mb-2 text-sm font-semibold text-ink">HTTP 响应摘要</h4>
                 <pre
                   data-testid="investigation-protocol-response-json"
                   class="max-h-[65vh] overflow-auto rounded-lg bg-[#101828] p-4 font-mono text-xs leading-5 text-[#d0d5dd]"
                 ><code>{{ protocolResponseJson || "本轮没有取得 DeepSeek Chat Completions HTTP 响应。" }}</code></pre>
+                <p class="mt-2 text-xs leading-5 text-muted">完整原始响应仅在点击“下载 JSON”时由后端读取，不进入页面渲染。</p>
               </section>
             </div>
           </template>
-          <p v-else class="text-sm leading-6 text-muted">
-            该调查完成时尚未启用 DeepSeek Chat Completions HTTP 协议记录；后续新调查将显示最后一次真实请求与响应。
-          </p>
         </div>
       </details>
     </template>

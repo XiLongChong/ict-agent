@@ -1242,13 +1242,27 @@ class CaseStore:
         return self._fetch(
             """
             SELECT i.investigation_id, i.case_id, i.report_json, i.evidence_json,
-                   i.created_at, p.protocol_json
+                   i.created_at,
+                   json_extract_string(p.protocol_json, '$.schema_version') AS schema_version,
+                   json_extract_string(p.protocol_json, '$.api_format') AS api_format
             FROM case_investigations AS i
             LEFT JOIN investigation_protocols AS p
               ON p.investigation_id = i.investigation_id
             WHERE i.case_id = ? ORDER BY i.created_at DESC LIMIT 1
             """,
             [case_id],
+        )
+
+    def fetch_investigation_protocol(self, investigation_id: str) -> QueryResult:
+        """按调查编号返回完整模型协议，仅供按需调试和下载。"""
+
+        return self._fetch(
+            """
+            SELECT protocol_json
+            FROM investigation_protocols
+            WHERE investigation_id = ?
+            """,
+            [investigation_id],
         )
 
     def fetch_reviews(self, case_id: str) -> QueryResult:

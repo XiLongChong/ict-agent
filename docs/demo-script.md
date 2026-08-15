@@ -10,10 +10,10 @@
 5. 进入刚创建的案件，展示 `PRE_TRANSACTION` 来源、交易级业务类型和原始信号。业务类型用于选择正确
    历史基线；一个客户可以同时有分销、项目和服务云，三者不是三个主体。
 6. 点击“启动 Agent 调查”。观察 Agent 先取得拟交易和同业务历史画像，再检查客户应收、同业务销售/
-   回款和授信。业务演示默认查看工具、证据和校验；需要调试时，可在 AI 审查页展开最后一次模型请求与
-   DeepSeek Chat Completions HTTP 请求与响应 JSON，核对脱敏请求头、`response_format`、英文系统指令、
-   三项工具、累计 `messages`、`reasoning_content`、`tool_calls`、工具返回、重试和 SSE 响应事件；需要
-   离线分析时下载完整事务 JSON。
+   回款和授信。业务演示默认查看工具、证据和校验；需要调试时，可在 AI 审查页按需加载最后一次
+   DeepSeek Chat Completions HTTP 请求与响应摘要，核对脱敏请求头、`response_format`、英文系统指令、
+   三项工具、累计 `messages`、结束原因和 Token 用量；需要核查 `reasoning_content`、`tool_calls`、工具
+   返回、重试和全部 SSE 响应事件时，下载完整事务 JSON。
 7. 展开证据，展示 `evidence_id`、查询参数、数据期间、来源、口径和 warning。说明客户级应收/授信与
    交易级业务画像粒度不同，Agent 不会把客户总应收伪装成只属于某个业务。
 8. 查看报告：先看风险信号阶段，再区分确定事实、证据支持/削弱的原因和无法判断的具体事项。正常情景
