@@ -72,3 +72,37 @@ def test_case_assembler_creates_case_and_persisted_signal_associations() -> None
     assert case.rule_hit_count == 2
     assert case.created_at == "2026-08-15T00:00:00+00:00"
     assert {hit.case_id for hit in assembly.hits} == {"AR|C001"}
+
+
+def test_case_assembler_preserves_simulation_entry_metadata() -> None:
+    subject = RuleSubject(
+        admission_key="pre_simulation-1",
+        investigation_profile="PRE_TRANSACTION",
+        subject_type="CUSTOMER",
+        subject_id="C001",
+        subject_label="C001 测试客户",
+        subject_context={"simulation_id": "simulation-1", "customer_id": "C001"},
+        observation_date="2026-08-15",
+        exposure_amount=800.0,
+    )
+    admission = AdmissionFunnel().admit((_hit("PRE_TRANSACTION_REVIEW", subject=subject),))
+
+    assembly = CaseAssembler().assemble(
+        admission,
+        rule_set_version="pre-transaction-simulator-1.0",
+        created_at="2026-08-15T00:00:00+00:00",
+        source="PRE_TRANSACTION_SIMULATION",
+        business_type="PROJECT",
+        source_snapshot_id="snapshot-1",
+        data_quality_status="WARNING",
+        data_quality_warnings=("历史样本不足。",),
+        summary="演示新订单进入调查。",
+    )
+
+    case = assembly.cases[0]
+    assert case.source == "PRE_TRANSACTION_SIMULATION"
+    assert case.business_type == "PROJECT"
+    assert case.source_snapshot_id == "snapshot-1"
+    assert case.data_quality_status == "WARNING"
+    assert case.data_quality_warnings == ("历史样本不足。",)
+    assert case.summary == "演示新订单进入调查。"

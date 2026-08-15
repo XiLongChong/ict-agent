@@ -1,4 +1,4 @@
-"""规则命中的准入、去重和主体分组。"""
+"""统一风险信号的准入、去重和主体分组。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from ict_agent.rule_models import AdmissionResult, AdmittedRuleGroup, RuleHit
 
 
 class AdmissionFunnel:
-    """把原始命中筛成可组装案件的主体信号组。
+    """把不同入口的原始命中筛成可组装案件的主体信号组。
 
     这里仅执行跨规则的入口治理，不重复实现任何业务阈值。业务规则的阈值和组合条件
     仍由规则层负责；本层只保证命中具备完整主体、去除同一规则的重复输出，并按稳定

@@ -14,12 +14,14 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 from pydantic import JsonValue
 from pydantic_ai.models import Model
 
+from ict_agent.admission import AdmissionFunnel
 from ict_agent.agent import (
     InvestigationAgentProgress,
     InvestigationOutcome,
     build_investigation_case_input,
     stream_investigation_agent,
 )
+from ict_agent.case_assembler import CaseAssembler
 from ict_agent.config import ConfigurationError, Settings, load_settings
 from ict_agent.data import (
     CaseStore,
@@ -74,8 +76,9 @@ from ict_agent.models import (
     RuleRunResponse,
     SubjectType,
 )
-from ict_agent.pretransaction import Scenario, generate_simulated_order
+from ict_agent.pretransaction import Scenario, SimulatedOrder, generate_simulated_order
 from ict_agent.rule_engine import build_rule_scan
+from ict_agent.rule_models import RuleHit, RuleSubject
 from ict_agent.tools import (
     AnalysisInputError,
     get_ar_trend,
@@ -896,6 +899,82 @@ def _simulation_response(row: tuple[DatabaseScalar, ...]) -> PreTransactionSimul
     )
 
 
+def _assemble_simulated_order_case(
+    simulated: SimulatedOrder,
+    *,
+    priority: RiskPriority,
+    reason: str,
+    list_status: str,
+) -> tuple[CaseWrite, RuleHitWrite]:
+    """把演示订单转换为统一原始信号，再走准入和案件组装。"""
+
+    case_id = f"pre_{simulated.simulation_id.replace('-', '')[:20]}"
+    generated_date = simulated.generated_at.split("T", maxsplit=1)[0]
+    context: dict[str, DatabaseScalar] = {
+        "simulation_id": simulated.simulation_id,
+        "customer_id": simulated.customer_id,
+        "customer_name": simulated.customer_name,
+        "amount_yuan": simulated.amount_yuan,
+        "proposed_term_days": simulated.proposed_term_days,
+        "expected_margin_rate": simulated.expected_margin_rate,
+        "scenario": simulated.scenario.value,
+        "historical_order_count": simulated.historical_order_count,
+        "historical_median_amount_yuan": simulated.distribution_summary["median_yuan"],
+        "historical_p90_amount_yuan": simulated.distribution_summary["p90_yuan"],
+        "list_status_at_intake": list_status,
+        "generated_at": simulated.generated_at,
+        "simulated": True,
+    }
+    source_version = "pre-transaction-simulator-1.0"
+    hit = RuleHit(
+        rule_hit_id=f"sig_{simulated.simulation_id.replace('-', '')[:20]}",
+        subject=RuleSubject(
+            admission_key=case_id,
+            investigation_profile="PRE_TRANSACTION",
+            subject_type="CUSTOMER",
+            subject_id=simulated.customer_id,
+            subject_label=f"{simulated.customer_id} {simulated.customer_name}",
+            subject_context=context,
+            observation_date=generated_date,
+            exposure_amount=simulated.amount_yuan,
+        ),
+        rule_id="PRE_TRANSACTION_REVIEW",
+        rule_name="新交易事前调查",
+        rule_version=source_version,
+        severity=priority,
+        exposure_amount=simulated.amount_yuan,
+        reason=reason,
+        metrics={
+            "proposed_amount_yuan": simulated.amount_yuan,
+            "historical_median_yuan": simulated.distribution_summary["median_yuan"],
+            "historical_p90_yuan": simulated.distribution_summary["p90_yuan"],
+            "scenario": simulated.scenario.value,
+            "historical_order_count": simulated.historical_order_count,
+            "list_status_at_intake": list_status,
+        },
+        threshold_source="客户同业务类型历史分布与成交前必查流程",
+        threshold_version=simulated.source_snapshot_id,
+        sources=("sales", "payments", "customer_credit"),
+        period=generated_date,
+    )
+    # 当前系统是演示模式：所有生成的有效模拟订单都应通过准入。
+    admission = AdmissionFunnel().admit((hit,))
+    assembly = CaseAssembler().assemble(
+        admission,
+        rule_set_version=source_version,
+        created_at=simulated.generated_at,
+        source="PRE_TRANSACTION_SIMULATION",
+        business_type=simulated.business_type,
+        source_snapshot_id=simulated.source_snapshot_id,
+        data_quality_status=simulated.data_quality_status,
+        data_quality_warnings=tuple(simulated.warnings),
+        summary=reason,
+    )
+    if len(assembly.cases) != 1 or len(assembly.hits) != 1:
+        raise AnalysisInputError("模拟订单未通过统一案件准入，无法创建演示案件。")
+    return assembly.cases[0], assembly.hits[0]
+
+
 def list_pre_transaction_simulations(
     *,
     limit: int = 50,
@@ -977,66 +1056,13 @@ async def create_pre_transaction_simulation(
         if list_status == "黑名单":
             priority = "HIGH"
             reason += " 当前授信主数据标记为黑名单，必须人工复核。"
-        case_id = f"pre_{simulated.simulation_id.replace('-', '')[:20]}"
-        generated_date = simulated.generated_at.split("T", maxsplit=1)[0]
-        context: dict[str, DatabaseScalar] = {
-            "simulation_id": simulated.simulation_id,
-            "customer_id": simulated.customer_id,
-            "customer_name": simulated.customer_name,
-            "amount_yuan": simulated.amount_yuan,
-            "proposed_term_days": simulated.proposed_term_days,
-            "expected_margin_rate": simulated.expected_margin_rate,
-            "scenario": simulated.scenario.value,
-            "historical_order_count": simulated.historical_order_count,
-            "historical_median_amount_yuan": simulated.distribution_summary["median_yuan"],
-            "historical_p90_amount_yuan": simulated.distribution_summary["p90_yuan"],
-            "list_status_at_intake": list_status,
-            "generated_at": simulated.generated_at,
-            "simulated": True,
-        }
-        source_version = "pre-transaction-simulator-1.0"
-        case = CaseWrite(
-            case_id=case_id,
-            investigation_profile="PRE_TRANSACTION",
-            subject_type="CUSTOMER",
-            subject_id=simulated.customer_id,
-            subject_label=f"{simulated.customer_id} {simulated.customer_name}",
-            subject_context=context,
-            observation_date=generated_date,
+        case, signal = _assemble_simulated_order_case(
+            simulated,
             priority=priority,
-            exposure_amount=simulated.amount_yuan,
-            summary=reason,
-            rule_hit_count=1,
-            rule_set_version=source_version,
-            created_at=simulated.generated_at,
-            source="PRE_TRANSACTION_SIMULATION",
-            business_type=simulated.business_type,
-            source_snapshot_id=simulated.source_snapshot_id,
-            data_quality_status=simulated.data_quality_status,
-            data_quality_warnings=tuple(simulated.warnings),
-        )
-        signal = RuleHitWrite(
-            rule_hit_id=f"sig_{simulated.simulation_id.replace('-', '')[:20]}",
-            case_id=case_id,
-            rule_id="PRE_TRANSACTION_REVIEW",
-            rule_name="新交易事前调查",
-            rule_version=source_version,
-            severity=priority,
-            exposure_amount=simulated.amount_yuan,
             reason=reason,
-            metrics={
-                "proposed_amount_yuan": simulated.amount_yuan,
-                "historical_median_yuan": simulated.distribution_summary["median_yuan"],
-                "historical_p90_yuan": simulated.distribution_summary["p90_yuan"],
-                "scenario": simulated.scenario.value,
-                "historical_order_count": simulated.historical_order_count,
-                "list_status_at_intake": list_status,
-            },
-            threshold_source="客户同业务类型历史分布与成交前必查流程",
-            threshold_version=simulated.source_snapshot_id,
-            sources=("sales", "payments", "customer_credit"),
-            period=generated_date,
+            list_status=list_status,
         )
+        case_id = case.case_id
         write = PreTransactionWrite(
             simulation_id=simulated.simulation_id,
             case_id=case_id,

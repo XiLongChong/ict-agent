@@ -65,8 +65,8 @@ function openCase() {
     <header>
       <h1 class="text-2xl font-bold text-ink">事前交易模拟</h1>
       <p class="mt-1 max-w-3xl text-sm leading-6 text-muted">
-        按客户同业务类型的历史订单分布生成一笔新交易，再进入与规则预警相同的 Agent 调查和人工复核链路。
-        模拟订单不会写入真实销售、合同、应收或授信数据。
+        按客户同业务类型的历史订单分布生成一笔新交易，经统一准入与案件组装后进入 Agent 调查和人工复核链路。
+        当前为演示模式，所有有效模拟订单一律立案；模拟订单不会写入真实销售、合同、应收或授信数据。
       </p>
     </header>
 

@@ -12,10 +12,10 @@ flowchart LR
     DB --> RULE["23 条确定性规则"]
     DB --> SIM["历史分布新交易模拟"]
     RULE --> HIT["规则命中"]
+    SIM --> HIT
     HIT --> ADMISSION["准入漏斗"]
     ADMISSION --> ASSEMBLER["案件组装器"]
     ASSEMBLER --> CASE["统一信号与案件库"]
-    SIM --> CASE
     CASE --> CATALOG["真实探测证据能力"]
     CATALOG --> GATEWAY["发现 / 搜索 / 查询网关"]
     GATEWAY --> TOOLS["类型化语义注册表"]
@@ -44,16 +44,17 @@ flowchart LR
 
 通用数据问答 Agent 已删除。经营看板继续直接调用确定性工具，避免无关工具进入案件调查上下文。
 
-### 2.1 规则扫描三段式
+### 2.1 统一信号三段式
 
-规则扫描严格按以下方向流动，后层不能反向修改前层的业务判断：
+规则扫描和演示新订单严格按以下方向流动，后层不能反向修改前层的业务判断：
 
-1. `rules.py` 读取受控特征并执行冻结阈值，只产出不含 `case_id` 的 `RuleHit`；规则不创建案件，也不负责跨规则合并。
+1. 规则或模拟订单入口只产出不含 `case_id` 的 `RuleHit`；规则执行冻结阈值，演示模式下生成的有效模拟订单直接作为待调查信号，不在入口直接创建案件。
 2. `admission.py` 执行入口治理：拒绝缺少主体身份的命中，去除同一主体、规则和版本的重复输出，并按稳定主体键形成准入信号组；不复制任何规则阈值。
 3. `case_assembler.py` 将准入信号组映射为稳定案件编号、案件摘要和持久化 `RuleHitWrite`；案件优先级、敞口和信号关联只在这里组装。
-4. `rule_engine.py` 只负责编排三步并生成扫描摘要，应用服务再把结果原子写入案件库。
+4. 规则扫描由 `rule_engine.py` 编排三步；模拟订单应用服务复用同一准入和组装器，再把结果原子写入案件库。
 
-该边界允许未来替换准入政策或接入外部命中源，而不要求规则函数知道案件存储结构。
+当前系统默认为演示模式，所有由模拟器成功生成的有效新订单都通过准入并立案；准入仍保留主体完整性校验。
+该边界允许未来替换准入政策或接入外部命中源，而不要求入口函数知道案件存储结构。
 
 ## 3. 数据与口径
 
@@ -203,7 +204,7 @@ trace 保存工具完成和报告校验轨迹，供刷新后回放。页面以�
 | `GET /api/v1/investigations/{investigation_id}/protocol/download` | 下载完整 HTTP 事务 JSON |
 | `POST /api/v1/cases/{case_id}/reviews` | 人工审核和状态推进 |
 | `GET /api/v1/pre-transaction/simulations` | 最近模拟新交易与对应案件 |
-| `POST /api/v1/pre-transaction/simulations` | 按历史分布生成新交易并创建统一案件 |
+| `POST /api/v1/pre-transaction/simulations` | 按历史分布生成新交易，经统一准入与组装后创建案件 |
 | `GET /api/v1/integrations/feishu/status` | 飞书配置、长连接和通知群绑定状态 |
 | `POST /api/v1/integrations/feishu/test` | 向已绑定群发送连通性测试卡片 |
 

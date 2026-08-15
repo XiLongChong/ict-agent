@@ -1,7 +1,8 @@
-"""把准入后的规则信号组装为统一案件写入对象。"""
+"""把准入后的信号组装为统一案件写入对象。"""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ict_agent.data import CaseWrite, DatabaseScalar, RuleHitWrite
@@ -17,7 +18,7 @@ class CaseAssembly:
 
 
 class CaseAssembler:
-    """将主体信号组转换为案件，不参与规则判断或准入决策。"""
+    """将不同入口的主体信号组转换为案件，不参与规则判断或准入决策。"""
 
     _SEVERITY_ORDER = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
 
@@ -27,6 +28,12 @@ class CaseAssembler:
         *,
         rule_set_version: str,
         created_at: str,
+        source: str = "RULE_SCAN",
+        business_type: str | None = None,
+        source_snapshot_id: str = "",
+        data_quality_status: str = "UNKNOWN",
+        data_quality_warnings: Sequence[str] = (),
+        summary: str | None = None,
     ) -> CaseAssembly:
         cases: list[CaseWrite] = []
         persisted_hits: list[RuleHitWrite] = []
@@ -38,6 +45,12 @@ class CaseAssembler:
                     case_id=case_id,
                     rule_set_version=rule_set_version,
                     created_at=created_at,
+                    source=source,
+                    business_type=business_type,
+                    source_snapshot_id=source_snapshot_id,
+                    data_quality_status=data_quality_status,
+                    data_quality_warnings=data_quality_warnings,
+                    summary=summary,
                 )
             )
             persisted_hits.extend(
@@ -58,6 +71,12 @@ class CaseAssembler:
         case_id: str,
         rule_set_version: str,
         created_at: str,
+        source: str,
+        business_type: str | None,
+        source_snapshot_id: str,
+        data_quality_status: str,
+        data_quality_warnings: Sequence[str],
+        summary: str | None,
     ) -> CaseWrite:
         subject = group.subject
         primary_hit = min(
@@ -81,12 +100,16 @@ class CaseAssembler:
             observation_date=subject.observation_date,
             priority=self._priority(group.hits),
             exposure_amount=exposure,
-            summary=(
-                f"主要风险：{primary_hit.rule_name}；需结合 {len(group.hits)} 条规则信号调查核实。"
-            ),
+            summary=summary
+            or f"主要风险：{primary_hit.rule_name}；需结合 {len(group.hits)} 条规则信号调查核实。",
             rule_hit_count=len(group.hits),
             rule_set_version=rule_set_version,
             created_at=created_at,
+            source=source,
+            business_type=business_type,
+            source_snapshot_id=source_snapshot_id,
+            data_quality_status=data_quality_status,
+            data_quality_warnings=data_quality_warnings,
         )
 
     @staticmethod
