@@ -778,23 +778,36 @@ def get_negative_margin_features(store: DuckDBStore) -> QueryResult:
 
     return store.fetch(
         """
+        WITH customer_names AS (
+            SELECT
+                "客户名称" AS customer_name,
+                CASE WHEN COUNT(DISTINCT "客户编号_中台") = 1
+                     THEN MAX("客户编号_中台") END AS customer_id
+            FROM customer_credit
+            GROUP BY "客户名称"
+        )
         SELECT
-            COALESCE(
-                (SELECT MAX("客户编号_中台") FROM customer_credit cc
-                 WHERE cc."客户名称" = t.customer_name), t.customer_name
-            ) AS customer_id,
+            n.customer_id,
             t.customer_name,
-            t.margin_loss
+            t.margin_loss,
+            t.contract_numbers
         FROM (
             SELECT
                 "客户名称" AS customer_name,
                 SUM(
                     "销售金额" * CASE WHEN "实际净毛利率_不含税" < 0
-                                      THEN -"实际净毛利率_不含税" ELSE 0 END
-                ) AS margin_loss
+                                       THEN -"实际净毛利率_不含税" ELSE 0 END
+                ) AS margin_loss,
+                array_to_string(
+                    list_sort(
+                        list_distinct(list(NULLIF("合同编号", '') ORDER BY "合同编号"))
+                    ),
+                    '、'
+                ) AS contract_numbers
             FROM contracts
             GROUP BY "客户名称"
         ) t
+        LEFT JOIN customer_names n USING (customer_name)
         """
     )
 
@@ -804,16 +817,59 @@ def get_margin_optimistic_features(store: DuckDBStore) -> QueryResult:
 
     return store.fetch(
         """
+        WITH contract_features AS (
+            SELECT
+                "合同编号" AS contract_number,
+                MAX("客户名称") AS customer_name,
+                SUM("销售金额") AS contract_amount,
+                SUM("销售金额" * "实估毛利率_不含税") / NULLIF(SUM("销售金额"), 0)
+                    AS weighted_est_margin,
+                SUM("销售金额" * "实际净毛利率_不含税") / NULLIF(SUM("销售金额"), 0)
+                    AS weighted_act_margin
+            FROM contracts
+            GROUP BY "合同编号"
+        ), contract_links AS (
+            SELECT "合同号" AS contract_number, "客户编号" AS customer_id
+            FROM sales
+            WHERE NULLIF("合同号", '') IS NOT NULL
+              AND NULLIF("客户编号", '') IS NOT NULL
+            UNION ALL
+            SELECT "合同号" AS contract_number, "客户编号" AS customer_id
+            FROM payments
+            WHERE NULLIF("合同号", '') IS NOT NULL
+              AND NULLIF("客户编号", '') IS NOT NULL
+            UNION ALL
+            SELECT "合同号" AS contract_number, "客户编号" AS customer_id
+            FROM ar_snapshots
+            WHERE NULLIF("合同号", '') IS NOT NULL
+              AND NULLIF("客户编号", '') IS NOT NULL
+        ), contract_link_summary AS (
+            SELECT
+                contract_number,
+                CASE WHEN COUNT(DISTINCT customer_id) = 1
+                     THEN MAX(customer_id) END AS customer_id,
+                COUNT(DISTINCT customer_id) AS customer_count
+            FROM contract_links
+            GROUP BY contract_number
+        ), customer_names AS (
+            SELECT
+                "客户名称" AS customer_name,
+                CASE WHEN COUNT(DISTINCT "客户编号_中台") = 1
+                     THEN MAX("客户编号_中台") END AS customer_id
+            FROM customer_credit
+            GROUP BY "客户名称"
+        )
         SELECT
-            "合同编号" AS contract_number,
-            MAX("客户名称") AS customer_name,
-            SUM("销售金额") AS contract_amount,
-            SUM("销售金额" * "实估毛利率_不含税") / NULLIF(SUM("销售金额"), 0)
-                AS weighted_est_margin,
-            SUM("销售金额" * "实际净毛利率_不含税") / NULLIF(SUM("销售金额"), 0)
-                AS weighted_act_margin
-        FROM contracts
-        GROUP BY "合同编号"
+            t.contract_number,
+            t.customer_name,
+            CASE WHEN COALESCE(l.customer_count, 0) > 1 THEN NULL
+                 ELSE COALESCE(l.customer_id, n.customer_id) END AS customer_id,
+            t.contract_amount,
+            t.weighted_est_margin,
+            t.weighted_act_margin
+        FROM contract_features t
+        LEFT JOIN contract_link_summary l USING (contract_number)
+        LEFT JOIN customer_names n USING (customer_name)
         """
     )
 
@@ -823,26 +879,39 @@ def get_term_overage_features(store: DuckDBStore) -> QueryResult:
 
     return store.fetch(
         """
+        WITH customer_names AS (
+            SELECT
+                "客户名称" AS customer_name,
+                CASE WHEN COUNT(DISTINCT "客户编号_中台") = 1
+                     THEN MAX("客户编号_中台") END AS customer_id
+            FROM customer_credit
+            GROUP BY "客户名称"
+        )
         SELECT
-            COALESCE(
-                (SELECT MAX("客户编号_中台") FROM customer_credit cc
-                 WHERE cc."客户名称" = t.customer_name), t.customer_name
-            ) AS customer_id,
+            n.customer_id,
             t.customer_name,
             t.overage_contract_count,
             t.contract_amount,
-            t.max_overage_days
+            t.max_overage_days,
+            t.contract_numbers
         FROM (
             SELECT
                 "客户名称" AS customer_name,
                 COUNT(*) AS overage_contract_count,
                 SUM("销售金额") AS contract_amount,
-                MAX("实际账期" - "合同文本账期") AS max_overage_days
+                MAX("实际账期" - "合同文本账期") AS max_overage_days,
+                array_to_string(
+                    list_sort(
+                        list_distinct(list(NULLIF("合同编号", '') ORDER BY "合同编号"))
+                    ),
+                    '、'
+                ) AS contract_numbers
             FROM contracts
             WHERE "实际账期" IS NOT NULL AND "合同文本账期" IS NOT NULL
               AND "实际账期" - "合同文本账期" >= 120
             GROUP BY "客户名称"
         ) t
+        LEFT JOIN customer_names n USING (customer_name)
         """
     )
 

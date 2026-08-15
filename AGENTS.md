@@ -38,7 +38,11 @@ ict-agent/
 │  │  ├─ agent.py                    # DeepSeek Provider、Agent 和工具注册
 │  │  ├─ data.py                     # 业务库导入/只读查询与独立案件库读写
 │  │  ├─ tools.py                    # 业务指标语义与确定性分析
-│  │  ├─ rules.py                    # 确定性风险规则和案件草稿
+│  │  ├─ rules.py                    # 确定性风险规则，只产出原始命中
+│  │  ├─ rule_engine.py              # 规则命中→准入漏斗→案件组装编排
+│  │  ├─ admission.py                # 命中合法性、去重和主体准入分组
+│  │  ├─ case_assembler.py           # 准入信号组到案件/持久化信号的组装
+│  │  ├─ rule_models.py              # 规则流水线内部领域对象
 │  │  ├─ models.py                   # API、工具和证据模型
 │  │  ├─ prompts.py                  # Agent 固定指令
 │  │  ├─ config.py                   # `.env` 和路径配置

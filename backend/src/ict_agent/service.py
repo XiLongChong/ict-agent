@@ -75,7 +75,7 @@ from ict_agent.models import (
     SubjectType,
 )
 from ict_agent.pretransaction import Scenario, generate_simulated_order
-from ict_agent.rules import build_rule_scan
+from ict_agent.rule_engine import build_rule_scan
 from ict_agent.tools import (
     AnalysisInputError,
     get_ar_trend,

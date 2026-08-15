@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ict_agent.config import load_settings
 from ict_agent.data import CaseStore, DataAccessError, DuckDBStore, rebuild_database
-from ict_agent.rules import build_rule_scan
+from ict_agent.rule_engine import build_rule_scan
 
 
 def parse_args() -> argparse.Namespace:

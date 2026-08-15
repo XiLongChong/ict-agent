@@ -11,7 +11,10 @@ flowchart LR
     CSV["7 张比赛 CSV"] --> DB["业务 DuckDB（原子重建 + 快照身份）"]
     DB --> RULE["23 条确定性规则"]
     DB --> SIM["历史分布新交易模拟"]
-    RULE --> CASE["统一信号与案件库"]
+    RULE --> HIT["规则命中"]
+    HIT --> ADMISSION["准入漏斗"]
+    ADMISSION --> ASSEMBLER["案件组装器"]
+    ASSEMBLER --> CASE["统一信号与案件库"]
     SIM --> CASE
     CASE --> CATALOG["真实探测证据能力"]
     CATALOG --> GATEWAY["发现 / 搜索 / 查询网关"]
@@ -35,17 +38,29 @@ flowchart LR
 | HTTP | FastAPI + Pydantic | `/api/v1` 校验、错误映射、NDJSON 流和 OpenAPI |
 | 应用服务 | `service.py` | 经营、信号入口、案件状态流转、调查保存、飞书通知和人工复核用例 |
 | Agent | Pydantic AI | DeepSeek 高强度思考、工具事件、结构化输出和输出校验 |
-| 业务分析 | `business_type.py` / `pretransaction.py` / `semantic.py` / `tools.py` / `rules.py` | 交易级业务分类、纯计算模拟器、语义注册表、参数化指标查询和版本化规则 |
+| 业务分析 | `business_type.py` / `pretransaction.py` / `semantic.py` / `tools.py` / `rules.py` / `rule_engine.py` / `admission.py` / `case_assembler.py` | 交易级业务分类、纯计算模拟器、语义注册表、参数化指标查询，以及规则命中、准入和案件组装 |
 | 数据 | `data.py` | 业务 DuckDB 加固只读查询、带快照身份的原子导入、独立案件库写入 |
 | 飞书适配 | `feishu.py` | 官方长连接接收绑定指令，消息 API 主动发送结果卡片；不参与 Agent 调查推理 |
 
 通用数据问答 Agent 已删除。经营看板继续直接调用确定性工具，避免无关工具进入案件调查上下文。
+
+### 2.1 规则扫描三段式
+
+规则扫描严格按以下方向流动，后层不能反向修改前层的业务判断：
+
+1. `rules.py` 读取受控特征并执行冻结阈值，只产出不含 `case_id` 的 `RuleHit`；规则不创建案件，也不负责跨规则合并。
+2. `admission.py` 执行入口治理：拒绝缺少主体身份的命中，去除同一主体、规则和版本的重复输出，并按稳定主体键形成准入信号组；不复制任何规则阈值。
+3. `case_assembler.py` 将准入信号组映射为稳定案件编号、案件摘要和持久化 `RuleHitWrite`；案件优先级、敞口和信号关联只在这里组装。
+4. `rule_engine.py` 只负责编排三步并生成扫描摘要，应用服务再把结果原子写入案件库。
+
+该边界允许未来替换准入政策或接入外部命中源，而不要求规则函数知道案件存储结构。
 
 ## 3. 数据与口径
 
 业务库由 7 张正式 CSV 原子全量重建；案件、调查和审核保存在独立 DuckDB，导入业务数据不会覆盖
 案件记录。合同号、客户号、订单号和物料号始终按字符串处理。金额单位不由模型判断，完全遵循赛事
 官方数据字典，当前字段按“元”解释。快照、退货、零分母和关联规则见 `metric-contract.md`。
+规则扫描保存新结果时会在同一事务中清理遗留的 `RULE_SCAN` 来源 `CON|合同号` 案件及其孤立信号、调查、复核和通知记录；其他来源案件不受影响。
 
 每次成功导入同时写入 `import_manifest`：稳定快照 ID、导入时间、七个来源文件的 SHA-256/行数/日期
 范围，以及模式指纹。`GET /api/v1/data-snapshot` 与操作员 CLI 只返回文件名和哈希，不暴露本机路径。
@@ -79,6 +94,7 @@ flowchart LR
   `PRE_TRANSACTION_SIMULATION`，另保留 `EXTERNAL_ALERT` 和 `MANUAL`。
 - `subject_type` 只描述主体粒度：客户、合同或“物料 × 库存组织”；主体编号、名称和受控查询上下文
   分别保存在 `subject_id`、`subject_label` 和 `subject_context`。
+- 规则扫描的合同域信号按唯一客户编号归并到客户主体 `AR|客户编号`；合同号仍作为信号指标和案件上下文保留。
 - `investigation_profile` 只选择证据策略：`RECEIVABLES`、`INVENTORY` 或 `PRE_TRANSACTION`。
 - `business_type` 只在案件范围确实限定到单一交易业务时填写；客户级规则案件不得根据历史分布推断它。
 

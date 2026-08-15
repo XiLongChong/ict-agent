@@ -2,8 +2,16 @@
 
 from pathlib import Path
 
-from ict_agent.data import CaseStore, DuckDBStore, ReviewWrite
-from ict_agent.rules import RuleThresholds, build_rule_scan
+from ict_agent.data import (
+    CaseStore,
+    CaseWrite,
+    DuckDBStore,
+    ReviewWrite,
+    RuleHitWrite,
+    RuleRunWrite,
+)
+from ict_agent.rule_engine import RuleThresholds, build_rule_scan
+from ict_agent.rules import collect_rule_hits
 
 
 def _test_thresholds() -> RuleThresholds:
@@ -67,6 +75,16 @@ def test_rule_scan_detects_single_and_composite_risks(store: DuckDBStore) -> Non
     assert ar_cases[0].subject_id == "C015"
     assert ar_cases[0].rule_hit_count == 2
     assert ar_cases[0].priority == "HIGH"
+
+
+def test_rule_layer_returns_subject_scoped_hits_without_cases(store: DuckDBStore) -> None:
+    batch = collect_rule_hits(store, _test_thresholds())
+
+    assert batch.observation_date == "2026-07-31"
+    assert batch.hits
+    assert all(not hasattr(hit, "case_id") for hit in batch.hits)
+    assert all(hit.subject.admission_key for hit in batch.hits)
+    assert all("_entity" not in hit.metrics for hit in batch.hits)
 
 
 def test_v2_ar_rules_trigger_on_targeted_data(raw_data_dir: Path, database_path: Path) -> None:
@@ -592,7 +610,7 @@ def test_v3_b4_large_overdue_hits_small_not(raw_data_dir: Path, database_path: P
 
 
 def test_v3_d2_weighted_margin(raw_data_dir: Path, database_path: Path) -> None:
-    """D2 金额加权聚合：一单多行不同毛利率不误判。"""
+    """D2 金额加权聚合并关联客户：一单多行不同毛利率不误判。"""
 
     from ict_agent.data import rebuild_database
 
@@ -631,12 +649,140 @@ def test_v3_d2_weighted_margin(raw_data_dir: Path, database_path: Path) -> None:
             },
         ],
     )
+    _write_csv(
+        data_dir / "客户授信.csv",
+        [
+            {
+                "客户编号_中台": "C060",
+                "客户名称": "测试客户六十",
+                "授信额度": 1000,
+                "黑白名单状态": 0,
+                "黑白名单原因": "",
+                "黑白名单创建时间": "2025-01-01",
+                "失信分级": "一般",
+                "净资产": 1000,
+                "净利润": 100,
+                "信用保险": "N",
+            }
+        ],
+    )
     db = database_path
     rebuild_database(data_dir, db)
     store = DuckDBStore(db)
     draft = build_rule_scan(store, _test_thresholds())
-    rule_ids = {h.rule_id for h in draft.hits}
+    d2_hits = [hit for hit in draft.hits if hit.rule_id == "CON_MARGIN_OPTIMISTIC"]
+    rule_ids = {hit.rule_id for hit in draft.hits}
+    customer_case = next(case for case in draft.cases if case.case_id == "AR|C060")
     assert "CON_MARGIN_OPTIMISTIC" in rule_ids
+    assert len(d2_hits) == 1
+    assert customer_case.subject_type == "CUSTOMER"
+    assert customer_case.subject_context["contract_number"] == "Z1"
+    assert d2_hits[0].metrics["contract_number"] == "Z1"
+    assert all(not case.case_id.startswith("CON|") for case in draft.cases)
+
+
+def test_contract_signal_merges_into_customer_case_and_keeps_contract_number(
+    raw_data_dir: Path, database_path: Path
+) -> None:
+    """合同信号应进入客户案件，并在案件上下文与信号中保留合同号。"""
+
+    from ict_agent.data import rebuild_database
+
+    from tests.conftest import _write_csv
+
+    _write_csv(
+        raw_data_dir / "增值合同签约明细.csv",
+        [
+            {
+                "申请日期": "2026-05-01",
+                "合同编号": "X2",
+                "合同状态": "流程结束",
+                "客户名称": "南京沛图商贸有限公司",
+                "销售金额": 100,
+                "实估毛利率_不含税": 0.30,
+                "实际净毛利率_不含税": 0.00,
+                "合同文本账期": 60,
+                "实际账期": 70,
+                "开票金额1": 80,
+            },
+            {
+                "申请日期": "2026-05-02",
+                "合同编号": "X3",
+                "合同状态": "流程结束",
+                "客户名称": "南京沛图商贸有限公司",
+                "销售金额": 200,
+                "实估毛利率_不含税": 0.25,
+                "实际净毛利率_不含税": 0.00,
+                "合同文本账期": 60,
+                "实际账期": 70,
+                "开票金额1": 160,
+            },
+        ],
+    )
+    rebuild_database(raw_data_dir, database_path)
+    draft = build_rule_scan(DuckDBStore(database_path), _test_thresholds())
+
+    customer_case = next(case for case in draft.cases if case.case_id == "AR|C015")
+    contract_hit = next(hit for hit in draft.hits if hit.rule_id == "CON_MARGIN_OPTIMISTIC")
+    assert contract_hit.case_id == customer_case.case_id
+    assert customer_case.subject_context["contract_numbers"] == "X2、X3"
+    assert contract_hit.metrics["contract_number"] == "X2、X3"
+    assert all(not case.case_id.startswith("CON|") for case in draft.cases)
+
+
+def test_rule_scan_removes_legacy_contract_cases(store: DuckDBStore, tmp_path: Path) -> None:
+    """新规则扫描清理旧合同案件，不留下孤立的风险信号。"""
+
+    case_store = CaseStore(tmp_path / "cases.duckdb")
+    old_case = CaseWrite(
+        case_id="CON|legacy-contract",
+        investigation_profile="RECEIVABLES",
+        subject_type="CONTRACT",
+        subject_id="legacy-contract",
+        subject_label="legacy-contract",
+        subject_context={"contract_number": "legacy-contract"},
+        observation_date="2026-07-31",
+        priority="MEDIUM",
+        exposure_amount=100.0,
+        summary="旧合同案件",
+        rule_hit_count=1,
+        rule_set_version="2026.08-v2",
+        created_at="2026-08-15T00:00:00+00:00",
+    )
+    old_hit = RuleHitWrite(
+        rule_hit_id="legacy-hit",
+        case_id=old_case.case_id,
+        rule_id="CON_MARGIN_OPTIMISTIC",
+        rule_name="实估毛利严重高估",
+        rule_version="2.0.0",
+        severity="MEDIUM",
+        exposure_amount=100.0,
+        reason="旧合同信号",
+        metrics={"contract_number": "legacy-contract"},
+        threshold_source="test",
+        sources=("contracts",),
+        period="2026-07-31",
+    )
+    case_store.save_rule_scan(
+        RuleRunWrite(
+            run_id="old-run",
+            rule_set_version="2026.08-v2",
+            observation_date="2026-07-31",
+            cases_detected=1,
+            rule_hits=1,
+            receivable_cases=1,
+            inventory_cases=0,
+            created_at="2026-08-15T00:00:00+00:00",
+        ),
+        [old_case],
+        [old_hit],
+    )
+
+    current = build_rule_scan(store, _test_thresholds())
+    case_store.save_rule_scan(current.run, current.cases, current.hits)
+
+    assert case_store.fetch_case(old_case.case_id).rows == ()
+    assert case_store.fetch_signals(old_case.case_id).rows == ()
 
 
 def test_case_store_preserves_idempotency_and_review(

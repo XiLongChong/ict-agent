@@ -1,12 +1,12 @@
-"""版本化风险规则、组合模式检测与案件草稿生成。"""
+"""版本化确定性规则，只负责计算并产出原始规则命中。"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from hashlib import sha256
 
-from ict_agent.data import CaseWrite, DatabaseScalar, DuckDBStore, RuleHitWrite, RuleRunWrite
+from ict_agent.data import DatabaseScalar, DuckDBStore
+from ict_agent.rule_models import RuleHit, RuleHitBatch, RuleSubject
 from ict_agent.tools import (
     get_aging_payment_features,
     get_customer_return_features,
@@ -71,15 +71,6 @@ class RuleThresholds:
     no_credit_min_ar: float = 1_000_000  # A4 无授信有敞口的应收金额下限
 
 
-@dataclass(frozen=True)
-class RuleScanDraft:
-    """尚未写入案件库的一次完整扫描。"""
-
-    run: RuleRunWrite
-    cases: tuple[CaseWrite, ...]
-    hits: tuple[RuleHitWrite, ...]
-
-
 def _value(row: tuple[DatabaseScalar, ...], index: int) -> DatabaseScalar:
     return row[index]
 
@@ -107,33 +98,7 @@ def _latest_ar_date(store: DuckDBStore) -> str:
     return str(latest).split("T", maxsplit=1)[0] if latest is not None else ""
 
 
-def _priority(hits: list[RuleHitWrite]) -> str:
-    order = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
-    return max((hit.severity for hit in hits), key=order.__getitem__)
-
-
 _ENTITY_KEY = "_entity"
-
-
-def _tag_hit(hit: RuleHitWrite, entity_meta: dict[str, object]) -> RuleHitWrite:
-    """把实体元数据写入 hit 的 metrics，供合并时使用。"""
-
-    merged = dict(hit.metrics)
-    merged[_ENTITY_KEY] = entity_meta
-    return RuleHitWrite(
-        rule_hit_id=hit.rule_hit_id,
-        case_id=hit.case_id,
-        rule_id=hit.rule_id,
-        rule_name=hit.rule_name,
-        rule_version=hit.rule_version,
-        severity=hit.severity,
-        exposure_amount=hit.exposure_amount,
-        reason=hit.reason,
-        metrics=merged,
-        threshold_source=hit.threshold_source,
-        sources=hit.sources,
-        period=hit.period,
-    )
 
 
 def _entity_meta(
@@ -147,7 +112,7 @@ def _entity_meta(
     ar_balance: float | None = None,
     inv_amount: float | None = None,
 ) -> dict[str, object]:
-    """构造实体元数据，供合并案件时还原 CaseWrite 字段。"""
+    """构造规则命中携带的主体元数据，供准入和组装阶段使用。"""
 
     return {
         "investigation_profile": investigation_profile,
@@ -161,98 +126,6 @@ def _entity_meta(
     }
 
 
-def _merge_hits_into_cases(
-    hits: list[RuleHitWrite],
-) -> tuple[list[CaseWrite], list[RuleHitWrite]]:
-    """把属于同一实体（客户 或 物料|仓库）的全部 hit 合并成一个案件。
-    实体键用 hit.case_id（已统一为 AR|cid 或 INV|mat|org）。
-    返回 (cases, clean_hits)，clean_hits 已剥离内部 _entity 元数据，避免污染 RuleHit.metrics。
-    """
-
-    from collections import OrderedDict
-
-    grouped: dict[str, list[RuleHitWrite]] = OrderedDict()
-    clean_hits: list[RuleHitWrite] = []
-    for hit in hits:
-        grouped.setdefault(hit.case_id, []).append(hit)
-        clean_hits.append(_strip_entity(hit))
-
-    cases: list[CaseWrite] = []
-    for case_id, group in grouped.items():
-        meta: dict[str, object] = {}
-        for hit in group:
-            ent = hit.metrics.get(_ENTITY_KEY)
-            if isinstance(ent, dict):
-                meta = ent
-                break
-        investigation_profile = str(meta.get("investigation_profile", "RECEIVABLES"))
-        subject_type = str(meta.get("subject_type", "CUSTOMER"))
-        subject_id = str(meta.get("subject_id", case_id))
-        subject_label = str(meta.get("subject_label", subject_id))
-        subject_context = meta.get("subject_context")
-        observation_date = str(meta.get("observation_date", ""))
-        # 暴露金额：应收域取应收余额，库存域取库存金额；缺省用组内最大命中暴露
-        ar_balance = meta.get("ar_balance")
-        inv_amount = meta.get("inv_amount")
-        ar_balance_num = float(ar_balance) if isinstance(ar_balance, (int, float)) else None
-        inv_amount_num = float(inv_amount) if isinstance(inv_amount, (int, float)) else None
-        if investigation_profile == "INVENTORY" and inv_amount_num is not None:
-            exposure = inv_amount_num
-        elif ar_balance_num is not None:
-            exposure = ar_balance_num
-        else:
-            exposure = max((h.exposure_amount for h in group), default=0.0)
-        primary_hit = min(
-            group,
-            key=lambda hit: (
-                {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}.get(hit.severity, 4),
-                hit.rule_id,
-            ),
-        )
-        cases.append(
-            CaseWrite(
-                case_id=case_id,
-                investigation_profile=investigation_profile,
-                subject_type=subject_type,
-                subject_id=subject_id,
-                subject_label=subject_label,
-                subject_context=dict(subject_context) if isinstance(subject_context, dict) else {},
-                observation_date=observation_date,
-                priority=_priority(group),
-                exposure_amount=exposure,
-                summary=(
-                    f"主要风险：{primary_hit.rule_name}；需结合 {len(group)} 条规则信号调查核实。"
-                ),
-                rule_hit_count=len(group),
-                rule_set_version=RULE_SET_VERSION,
-                created_at=max((h.period for h in group), default=""),
-            )
-        )
-    return cases, clean_hits
-
-
-def _strip_entity(hit: RuleHitWrite) -> RuleHitWrite:
-    """返回去掉了 _entity 内部键的 hit，保持 metrics 为可校验的 JsonScalar。"""
-
-    if _ENTITY_KEY not in hit.metrics:
-        return hit
-    merged = {k: v for k, v in hit.metrics.items() if k != _ENTITY_KEY}
-    return RuleHitWrite(
-        rule_hit_id=hit.rule_hit_id,
-        case_id=hit.case_id,
-        rule_id=hit.rule_id,
-        rule_name=hit.rule_name,
-        rule_version=hit.rule_version,
-        severity=hit.severity,
-        exposure_amount=hit.exposure_amount,
-        reason=hit.reason,
-        metrics=merged,
-        threshold_source=hit.threshold_source,
-        sources=hit.sources,
-        period=hit.period,
-    )
-
-
 def _money(value: float) -> str:
     if abs(value) >= 100_000_000:
         return f"{value / 100_000_000:.2f} 亿元"
@@ -263,7 +136,7 @@ def _money(value: float) -> str:
 
 def _hit(
     *,
-    case_id: str,
+    admission_key: str,
     rule_id: str,
     rule_name: str,
     severity: str,
@@ -272,32 +145,51 @@ def _hit(
     metrics: dict[str, object],
     sources: list[str],
     period: str,
-) -> RuleHitWrite:
-    hit_id = _short_id("hit", f"{case_id}|{rule_id}|{RULE_VERSION}")
-    return RuleHitWrite(
-        rule_hit_id=hit_id,
-        case_id=case_id,
+) -> RuleHit:
+    clean_metrics = dict(metrics)
+    entity = clean_metrics.pop(_ENTITY_KEY, None)
+    if not isinstance(entity, dict):
+        raise ValueError(f"规则命中缺少主体元数据：{rule_id}")
+    subject_context = entity.get("subject_context")
+    return RuleHit(
+        rule_hit_id=_short_id("hit", f"{admission_key}|{rule_id}|{RULE_VERSION}"),
+        subject=RuleSubject(
+            admission_key=admission_key,
+            investigation_profile=str(entity["investigation_profile"]),
+            subject_type=str(entity["subject_type"]),
+            subject_id=str(entity["subject_id"]),
+            subject_label=str(entity["subject_label"]),
+            subject_context=(dict(subject_context) if isinstance(subject_context, dict) else {}),
+            observation_date=str(entity["observation_date"]),
+            exposure_amount=(
+                float(entity["ar_balance"])
+                if isinstance(entity.get("ar_balance"), (int, float))
+                else (
+                    float(entity["inv_amount"])
+                    if isinstance(entity.get("inv_amount"), (int, float))
+                    else None
+                )
+            ),
+        ),
         rule_id=rule_id,
         rule_name=rule_name,
         rule_version=RULE_VERSION,
         severity=severity,
         exposure_amount=exposure_amount,
         reason=reason,
-        metrics=metrics,
+        metrics=clean_metrics,
         threshold_source=THRESHOLD_SOURCE,
-        sources=sources,
+        sources=tuple(sources),
         period=period,
     )
 
 
-def _receivable_cases(
+def _receivable_hits(
     store: DuckDBStore,
     thresholds: RuleThresholds,
-    created_at: str,
-) -> tuple[list[CaseWrite], list[RuleHitWrite], str]:
+) -> tuple[list[RuleHit], str]:
     result = get_receivable_rule_features(store)
-    cases: list[CaseWrite] = []
-    all_hits: list[RuleHitWrite] = []
+    all_hits: list[RuleHit] = []
     observation_date = ""
 
     for row in result.rows:
@@ -316,8 +208,8 @@ def _receivable_cases(
         list_status = int(_number_value(row, 12))
         credit_limit = _number_value(row, 13)
         is_operating = sales_3m != 0 or payments_3m != 0
-        case_id = f"AR|{customer_id}"
-        hits: list[RuleHitWrite] = []
+        admission_key = f"AR|{customer_id}"
+        hits: list[RuleHit] = []
 
         common_metrics: dict[str, object] = {
             "ar_amount": ar_amount,
@@ -350,7 +242,7 @@ def _receivable_cases(
         ):
             hits.append(
                 _hit(
-                    case_id=case_id,
+                    admission_key=admission_key,
                     rule_id="AR_OPERATING_DEEP_OVERDUE",
                     rule_name="经营中客户大额深度超期",
                     severity="HIGH",
@@ -375,7 +267,7 @@ def _receivable_cases(
         ):
             hits.append(
                 _hit(
-                    case_id=case_id,
+                    admission_key=admission_key,
                     rule_id="AR_OPERATING_EXPOSURE_BUILDUP",
                     rule_name="经营中客户应收敞口加速积累",
                     severity="HIGH",
@@ -393,7 +285,7 @@ def _receivable_cases(
         if list_status == 2 and ar_amount > 0:
             hits.append(
                 _hit(
-                    case_id=case_id,
+                    admission_key=admission_key,
                     rule_id="AR_BLACKLIST_EXPOSURE",
                     rule_name="黑名单客户仍有应收敞口",
                     severity="CRITICAL",
@@ -414,7 +306,7 @@ def _receivable_cases(
         ):
             hits.append(
                 _hit(
-                    case_id=case_id,
+                    admission_key=admission_key,
                     rule_id="AR_OVERDUE_RATE_HIGH",
                     rule_name="高超期率客户",
                     severity="HIGH",
@@ -433,7 +325,7 @@ def _receivable_cases(
         if credit_limit > 0 and ar_amount > credit_limit_yuan:
             hits.append(
                 _hit(
-                    case_id=case_id,
+                    admission_key=admission_key,
                     rule_id="AR_OVER_CREDIT_LIMIT",
                     rule_name="应收超授信额度",
                     severity="HIGH",
@@ -452,7 +344,7 @@ def _receivable_cases(
         if credit_limit == 0 and ar_amount >= thresholds.no_credit_min_ar:
             hits.append(
                 _hit(
-                    case_id=case_id,
+                    admission_key=admission_key,
                     rule_id="AR_NO_CREDIT_WITH_EXPOSURE",
                     rule_name="无授信仍有应收敞口",
                     severity="MEDIUM",
@@ -467,7 +359,7 @@ def _receivable_cases(
             if ar_amount >= thresholds.credit_zero_recent_sales_ar and sales_3m > 0:
                 hits.append(
                     _hit(
-                        case_id=case_id,
+                        admission_key=admission_key,
                         rule_id="CREDIT_EXPOSURE_DECLINE",
                         rule_name="授信敞口失衡",
                         severity="HIGH",
@@ -484,42 +376,15 @@ def _receivable_cases(
         if not hits:
             continue
         all_hits.extend(hits)
-        cases.append(
-            CaseWrite(
-                case_id=case_id,
-                investigation_profile="RECEIVABLES",
-                subject_type="CUSTOMER",
-                subject_id=customer_id,
-                subject_label=f"{customer_id} {customer_name}".strip(),
-                subject_context={"customer_id": customer_id, "customer_name": customer_name},
-                observation_date=observation_date,
-                priority=_priority(hits),
-                exposure_amount=ar_amount,
-                summary=(
-                    f"最新应收 {_money(ar_amount)}，超期 {_money(overdue_amount)}，"
-                    f"客户当前为黑名单，命中 {len(hits)} 条风险规则。"
-                    if list_status == 2
-                    else (
-                        f"最新应收 {_money(ar_amount)}，超期 {_money(overdue_amount)}，"
-                        f"客户仍在经营且未进入黑名单，命中 {len(hits)} 条早期预警规则。"
-                    )
-                ),
-                rule_hit_count=len(hits),
-                rule_set_version=RULE_SET_VERSION,
-                created_at=created_at,
-            )
-        )
-    return cases, all_hits, observation_date
+    return all_hits, observation_date
 
 
-def _inventory_cases(
+def _inventory_hits(
     store: DuckDBStore,
     thresholds: RuleThresholds,
-    created_at: str,
-) -> tuple[list[CaseWrite], list[RuleHitWrite], str]:
+) -> tuple[list[RuleHit], str]:
     result = get_inventory_rule_features(store)
-    cases: list[CaseWrite] = []
-    all_hits: list[RuleHitWrite] = []
+    all_hits: list[RuleHit] = []
     observation_date = ""
 
     for row in result.rows:
@@ -536,8 +401,8 @@ def _inventory_cases(
         sales_3m = _number_value(row, 10)
         previous_sales_3m = _number_value(row, 11)
         subject_id = f"{material_code}|{inventory_org}"
-        case_id = f"INV|{subject_id}"
-        hits: list[RuleHitWrite] = []
+        admission_key = f"INV|{subject_id}"
+        hits: list[RuleHit] = []
         is_material_buildup = inventory_growth >= thresholds.inventory_buildup_amount and (
             previous_inventory_amount == 0
             or (
@@ -583,7 +448,7 @@ def _inventory_cases(
         if is_material_buildup:
             hits.append(
                 _hit(
-                    case_id=case_id,
+                    admission_key=admission_key,
                     rule_id="INV_MATERIAL_BUILDUP",
                     rule_name="库存金额显著增加",
                     severity="MEDIUM",
@@ -605,7 +470,7 @@ def _inventory_cases(
         ):
             hits.append(
                 _hit(
-                    case_id=case_id,
+                    admission_key=admission_key,
                     rule_id="INV_STALE_NO_SALES",
                     rule_name="高库龄库存且近期无销售",
                     severity="HIGH",
@@ -623,7 +488,7 @@ def _inventory_cases(
         if is_smaller_buildup and sales_declined:
             hits.append(
                 _hit(
-                    case_id=case_id,
+                    admission_key=admission_key,
                     rule_id="INV_BUILDUP_SALES_SLOWDOWN",
                     rule_name="库存增加且销售显著下降",
                     severity="HIGH",
@@ -641,42 +506,17 @@ def _inventory_cases(
         if not hits:
             continue
         all_hits.extend(hits)
-        cases.append(
-            CaseWrite(
-                case_id=case_id,
-                investigation_profile="INVENTORY",
-                subject_type="MATERIAL_INVENTORY_ORG",
-                subject_id=subject_id,
-                subject_label=material_code,
-                subject_context={
-                    "material_code": material_code,
-                    "inventory_org": inventory_org,
-                },
-                observation_date=observation_date,
-                priority=_priority(hits),
-                exposure_amount=inventory_amount,
-                summary=(
-                    f"当前库存 {_money(inventory_amount)}，较上季变化 "
-                    f"{_money(inventory_growth)}，命中 {len(hits)} 条调查规则。"
-                ),
-                rule_hit_count=len(hits),
-                rule_set_version=RULE_SET_VERSION,
-                created_at=created_at,
-            )
-        )
-    return cases, all_hits, observation_date
+    return all_hits, observation_date
 
 
-def _unpaid_sales_cases(
+def _unpaid_sales_hits(
     store: DuckDBStore,
     thresholds: RuleThresholds,
-    created_at: str,
-) -> tuple[list[CaseWrite], list[RuleHitWrite], str]:
+) -> tuple[list[RuleHit], str]:
     """A2 长期销售未回款：出库超过 90 天仍无正回款的销售订单，按客户聚合。"""
 
     result = get_unpaid_sales_features(store)
-    cases: list[CaseWrite] = []
-    all_hits: list[RuleHitWrite] = []
+    all_hits: list[RuleHit] = []
     observation_date = ""
 
     for row in result.rows:
@@ -691,9 +531,9 @@ def _unpaid_sales_cases(
             observation_date = _text((latest,), 0).split("T", maxsplit=1)[0]
         if unpaid_ge90_amount < thresholds.unpaid_amount:
             continue
-        case_id = f"AR|{customer_id}"
+        admission_key = f"AR|{customer_id}"
         hit = _hit(
-            case_id=case_id,
+            admission_key=admission_key,
             rule_id="AR_UNPAID_AGING",
             rule_name="长期销售未回款",
             severity="HIGH",
@@ -722,39 +562,17 @@ def _unpaid_sales_cases(
             period=observation_date,
         )
         all_hits.append(hit)
-        cases.append(
-            CaseWrite(
-                case_id=case_id,
-                investigation_profile="RECEIVABLES",
-                subject_type="CUSTOMER",
-                subject_id=customer_id,
-                subject_label=f"{customer_id} {customer_name}".strip(),
-                subject_context={"customer_id": customer_id, "customer_name": customer_name},
-                observation_date=observation_date,
-                priority="HIGH",
-                exposure_amount=unpaid_ge90_amount,
-                summary=(
-                    f"{unpaid_order_count} 个订单超 90 天未回款，"
-                    f"未回款 {_money(unpaid_ge90_amount)}。"
-                ),
-                rule_hit_count=1,
-                rule_set_version=RULE_SET_VERSION,
-                created_at=created_at,
-            )
-        )
-    return cases, all_hits, observation_date
+    return all_hits, observation_date
 
 
-def _zero_sales_inventory_cases(
+def _zero_sales_inventory_hits(
     store: DuckDBStore,
     thresholds: RuleThresholds,
-    created_at: str,
-) -> tuple[list[CaseWrite], list[RuleHitWrite], str]:
+) -> tuple[list[RuleHit], str]:
     """B1 高库存但近三个月零销售：广口径潜在呆滞。"""
 
     result = get_inventory_zero_sales_features(store)
-    cases: list[CaseWrite] = []
-    all_hits: list[RuleHitWrite] = []
+    all_hits: list[RuleHit] = []
     observation_date = ""
 
     for row in result.rows:
@@ -766,9 +584,9 @@ def _zero_sales_inventory_cases(
         if sales_3m > 0 or inventory_amount < thresholds.zero_sales_inventory_amount:
             continue
         subject_id = f"{material_code}|{inventory_org}"
-        case_id = f"INV|{subject_id}"
+        admission_key = f"INV|{subject_id}"
         hit = _hit(
-            case_id=case_id,
+            admission_key=admission_key,
             rule_id="INV_ZERO_SALES_STOCK",
             rule_name="高库存但近期零销售",
             severity="HIGH",
@@ -794,36 +612,17 @@ def _zero_sales_inventory_cases(
             period=observation_date,
         )
         all_hits.append(hit)
-        cases.append(
-            CaseWrite(
-                case_id=case_id,
-                investigation_profile="INVENTORY",
-                subject_type="MATERIAL_INVENTORY_ORG",
-                subject_id=subject_id,
-                subject_label=material_code,
-                subject_context={"material_code": material_code, "inventory_org": inventory_org},
-                observation_date=observation_date,
-                priority="HIGH",
-                exposure_amount=inventory_amount,
-                summary=f"库存 {_money(inventory_amount)} 近三个月零销售，疑似滞销。",
-                rule_hit_count=1,
-                rule_set_version=RULE_SET_VERSION,
-                created_at=created_at,
-            )
-        )
-    return cases, all_hits, observation_date
+    return all_hits, observation_date
 
 
-def _very_old_inventory_cases(
+def _very_old_inventory_hits(
     store: DuckDBStore,
     thresholds: RuleThresholds,
-    created_at: str,
-) -> tuple[list[CaseWrite], list[RuleHitWrite], str]:
+) -> tuple[list[RuleHit], str]:
     """B3 超长库龄（365+ 天）库存。"""
 
     result = get_inventory_very_old_features(store)
-    cases: list[CaseWrite] = []
-    all_hits: list[RuleHitWrite] = []
+    all_hits: list[RuleHit] = []
     observation_date = ""
 
     for row in result.rows:
@@ -835,9 +634,9 @@ def _very_old_inventory_cases(
         if very_old_amount < thresholds.very_old_inventory_amount:
             continue
         subject_id = f"{material_code}|{inventory_org}"
-        case_id = f"INV|{subject_id}"
+        admission_key = f"INV|{subject_id}"
         hit = _hit(
-            case_id=case_id,
+            admission_key=admission_key,
             rule_id="INV_VERY_OLD_STOCK",
             rule_name="超长库龄库存",
             severity="HIGH",
@@ -866,36 +665,17 @@ def _very_old_inventory_cases(
             period=observation_date,
         )
         all_hits.append(hit)
-        cases.append(
-            CaseWrite(
-                case_id=case_id,
-                investigation_profile="INVENTORY",
-                subject_type="MATERIAL_INVENTORY_ORG",
-                subject_id=subject_id,
-                subject_label=material_code,
-                subject_context={"material_code": material_code, "inventory_org": inventory_org},
-                observation_date=observation_date,
-                priority="HIGH",
-                exposure_amount=very_old_amount,
-                summary=f"库龄超 365 天库存 {_money(very_old_amount)}，沉淀风险高。",
-                rule_hit_count=1,
-                rule_set_version=RULE_SET_VERSION,
-                created_at=created_at,
-            )
-        )
-    return cases, all_hits, observation_date
+    return all_hits, observation_date
 
 
-def _extension_cases(
+def _extension_hits(
     store: DuckDBStore,
     thresholds: RuleThresholds,
-    created_at: str,
-) -> tuple[list[CaseWrite], list[RuleHitWrite], str]:
+) -> tuple[list[RuleHit], str]:
     """A5 多次展期：同一客户展期次数达到阈值。"""
 
     result = get_extension_rule_features(store)
-    cases: list[CaseWrite] = []
-    all_hits: list[RuleHitWrite] = []
+    all_hits: list[RuleHit] = []
     observation_date = _latest_ar_date(store)
 
     for row in result.rows:
@@ -904,9 +684,9 @@ def _extension_cases(
         extension_count = int(_number_value(row, 2))
         if extension_count < thresholds.extension_count_min:
             continue
-        case_id = f"AR|{customer_id}"
+        admission_key = f"AR|{customer_id}"
         hit = _hit(
-            case_id=case_id,
+            admission_key=admission_key,
             rule_id="AR_EXTENSION_ABUSE",
             rule_name="多次展期客户",
             severity="MEDIUM",
@@ -928,36 +708,17 @@ def _extension_cases(
             period=observation_date,
         )
         all_hits.append(hit)
-        cases.append(
-            CaseWrite(
-                case_id=case_id,
-                investigation_profile="RECEIVABLES",
-                subject_type="CUSTOMER",
-                subject_id=customer_id,
-                subject_label=f"{customer_id} {customer_name}".strip(),
-                subject_context={"customer_id": customer_id, "customer_name": customer_name},
-                observation_date=observation_date,
-                priority="MEDIUM",
-                exposure_amount=0.0,
-                summary=f"客户累计展期 {extension_count} 次。",
-                rule_hit_count=1,
-                rule_set_version=RULE_SET_VERSION,
-                created_at=created_at,
-            )
-        )
-    return cases, all_hits, observation_date
+    return all_hits, observation_date
 
 
-def _penalty_interest_cases(
+def _penalty_interest_hits(
     store: DuckDBStore,
     thresholds: RuleThresholds,
-    created_at: str,
-) -> tuple[list[CaseWrite], list[RuleHitWrite], str]:
+) -> tuple[list[RuleHit], str]:
     """A6 高额罚息：客户累计逾期罚息达到阈值。"""
 
     result = get_penalty_interest_features(store)
-    cases: list[CaseWrite] = []
-    all_hits: list[RuleHitWrite] = []
+    all_hits: list[RuleHit] = []
     observation_date = _latest_ar_date(store)
 
     for row in result.rows:
@@ -966,9 +727,9 @@ def _penalty_interest_cases(
         penalty_interest = _number_value(row, 2)
         if penalty_interest < thresholds.penalty_interest_amount:
             continue
-        case_id = f"AR|{customer_id}"
+        admission_key = f"AR|{customer_id}"
         hit = _hit(
-            case_id=case_id,
+            admission_key=admission_key,
             rule_id="AR_PENALTY_INTEREST_HIGH",
             rule_name="高额逾期罚息",
             severity="MEDIUM",
@@ -990,36 +751,17 @@ def _penalty_interest_cases(
             period=observation_date,
         )
         all_hits.append(hit)
-        cases.append(
-            CaseWrite(
-                case_id=case_id,
-                investigation_profile="RECEIVABLES",
-                subject_type="CUSTOMER",
-                subject_id=customer_id,
-                subject_label=f"{customer_id} {customer_name}".strip(),
-                subject_context={"customer_id": customer_id, "customer_name": customer_name},
-                observation_date=observation_date,
-                priority="MEDIUM",
-                exposure_amount=penalty_interest,
-                summary=f"客户累计逾期罚息 {_money(penalty_interest)}。",
-                rule_hit_count=1,
-                rule_set_version=RULE_SET_VERSION,
-                created_at=created_at,
-            )
-        )
-    return cases, all_hits, observation_date
+    return all_hits, observation_date
 
 
-def _stale_ratio_cases(
+def _stale_ratio_hits(
     store: DuckDBStore,
     thresholds: RuleThresholds,
-    created_at: str,
-) -> tuple[list[CaseWrite], list[RuleHitWrite], str]:
+) -> tuple[list[RuleHit], str]:
     """B2 呆滞占比过高：180 天以上库存占比高且金额达阈值。"""
 
     result = get_inventory_stale_ratio_features(store)
-    cases: list[CaseWrite] = []
-    all_hits: list[RuleHitWrite] = []
+    all_hits: list[RuleHit] = []
     observation_date = ""
 
     for row in result.rows:
@@ -1037,9 +779,9 @@ def _stale_ratio_cases(
         ):
             continue
         subject_id = f"{material_code}|{inventory_org}"
-        case_id = f"INV|{subject_id}"
+        admission_key = f"INV|{subject_id}"
         hit = _hit(
-            case_id=case_id,
+            admission_key=admission_key,
             rule_id="INV_STALE_RATIO_HIGH",
             rule_name="呆滞占比过高",
             severity="MEDIUM",
@@ -1066,36 +808,17 @@ def _stale_ratio_cases(
             period=observation_date,
         )
         all_hits.append(hit)
-        cases.append(
-            CaseWrite(
-                case_id=case_id,
-                investigation_profile="INVENTORY",
-                subject_type="MATERIAL_INVENTORY_ORG",
-                subject_id=subject_id,
-                subject_label=material_code,
-                subject_context={"material_code": material_code, "inventory_org": inventory_org},
-                observation_date=observation_date,
-                priority="MEDIUM",
-                exposure_amount=stale_amount,
-                summary=f"180天以上库存 {_money(stale_amount)}，占 {stale_rate:.0%}。",
-                rule_hit_count=1,
-                rule_set_version=RULE_SET_VERSION,
-                created_at=created_at,
-            )
-        )
-    return cases, all_hits, observation_date
+    return all_hits, observation_date
 
 
-def _overdue_stock_cases(
+def _overdue_stock_hits(
     store: DuckDBStore,
     thresholds: RuleThresholds,
-    created_at: str,
-) -> tuple[list[CaseWrite], list[RuleHitWrite], str]:
+) -> tuple[list[RuleHit], str]:
     """B4 超期库存：按金额×超期天数综合评估，金额材料性优先。"""
 
     result = get_inventory_overdue_stock_features(store)
-    cases: list[CaseWrite] = []
-    all_hits: list[RuleHitWrite] = []
+    all_hits: list[RuleHit] = []
     observation_date = ""
 
     for row in result.rows:
@@ -1112,9 +835,9 @@ def _overdue_stock_cases(
         if max_overdue_days < thresholds.borrow_overdue_days:
             continue
         subject_id = f"{material_code}|{inventory_org}"
-        case_id = f"INV|{subject_id}"
+        admission_key = f"INV|{subject_id}"
         hit = _hit(
-            case_id=case_id,
+            admission_key=admission_key,
             rule_id="INV_OVERDUE_STOCK",
             rule_name="超期库存",
             severity="MEDIUM",
@@ -1144,36 +867,17 @@ def _overdue_stock_cases(
             period=observation_date,
         )
         all_hits.append(hit)
-        cases.append(
-            CaseWrite(
-                case_id=case_id,
-                investigation_profile="INVENTORY",
-                subject_type="MATERIAL_INVENTORY_ORG",
-                subject_id=subject_id,
-                subject_label=material_code,
-                subject_context={"material_code": material_code, "inventory_org": inventory_org},
-                observation_date=observation_date,
-                priority="MEDIUM",
-                exposure_amount=overdue_amount,
-                summary=f"超期库存 {_money(overdue_amount)}，最大超期 {max_overdue_days} 天。",
-                rule_hit_count=1,
-                rule_set_version=RULE_SET_VERSION,
-                created_at=created_at,
-            )
-        )
-    return cases, all_hits, observation_date
+    return all_hits, observation_date
 
 
-def _customer_return_cases(
+def _customer_return_hits(
     store: DuckDBStore,
     thresholds: RuleThresholds,
-    created_at: str,
-) -> tuple[list[CaseWrite], list[RuleHitWrite], str]:
+) -> tuple[list[RuleHit], str]:
     """C1 异常退货集中。"""
 
     result = get_customer_return_features(store)
-    cases: list[CaseWrite] = []
-    all_hits: list[RuleHitWrite] = []
+    all_hits: list[RuleHit] = []
     observation_date = _latest_ar_date(store)
 
     for row in result.rows:
@@ -1185,10 +889,10 @@ def _customer_return_cases(
             continue
         if return_amount < thresholds.return_amount:
             continue
-        case_id = f"AR|{customer_id}"
+        admission_key = f"AR|{customer_id}"
         ratio = return_amount / gross_sales
         hit = _hit(
-            case_id=case_id,
+            admission_key=admission_key,
             rule_id="SLS_RETURN_ABNORMAL",
             rule_name="异常退货集中",
             severity="MEDIUM",
@@ -1215,36 +919,17 @@ def _customer_return_cases(
             period=observation_date,
         )
         all_hits.append(hit)
-        cases.append(
-            CaseWrite(
-                case_id=case_id,
-                investigation_profile="RECEIVABLES",
-                subject_type="CUSTOMER",
-                subject_id=customer_id,
-                subject_label=f"{customer_id} {customer_name}".strip(),
-                subject_context={"customer_id": customer_id, "customer_name": customer_name},
-                observation_date=observation_date,
-                priority="MEDIUM",
-                exposure_amount=return_amount,
-                summary=f"退货 {_money(return_amount)} 占销售 {ratio:.0%}。",
-                rule_hit_count=1,
-                rule_set_version=RULE_SET_VERSION,
-                created_at=created_at,
-            )
-        )
-    return cases, all_hits, observation_date
+    return all_hits, observation_date
 
 
-def _negative_payment_cases(
+def _negative_payment_hits(
     store: DuckDBStore,
     thresholds: RuleThresholds,
-    created_at: str,
-) -> tuple[list[CaseWrite], list[RuleHitWrite], str]:
+) -> tuple[list[RuleHit], str]:
     """C3 负回款（冲销）异常。"""
 
     result = get_negative_payment_features(store)
-    cases: list[CaseWrite] = []
-    all_hits: list[RuleHitWrite] = []
+    all_hits: list[RuleHit] = []
     observation_date = _latest_ar_date(store)
 
     for row in result.rows:
@@ -1259,10 +944,10 @@ def _negative_payment_cases(
             or negative_payment / total_payment < thresholds.negative_payment_ratio
         ):
             continue
-        case_id = f"AR|{customer_id}"
+        admission_key = f"AR|{customer_id}"
         ratio = negative_payment / total_payment if total_payment > 0 else 0.0
         hit = _hit(
-            case_id=case_id,
+            admission_key=admission_key,
             rule_id="PAY_OFFSET_ABNORMAL",
             rule_name="负回款异常",
             severity="MEDIUM",
@@ -1289,36 +974,17 @@ def _negative_payment_cases(
             period=observation_date,
         )
         all_hits.append(hit)
-        cases.append(
-            CaseWrite(
-                case_id=case_id,
-                investigation_profile="RECEIVABLES",
-                subject_type="CUSTOMER",
-                subject_id=customer_id,
-                subject_label=f"{customer_id} {customer_name}".strip(),
-                subject_context={"customer_id": customer_id, "customer_name": customer_name},
-                observation_date=observation_date,
-                priority="MEDIUM",
-                exposure_amount=negative_payment,
-                summary=f"负回款 {_money(negative_payment)} 占总回款 {ratio:.0%}。",
-                rule_hit_count=1,
-                rule_set_version=RULE_SET_VERSION,
-                created_at=created_at,
-            )
-        )
-    return cases, all_hits, observation_date
+    return all_hits, observation_date
 
 
-def _aging_payment_cases(
+def _aging_payment_hits(
     store: DuckDBStore,
     thresholds: RuleThresholds,
-    created_at: str,
-) -> tuple[list[CaseWrite], list[RuleHitWrite], str]:
+) -> tuple[list[RuleHit], str]:
     """C4 超长账龄回款。"""
 
     result = get_aging_payment_features(store)
-    cases: list[CaseWrite] = []
-    all_hits: list[RuleHitWrite] = []
+    all_hits: list[RuleHit] = []
     observation_date = _latest_ar_date(store)
 
     for row in result.rows:
@@ -1327,9 +993,9 @@ def _aging_payment_cases(
         aging_amount = _number_value(row, 2)
         if aging_amount < thresholds.aging_overdue_amount:
             continue
-        case_id = f"AR|{customer_id}"
+        admission_key = f"AR|{customer_id}"
         hit = _hit(
-            case_id=case_id,
+            admission_key=admission_key,
             rule_id="PAY_AGING_OVER_365",
             rule_name="超长账龄回款",
             severity="MEDIUM",
@@ -1351,134 +1017,53 @@ def _aging_payment_cases(
             period=observation_date,
         )
         all_hits.append(hit)
-        cases.append(
-            CaseWrite(
-                case_id=case_id,
-                investigation_profile="RECEIVABLES",
-                subject_type="CUSTOMER",
-                subject_id=customer_id,
-                subject_label=f"{customer_id} {customer_name}".strip(),
-                subject_context={"customer_id": customer_id, "customer_name": customer_name},
-                observation_date=observation_date,
-                priority="MEDIUM",
-                exposure_amount=aging_amount,
-                summary=f"超长账龄回款 {_money(aging_amount)}。",
-                rule_hit_count=1,
-                rule_set_version=RULE_SET_VERSION,
-                created_at=created_at,
-            )
-        )
-    return cases, all_hits, observation_date
+    return all_hits, observation_date
 
 
-def _negative_margin_cases(
+def _negative_margin_hits(
     store: DuckDBStore,
     thresholds: RuleThresholds,
-    created_at: str,
-) -> tuple[list[CaseWrite], list[RuleHitWrite], str]:
+) -> tuple[list[RuleHit], str]:
     """D1 负毛利合同。"""
 
     result = get_negative_margin_features(store)
-    cases: list[CaseWrite] = []
-    all_hits: list[RuleHitWrite] = []
+    all_hits: list[RuleHit] = []
     observation_date = _latest_ar_date(store)
 
     for row in result.rows:
         customer_id = _text(row, 0)
         customer_name = _text(row, 1)
         margin_loss = _number_value(row, 2)
+        contract_numbers = _text(row, 3)
+        if not customer_id:
+            continue
         if margin_loss < thresholds.negative_margin_loss:
             continue
-        case_id = f"AR|{customer_id}"
+        admission_key = f"AR|{customer_id}"
         hit = _hit(
-            case_id=case_id,
+            admission_key=admission_key,
             rule_id="CON_NEGATIVE_MARGIN",
             rule_name="负毛利合同",
             severity="HIGH",
             exposure_amount=margin_loss,
-            reason=f"负毛利合同累计亏损 {_money(margin_loss)}。",
+            reason=(
+                f"负毛利合同累计亏损 {_money(margin_loss)}。"
+                + (f"合同号：{contract_numbers}。" if contract_numbers else "")
+            ),
             metrics={
                 "margin_loss": margin_loss,
+                "contract_number": contract_numbers,
+                "contract_numbers": contract_numbers,
                 _ENTITY_KEY: _entity_meta(
                     investigation_profile="RECEIVABLES",
                     subject_type="CUSTOMER",
                     subject_id=customer_id,
                     subject_label=f"{customer_id} {customer_name}".strip(),
-                    subject_context={"customer_id": customer_id, "customer_name": customer_name},
-                    observation_date=observation_date,
-                    ar_balance=None,
-                ),
-            },
-            sources=["contracts"],
-            period=observation_date,
-        )
-        all_hits.append(hit)
-        cases.append(
-            CaseWrite(
-                case_id=case_id,
-                investigation_profile="RECEIVABLES",
-                subject_type="CUSTOMER",
-                subject_id=customer_id,
-                subject_label=f"{customer_id} {customer_name}".strip(),
-                subject_context={"customer_id": customer_id, "customer_name": customer_name},
-                observation_date=observation_date,
-                priority="MEDIUM",
-                exposure_amount=margin_loss,
-                summary=f"负毛利合同累计亏损 {_money(margin_loss)}。",
-                rule_hit_count=1,
-                rule_set_version=RULE_SET_VERSION,
-                created_at=created_at,
-            )
-        )
-    return cases, all_hits, observation_date
-
-
-def _margin_optimistic_cases(
-    store: DuckDBStore,
-    thresholds: RuleThresholds,
-    created_at: str,
-) -> tuple[list[CaseWrite], list[RuleHitWrite], str]:
-    """D2 实估毛利严重高估。"""
-
-    result = get_margin_optimistic_features(store)
-    cases: list[CaseWrite] = []
-    all_hits: list[RuleHitWrite] = []
-    observation_date = _latest_ar_date(store)
-
-    for row in result.rows:
-        contract_number = _text(row, 0)
-        customer_name = _text(row, 1)
-        contract_amount = _number_value(row, 2)
-        weighted_est_margin = _number_value(row, 3)
-        weighted_act_margin = _number_value(row, 4)
-        if weighted_est_margin - weighted_act_margin < thresholds.margin_gap:
-            continue
-        if weighted_act_margin >= thresholds.margin_actual_max:
-            continue
-        case_id = f"CON|{contract_number}"
-        hit = _hit(
-            case_id=case_id,
-            rule_id="CON_MARGIN_OPTIMISTIC",
-            rule_name="实估毛利严重高估",
-            severity="MEDIUM",
-            exposure_amount=contract_amount,
-            reason=(
-                f"实估毛利率 {weighted_est_margin:.1%} 比实际净毛利率 "
-                f"{weighted_act_margin:.1%} 高 "
-                f"{(weighted_est_margin - weighted_act_margin):.1%}，预估过于乐观。"
-            ),
-            metrics={
-                "contract_amount": contract_amount,
-                "estimated_margin": weighted_est_margin,
-                "actual_margin": weighted_act_margin,
-                _ENTITY_KEY: _entity_meta(
-                    investigation_profile="RECEIVABLES",
-                    subject_type="CONTRACT",
-                    subject_id=contract_number,
-                    subject_label=contract_number,
                     subject_context={
-                        "contract_number": contract_number,
+                        "customer_id": customer_id,
                         "customer_name": customer_name,
+                        "contract_number": contract_numbers,
+                        "contract_numbers": contract_numbers,
                     },
                     observation_date=observation_date,
                     ar_balance=None,
@@ -1488,70 +1073,85 @@ def _margin_optimistic_cases(
             period=observation_date,
         )
         all_hits.append(hit)
-        cases.append(
-            CaseWrite(
-                case_id=case_id,
-                investigation_profile="RECEIVABLES",
-                subject_type="CONTRACT",
-                subject_id=contract_number,
-                subject_label=contract_number,
-                subject_context={
-                    "contract_number": contract_number,
-                    "customer_name": customer_name,
-                },
-                observation_date=observation_date,
-                priority="MEDIUM",
-                exposure_amount=contract_amount,
-                summary=(
-                    f"合同 {contract_number} 实估毛利高估 "
-                    f"{(weighted_est_margin - weighted_act_margin):.1%}。"
-                ),
-                rule_hit_count=1,
-                rule_set_version=RULE_SET_VERSION,
-                created_at=created_at,
-            )
-        )
-    return cases, all_hits, observation_date
+    return all_hits, observation_date
 
 
-def _term_overage_cases(
+def _margin_optimistic_hits(
     store: DuckDBStore,
     thresholds: RuleThresholds,
-    created_at: str,
-) -> tuple[list[CaseWrite], list[RuleHitWrite], str]:
-    """D3 实际账期远超约定。"""
+) -> tuple[list[RuleHit], str]:
+    """D2 实估毛利严重高估。"""
 
-    result = get_term_overage_features(store)
-    cases: list[CaseWrite] = []
-    all_hits: list[RuleHitWrite] = []
+    result = get_margin_optimistic_features(store)
+    all_hits: list[RuleHit] = []
     observation_date = _latest_ar_date(store)
 
+    customer_contracts: dict[str, list[tuple[str, str, float, float, float]]] = {}
     for row in result.rows:
-        customer_id = _text(row, 0)
+        contract_number = _text(row, 0)
         customer_name = _text(row, 1)
-        overage_count = int(_number_value(row, 2))
+        customer_id = _text(row, 2)
         contract_amount = _number_value(row, 3)
-        max_overage = int(_number_value(row, 4))
-        if contract_amount < thresholds.term_overage_amount:
+        weighted_est_margin = _number_value(row, 4)
+        weighted_act_margin = _number_value(row, 5)
+        if not customer_id or not contract_number:
             continue
-        case_id = f"AR|{customer_id}"
+        if weighted_est_margin - weighted_act_margin < thresholds.margin_gap:
+            continue
+        if weighted_act_margin >= thresholds.margin_actual_max:
+            continue
+        customer_contracts.setdefault(customer_id, []).append(
+            (
+                contract_number,
+                customer_name,
+                contract_amount,
+                weighted_est_margin,
+                weighted_act_margin,
+            )
+        )
+
+    for customer_id, contracts in customer_contracts.items():
+        contract_numbers = sorted({item[0] for item in contracts if item[0]})
+        contract_label = "、".join(contract_numbers)
+        customer_name = next((item[1] for item in contracts if item[1]), "")
+        contract_amount = sum(item[2] for item in contracts)
+        amount_base = sum(item[2] for item in contracts if item[2] != 0)
+        weighted_est_margin = (
+            sum(item[2] * item[3] for item in contracts) / amount_base if amount_base else 0.0
+        )
+        weighted_act_margin = (
+            sum(item[2] * item[4] for item in contracts) / amount_base if amount_base else 0.0
+        )
+        admission_key = f"AR|{customer_id}"
         hit = _hit(
-            case_id=case_id,
-            rule_id="CON_TERM_OVERAGE",
-            rule_name="实际账期远超约定",
+            admission_key=admission_key,
+            rule_id="CON_MARGIN_OPTIMISTIC",
+            rule_name="实估毛利严重高估",
             severity="MEDIUM",
             exposure_amount=contract_amount,
-            reason=(f"{overage_count} 份合同实际账期超约定 ≥120 天，最大超期 {max_overage} 天。"),
+            reason=(
+                f"客户 {customer_id} 的合同 {contract_label} 均满足实估毛利严重高估条件，"
+                f"共 {len(contract_numbers)} 份、合同金额 {_money(contract_amount)}，"
+                "需要调查预估依据为何失效。"
+            ),
             metrics={
-                "overage_contract_count": overage_count,
+                "contract_number": contract_label,
+                "contract_numbers": contract_label,
+                "contract_count": len(contract_numbers),
                 "contract_amount": contract_amount,
-                "max_overage_days": max_overage,
+                "estimated_margin": weighted_est_margin,
+                "actual_margin": weighted_act_margin,
                 _ENTITY_KEY: _entity_meta(
                     investigation_profile="RECEIVABLES",
                     subject_type="CUSTOMER",
                     subject_id=customer_id,
                     subject_label=f"{customer_id} {customer_name}".strip(),
-                    subject_context={"customer_id": customer_id, "customer_name": customer_name},
+                    subject_context={
+                        "customer_id": customer_id,
+                        "customer_name": customer_name,
+                        "contract_number": contract_label,
+                        "contract_numbers": contract_label,
+                    },
                     observation_date=observation_date,
                     ar_balance=None,
                 ),
@@ -1560,55 +1160,91 @@ def _term_overage_cases(
             period=observation_date,
         )
         all_hits.append(hit)
-        cases.append(
-            CaseWrite(
-                case_id=case_id,
-                investigation_profile="RECEIVABLES",
-                subject_type="CUSTOMER",
-                subject_id=customer_id,
-                subject_label=f"{customer_id} {customer_name}".strip(),
-                subject_context={"customer_id": customer_id, "customer_name": customer_name},
-                observation_date=observation_date,
-                priority="MEDIUM",
-                exposure_amount=contract_amount,
-                summary=f"{overage_count} 份合同账期超约定，最大 {max_overage} 天。",
-                rule_hit_count=1,
-                rule_set_version=RULE_SET_VERSION,
-                created_at=created_at,
-            )
+    return all_hits, observation_date
+
+
+def _term_overage_hits(
+    store: DuckDBStore,
+    thresholds: RuleThresholds,
+) -> tuple[list[RuleHit], str]:
+    """D3 实际账期远超约定。"""
+
+    result = get_term_overage_features(store)
+    all_hits: list[RuleHit] = []
+    observation_date = _latest_ar_date(store)
+
+    for row in result.rows:
+        customer_id = _text(row, 0)
+        customer_name = _text(row, 1)
+        overage_count = int(_number_value(row, 2))
+        contract_amount = _number_value(row, 3)
+        max_overage = int(_number_value(row, 4))
+        contract_numbers = _text(row, 5)
+        if not customer_id:
+            continue
+        if contract_amount < thresholds.term_overage_amount:
+            continue
+        admission_key = f"AR|{customer_id}"
+        hit = _hit(
+            admission_key=admission_key,
+            rule_id="CON_TERM_OVERAGE",
+            rule_name="实际账期远超约定",
+            severity="MEDIUM",
+            exposure_amount=contract_amount,
+            reason=(
+                f"{overage_count} 份合同实际账期超约定 ≥120 天，最大超期 {max_overage} 天。"
+                + (f"合同号：{contract_numbers}。" if contract_numbers else "")
+            ),
+            metrics={
+                "overage_contract_count": overage_count,
+                "contract_amount": contract_amount,
+                "max_overage_days": max_overage,
+                "contract_number": contract_numbers,
+                "contract_numbers": contract_numbers,
+                _ENTITY_KEY: _entity_meta(
+                    investigation_profile="RECEIVABLES",
+                    subject_type="CUSTOMER",
+                    subject_id=customer_id,
+                    subject_label=f"{customer_id} {customer_name}".strip(),
+                    subject_context={
+                        "customer_id": customer_id,
+                        "customer_name": customer_name,
+                        "contract_number": contract_numbers,
+                        "contract_numbers": contract_numbers,
+                    },
+                    observation_date=observation_date,
+                    ar_balance=None,
+                ),
+            },
+            sources=["contracts"],
+            period=observation_date,
         )
-    return cases, all_hits, observation_date
+        all_hits.append(hit)
+    return all_hits, observation_date
 
 
-def build_rule_scan(
+def collect_rule_hits(
     store: DuckDBStore,
     thresholds: RuleThresholds | None = None,
-) -> RuleScanDraft:
-    """执行确定性规则并生成可幂等保存的案件草稿。"""
+) -> RuleHitBatch:
+    """执行所有确定性规则，只返回原始命中，不创建案件。"""
 
     active_thresholds = thresholds or RuleThresholds()
-    created_at = datetime.now(UTC).isoformat()
-    _, ar_hits, ar_period = _receivable_cases(store, active_thresholds, created_at)
-    _, unpaid_hits, unpaid_period = _unpaid_sales_cases(store, active_thresholds, created_at)
-    _, inventory_hits, inventory_period = _inventory_cases(store, active_thresholds, created_at)
-    _, zero_hits, zero_period = _zero_sales_inventory_cases(store, active_thresholds, created_at)
-    _, veryold_hits, veryold_period = _very_old_inventory_cases(
-        store, active_thresholds, created_at
-    )
-    _, extension_hits, extension_period = _extension_cases(store, active_thresholds, created_at)
-    _, penalty_hits, penalty_period = _penalty_interest_cases(store, active_thresholds, created_at)
-    _, staleratio_hits, staleratio_period = _stale_ratio_cases(store, active_thresholds, created_at)
-    _, borrow_hits, borrow_period = _overdue_stock_cases(store, active_thresholds, created_at)
-    _, return_hits, return_period = _customer_return_cases(store, active_thresholds, created_at)
-    _, negpay_hits, negpay_period = _negative_payment_cases(store, active_thresholds, created_at)
-    _, aging_hits, aging_period = _aging_payment_cases(store, active_thresholds, created_at)
-    _, negmargin_hits, negmargin_period = _negative_margin_cases(
-        store, active_thresholds, created_at
-    )
-    _, marginopt_hits, marginopt_period = _margin_optimistic_cases(
-        store, active_thresholds, created_at
-    )
-    _, term_hits, term_period = _term_overage_cases(store, active_thresholds, created_at)
+    ar_hits, ar_period = _receivable_hits(store, active_thresholds)
+    unpaid_hits, unpaid_period = _unpaid_sales_hits(store, active_thresholds)
+    inventory_hits, inventory_period = _inventory_hits(store, active_thresholds)
+    zero_hits, zero_period = _zero_sales_inventory_hits(store, active_thresholds)
+    veryold_hits, veryold_period = _very_old_inventory_hits(store, active_thresholds)
+    extension_hits, extension_period = _extension_hits(store, active_thresholds)
+    penalty_hits, penalty_period = _penalty_interest_hits(store, active_thresholds)
+    staleratio_hits, staleratio_period = _stale_ratio_hits(store, active_thresholds)
+    borrow_hits, borrow_period = _overdue_stock_hits(store, active_thresholds)
+    return_hits, return_period = _customer_return_hits(store, active_thresholds)
+    negpay_hits, negpay_period = _negative_payment_hits(store, active_thresholds)
+    aging_hits, aging_period = _aging_payment_hits(store, active_thresholds)
+    negmargin_hits, negmargin_period = _negative_margin_hits(store, active_thresholds)
+    marginopt_hits, marginopt_period = _margin_optimistic_hits(store, active_thresholds)
+    term_hits, term_period = _term_overage_hits(store, active_thresholds)
     hits = [
         *ar_hits,
         *unpaid_hits,
@@ -1626,7 +1262,6 @@ def build_rule_scan(
         *staleratio_hits,
         *borrow_hits,
     ]
-    cases, clean_hits = _merge_hits_into_cases(hits)
     observation_date = max(
         ar_period,
         unpaid_period,
@@ -1644,20 +1279,4 @@ def build_rule_scan(
         staleratio_period,
         borrow_period,
     )
-    ar_case_count = sum(1 for c in cases if c.investigation_profile == "RECEIVABLES")
-    inv_case_count = sum(1 for c in cases if c.investigation_profile == "INVENTORY")
-    run_id = _short_id("run", f"{RULE_SET_VERSION}|{created_at}")
-    return RuleScanDraft(
-        run=RuleRunWrite(
-            run_id=run_id,
-            rule_set_version=RULE_SET_VERSION,
-            observation_date=observation_date,
-            cases_detected=len(cases),
-            rule_hits=len(clean_hits),
-            receivable_cases=ar_case_count,
-            inventory_cases=inv_case_count,
-            created_at=created_at,
-        ),
-        cases=tuple(cases),
-        hits=tuple(clean_hits),
-    )
+    return RuleHitBatch(hits=tuple(hits), observation_date=observation_date)

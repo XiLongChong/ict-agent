@@ -8,7 +8,7 @@ from ict_agent import service as service_module
 from ict_agent.config import Settings
 from ict_agent.data import CaseStore, DuckDBStore
 from ict_agent.models import PreTransactionSimulationRequest, ReviewRequest, ToolResult
-from ict_agent.rules import RuleThresholds, build_rule_scan
+from ict_agent.rule_engine import RuleThresholds, build_rule_scan
 from ict_agent.service import (
     _load_investigation_record,
     _load_protocol_snapshot,
