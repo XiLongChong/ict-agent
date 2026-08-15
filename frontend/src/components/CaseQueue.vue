@@ -120,19 +120,21 @@ async function scan() {
       </div>
 
       <div class="overflow-x-auto">
-        <table class="table-base table-fixed min-w-[1120px]">
+        <table class="table-base table-fixed min-w-[1200px]">
           <colgroup>
-            <col class="w-[28%]" />
-            <col class="w-[14%]" />
-            <col class="w-[27%]" />
-            <col class="w-[10%]" />
-            <col class="w-[14%]" />
+            <col class="w-[23%]" />
             <col class="w-[11%]" />
+            <col class="w-[14%]" />
+            <col class="w-[24%]" />
+            <col class="w-[9%]" />
+            <col class="w-[11%]" />
+            <col class="w-[8%]" />
           </colgroup>
           <thead>
             <tr>
               <th>主体</th>
-              <th>来源/业务</th>
+              <th>来源</th>
+              <th>业务</th>
               <th>风险概况</th>
               <th>风险等级</th>
               <th>风险敞口</th>
@@ -153,8 +155,12 @@ async function scan() {
                 <span class="mt-1 block text-xs text-muted">{{ labels.subjectType[item.subject_type] || item.subject_type }}</span>
               </td>
               <td>
-                <Badge tone="neutral">{{ labels.caseSource[item.source] || item.source }}</Badge>
-                <span class="mt-1 block text-xs text-muted">
+                <span class="block truncate text-sm font-medium text-ink" :title="labels.caseSource[item.source] || item.source">
+                  {{ labels.caseSource[item.source] || item.source }}
+                </span>
+              </td>
+              <td>
+                <span class="block truncate text-sm font-medium text-ink">
                   {{ labels.investigationProfile[item.investigation_profile] }}<template v-if="item.business_type"> · {{ labels.businessType[item.business_type] }}</template>
                 </span>
               </td>
@@ -165,7 +171,7 @@ async function scan() {
                 <Badge :tone="statusColor(item.status)">{{ labels.status[item.status] }}</Badge>
               </td>
             </tr>
-            <tr v-if="!workspace.loading && !filtered.length"><td colspan="6" class="empty-state">当前筛选条件下没有案件</td></tr>
+            <tr v-if="!workspace.loading && !filtered.length"><td colspan="7" class="empty-state">当前筛选条件下没有案件</td></tr>
           </tbody>
         </table>
       </div>
